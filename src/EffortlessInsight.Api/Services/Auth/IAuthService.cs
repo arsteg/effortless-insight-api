@@ -12,4 +12,20 @@ public interface IAuthService
     Task ResetPasswordAsync(ResetPasswordRequest request);
     Task ChangePasswordAsync(Guid userId, ChangePasswordRequest request);
     Task LogoutAsync(Guid userId, string? refreshTokenJti, bool allDevices);
+
+    // OTP Login
+    Task<OtpResponse> RequestOtpLoginAsync(string mobile, string ipAddress);
+    Task<object> VerifyOtpLoginAsync(OtpVerifyRequest request, string ipAddress, string? userAgent);
+
+    // 2FA Setup
+    Task<TwoFactorSetupResponse> Setup2faAsync(Guid userId);
+    Task<TwoFactorVerifySetupResponse> VerifySetup2faAsync(Guid userId, string code);
+    Task Disable2faAsync(Guid userId, string password);
+
+    // 2FA Login
+    Task<TwoFactorLoginResponse> Complete2faLoginAsync(TwoFactorLoginRequest request, string ipAddress, string? userAgent);
+
+    // Password History
+    Task<bool> IsPasswordRecentlyUsedAsync(Guid userId, string password);
+    Task AddPasswordHistoryAsync(Guid userId, string passwordHash);
 }

@@ -75,6 +75,47 @@ public record ChangePasswordRequest(
 
 public record LogoutRequest(bool AllDevices = false);
 
+// OTP DTOs
+public record OtpRequestRequest(string Mobile, string Purpose = "login");
+public record OtpResponse(string Message, string MaskedMobile, int ExpiresIn, int RetryAfter);
+public record OtpVerifyRequest(string Mobile, string Otp);
+
+// 2FA Setup DTOs
+public record TwoFactorSetupResponse(string Secret, string QrCodeDataUrl, string OtpauthUrl, List<string> BackupCodes);
+public record TwoFactorVerifySetupRequest(string Code);
+public record TwoFactorVerifySetupResponse(string Message, int BackupCodesRemaining);
+
+// 2FA Login DTOs
+public record TwoFactorLoginRequest(string PartialToken, string Code);
+public record TwoFactorLoginResponse(string AccessToken, string RefreshToken, string TokenType, int ExpiresIn, bool BackupCodeUsed);
+
+// 2FA Disable DTOs
+public record TwoFactorDisableRequest(string Password);
+
+// Session DTOs
+public record SessionDto(Guid Id, string? DeviceName, string Platform, string IpAddress, string? Location, DateTime LastActiveAt, DateTime CreatedAt, bool IsCurrent);
+public record SessionListResponse(Guid CurrentSessionId, List<SessionDto> Sessions);
+
+// Full User Profile (for /auth/me endpoint)
+public record UserProfileDto(
+    Guid Id,
+    string Email,
+    string Name,
+    string? Mobile,
+    string? AvatarUrl,
+    bool EmailVerified,
+    bool MobileVerified,
+    bool Is2faEnabled,
+    string Role,
+    UserOrganizationDto? Organization,
+    List<UserOrganizationDto> Organizations,
+    Dictionary<string, object>? Preferences,
+    DateTime CreatedAt,
+    DateTime? LastLogin
+);
+
+public record UserOrganizationDto(Guid Id, string Name, string Role);
+
 // Legacy DTOs for backward compatibility
 public record LoginDto(string Email, string Password);
 public record RegisterDto(string Email, string Password, string Name, string? Mobile);

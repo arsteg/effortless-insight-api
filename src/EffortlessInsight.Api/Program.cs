@@ -1,3 +1,4 @@
+using AspNetCoreRateLimit;
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Extensions;
 using EffortlessInsight.Api.Middleware;
@@ -51,6 +52,26 @@ builder.Services.AddAutoMapper(typeof(Program));
 // Add FluentValidation
 builder.Services.AddValidators();
 
+// Add Rate Limiting
+builder.Services.AddMemoryCache();
+builder.Services.Configure<IpRateLimitOptions>(options =>
+{
+    options.EnableEndpointRateLimiting = true;
+    options.StackBlockedRequests = false;
+    options.HttpStatusCode = 429;
+    options.RealIpHeader = "X-Forwarded-For";
+    options.GeneralRules = new List<RateLimitRule>
+    {
+        new() { Endpoint = "POST:/api/v1/auth/register", Period = "1h", Limit = 5 },
+        new() { Endpoint = "POST:/api/v1/auth/login", Period = "1m", Limit = 10 },
+        new() { Endpoint = "POST:/api/v1/auth/otp/request", Period = "1h", Limit = 5 },
+        new() { Endpoint = "POST:/api/v1/auth/forgot-password", Period = "1h", Limit = 3 },
+        new() { Endpoint = "POST:/api/v1/auth/2fa/login", Period = "5m", Limit = 5 }
+    };
+});
+builder.Services.AddInMemoryRateLimiting();
+builder.Services.AddSingleton<IRateLimitConfiguration, RateLimitConfiguration>();
+
 // Add CORS
 builder.Services.AddCors(options =>
 {
@@ -80,6 +101,8 @@ if (app.Environment.IsDevelopment())
 
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseMiddleware<RequestLoggingMiddleware>();
+
+app.UseIpRateLimiting();
 
 app.UseSerilogRequestLogging();
 

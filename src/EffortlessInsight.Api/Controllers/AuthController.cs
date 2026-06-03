@@ -1,8 +1,10 @@
 using System.Security.Claims;
+using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.DTOs;
 using EffortlessInsight.Api.Services.Auth;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace EffortlessInsight.Api.Controllers;
 
@@ -11,11 +13,19 @@ namespace EffortlessInsight.Api.Controllers;
 public class AuthController : ControllerBase
 {
     private readonly IAuthService _authService;
+    private readonly ISessionService _sessionService;
+    private readonly ApplicationDbContext _dbContext;
     private readonly ILogger<AuthController> _logger;
 
-    public AuthController(IAuthService authService, ILogger<AuthController> logger)
+    public AuthController(
+        IAuthService authService,
+        ISessionService sessionService,
+        ApplicationDbContext dbContext,
+        ILogger<AuthController> logger)
     {
         _authService = authService;
+        _sessionService = sessionService;
+        _dbContext = dbContext;
         _logger = logger;
     }
 
@@ -320,28 +330,348 @@ public class AuthController : ControllerBase
     /// </summary>
     [Authorize]
     [HttpGet("me")]
-    [ProducesResponseType(typeof(ApiResponse<UserDto>), StatusCodes.Status200OK)]
-    public IActionResult GetCurrentUser()
+    [ProducesResponseType(typeof(ApiResponse<UserProfileDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetCurrentUser()
     {
-        var userId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value ?? "");
-        var email = User.FindFirst(ClaimTypes.Email)?.Value ?? User.FindFirst("email")?.Value ?? "";
-        var name = User.FindFirst("name")?.Value ?? "";
-        var role = User.FindFirst("role")?.Value ?? User.FindFirst(ClaimTypes.Role)?.Value ?? "";
-        var orgId = User.FindFirst("org_id")?.Value;
-        var orgName = User.FindFirst("org_name")?.Value;
+        try
+        {
+            var userId = GetCurrentUserId();
 
-        var user = new UserDto(
-            Id: userId,
-            Email: email,
-            Name: name,
-            Mobile: null, // Would need to fetch from DB for full profile
-            AvatarUrl: null,
-            Role: role,
-            OrganizationId: orgId != null ? Guid.Parse(orgId) : null,
-            OrganizationName: orgName
-        );
+            var user = await _dbContext.Users
+                .Include(u => u.Organization)
+                .FirstOrDefaultAsync(u => u.Id == userId);
 
-        return Ok(new ApiResponse<UserDto>(true, user));
+            if (user == null)
+            {
+                return NotFound(new ApiErrorResponse(false, "USER_NOT_FOUND", "User not found"));
+            }
+
+            // Get current organization
+            UserOrganizationDto? currentOrg = null;
+            if (user.Organization != null)
+            {
+                currentOrg = new UserOrganizationDto(
+                    user.Organization.Id,
+                    user.Organization.Name,
+                    user.Role
+                );
+            }
+
+            // For now, return single organization (multi-org support can be added later)
+            var organizations = currentOrg != null
+                ? new List<UserOrganizationDto> { currentOrg }
+                : new List<UserOrganizationDto>();
+
+            var profile = new UserProfileDto(
+                Id: user.Id,
+                Email: user.Email!,
+                Name: user.Name,
+                Mobile: user.Mobile,
+                AvatarUrl: user.AvatarUrl,
+                EmailVerified: user.EmailConfirmed,
+                MobileVerified: user.IsMobileVerified,
+                Is2faEnabled: user.Is2faEnabled,
+                Role: user.Role,
+                Organization: currentOrg,
+                Organizations: organizations,
+                Preferences: user.Preferences,
+                CreatedAt: user.CreatedAt,
+                LastLogin: user.LastLoginAt
+            );
+
+            return Ok(new ApiResponse<UserProfileDto>(true, profile));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Get current user failed");
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
+        }
+    }
+
+    /// <summary>
+    /// Request OTP for login
+    /// </summary>
+    [HttpPost("otp/request")]
+    [ProducesResponseType(typeof(ApiResponse<OtpResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status429TooManyRequests)]
+    public async Task<IActionResult> RequestOtp([FromBody] OtpRequestRequest request)
+    {
+        try
+        {
+            var ipAddress = GetClientIpAddress();
+            var result = await _authService.RequestOtpLoginAsync(request.Mobile, ipAddress);
+
+            return Ok(new ApiResponse<OtpResponse>(true, result));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "MOBILE_NOT_FOUND")
+        {
+            return NotFound(new ApiErrorResponse(false, "MOBILE_NOT_FOUND", "Mobile number not registered"));
+        }
+        catch (InvalidOperationException ex) when (ex.Message.StartsWith("RATE_LIMIT_EXCEEDED"))
+        {
+            var retryAfter = ex.Message.Split(':').Length > 1 ? ex.Message.Split(':')[1] : "3600";
+            return StatusCode(StatusCodes.Status429TooManyRequests,
+                new ApiErrorResponse(false, "RATE_LIMIT_EXCEEDED", $"Too many OTP requests. Try again in {retryAfter} seconds."));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "OTP request failed for mobile: {Mobile}", request.Mobile);
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
+        }
+    }
+
+    /// <summary>
+    /// Verify OTP and login
+    /// </summary>
+    [HttpPost("otp/verify")]
+    [ProducesResponseType(typeof(ApiResponse<LoginResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<TwoFactorRequiredResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> VerifyOtp([FromBody] OtpVerifyRequest request)
+    {
+        try
+        {
+            var ipAddress = GetClientIpAddress();
+            var userAgent = Request.Headers.UserAgent.ToString();
+
+            var result = await _authService.VerifyOtpLoginAsync(request, ipAddress, userAgent);
+
+            if (result is TwoFactorRequiredResponse twoFactorResponse)
+            {
+                return Ok(new ApiResponse<TwoFactorRequiredResponse>(true, twoFactorResponse));
+            }
+
+            return Ok(new ApiResponse<LoginResponse>(true, (LoginResponse)result));
+        }
+        catch (UnauthorizedAccessException ex) when (ex.Message == "INVALID_OTP")
+        {
+            return Unauthorized(new ApiErrorResponse(false, "INVALID_OTP", "Invalid or expired OTP"));
+        }
+        catch (UnauthorizedAccessException ex) when (ex.Message == "USER_NOT_FOUND")
+        {
+            return Unauthorized(new ApiErrorResponse(false, "USER_NOT_FOUND", "No account found with this mobile number"));
+        }
+        catch (UnauthorizedAccessException ex) when (ex.Message == "ACCOUNT_DISABLED")
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                new ApiErrorResponse(false, "ACCOUNT_DISABLED", "Account has been disabled"));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "MAX_ATTEMPTS_EXCEEDED")
+        {
+            return BadRequest(new ApiErrorResponse(false, "MAX_ATTEMPTS_EXCEEDED", "Too many invalid OTP attempts. Please request a new OTP."));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "OTP verification failed");
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
+        }
+    }
+
+    /// <summary>
+    /// Setup two-factor authentication
+    /// </summary>
+    [Authorize]
+    [HttpPost("2fa/setup")]
+    [ProducesResponseType(typeof(ApiResponse<TwoFactorSetupResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> Setup2fa()
+    {
+        try
+        {
+            var userId = GetCurrentUserId();
+            var result = await _authService.Setup2faAsync(userId);
+
+            return Ok(new ApiResponse<TwoFactorSetupResponse>(true, result));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "2FA_ALREADY_ENABLED")
+        {
+            return BadRequest(new ApiErrorResponse(false, "2FA_ALREADY_ENABLED", "Two-factor authentication is already enabled"));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "2FA setup failed");
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
+        }
+    }
+
+    /// <summary>
+    /// Verify 2FA setup with TOTP code
+    /// </summary>
+    [Authorize]
+    [HttpPost("2fa/verify-setup")]
+    [ProducesResponseType(typeof(ApiResponse<TwoFactorVerifySetupResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> VerifySetup2fa([FromBody] TwoFactorVerifySetupRequest request)
+    {
+        try
+        {
+            var userId = GetCurrentUserId();
+            var result = await _authService.VerifySetup2faAsync(userId, request.Code);
+
+            return Ok(new ApiResponse<TwoFactorVerifySetupResponse>(true, result));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "2FA_ALREADY_ENABLED")
+        {
+            return BadRequest(new ApiErrorResponse(false, "2FA_ALREADY_ENABLED", "Two-factor authentication is already enabled"));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "2FA_SETUP_NOT_FOUND")
+        {
+            return BadRequest(new ApiErrorResponse(false, "2FA_SETUP_NOT_FOUND", "No pending 2FA setup found. Please start setup again."));
+        }
+        catch (UnauthorizedAccessException ex) when (ex.Message == "INVALID_2FA_CODE")
+        {
+            return Unauthorized(new ApiErrorResponse(false, "INVALID_2FA_CODE", "Invalid verification code"));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "2FA verify setup failed");
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
+        }
+    }
+
+    /// <summary>
+    /// Complete login with 2FA code
+    /// </summary>
+    [HttpPost("2fa/login")]
+    [ProducesResponseType(typeof(ApiResponse<TwoFactorLoginResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> Login2fa([FromBody] TwoFactorLoginRequest request)
+    {
+        try
+        {
+            var ipAddress = GetClientIpAddress();
+            var userAgent = Request.Headers.UserAgent.ToString();
+
+            var result = await _authService.Complete2faLoginAsync(request, ipAddress, userAgent);
+
+            return Ok(new ApiResponse<TwoFactorLoginResponse>(true, result));
+        }
+        catch (UnauthorizedAccessException ex) when (ex.Message == "INVALID_PARTIAL_TOKEN")
+        {
+            return Unauthorized(new ApiErrorResponse(false, "INVALID_PARTIAL_TOKEN", "Session expired. Please login again."));
+        }
+        catch (UnauthorizedAccessException ex) when (ex.Message == "INVALID_2FA_CODE")
+        {
+            return Unauthorized(new ApiErrorResponse(false, "INVALID_2FA_CODE", "Invalid verification code"));
+        }
+        catch (UnauthorizedAccessException ex) when (ex.Message == "2FA_NOT_ENABLED")
+        {
+            return BadRequest(new ApiErrorResponse(false, "2FA_NOT_ENABLED", "Two-factor authentication is not enabled"));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "2FA login failed");
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
+        }
+    }
+
+    /// <summary>
+    /// Disable two-factor authentication
+    /// </summary>
+    [Authorize]
+    [HttpDelete("2fa")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> Disable2fa([FromBody] TwoFactorDisableRequest request)
+    {
+        try
+        {
+            var userId = GetCurrentUserId();
+            await _authService.Disable2faAsync(userId, request.Password);
+
+            return Ok(new ApiResponse<object>(true, new
+            {
+                Message = "Two-factor authentication disabled successfully"
+            }));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "2FA_NOT_ENABLED")
+        {
+            return BadRequest(new ApiErrorResponse(false, "2FA_NOT_ENABLED", "Two-factor authentication is not enabled"));
+        }
+        catch (UnauthorizedAccessException ex) when (ex.Message == "INVALID_PASSWORD")
+        {
+            return Unauthorized(new ApiErrorResponse(false, "INVALID_PASSWORD", "Password is incorrect"));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "2FA disable failed");
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
+        }
+    }
+
+    /// <summary>
+    /// Get all active sessions for current user
+    /// </summary>
+    [Authorize]
+    [HttpGet("sessions")]
+    [ProducesResponseType(typeof(ApiResponse<SessionListResponse>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetSessions()
+    {
+        try
+        {
+            var userId = GetCurrentUserId();
+            var jti = User.FindFirst(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Jti)?.Value ?? "";
+
+            var result = await _sessionService.GetUserSessionsAsync(userId, jti);
+
+            return Ok(new ApiResponse<SessionListResponse>(true, result));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Get sessions failed");
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
+        }
+    }
+
+    /// <summary>
+    /// Revoke a specific session
+    /// </summary>
+    [Authorize]
+    [HttpDelete("sessions/{sessionId}")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> RevokeSession(Guid sessionId)
+    {
+        try
+        {
+            var userId = GetCurrentUserId();
+            var jti = User.FindFirst(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Jti)?.Value ?? "";
+
+            await _sessionService.RevokeSessionAsync(userId, sessionId, jti);
+
+            return Ok(new ApiResponse<object>(true, new
+            {
+                Message = "Session revoked successfully"
+            }));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "SESSION_NOT_FOUND")
+        {
+            return NotFound(new ApiErrorResponse(false, "SESSION_NOT_FOUND", "Session not found"));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "CANNOT_REVOKE_CURRENT_SESSION")
+        {
+            return BadRequest(new ApiErrorResponse(false, "CANNOT_REVOKE_CURRENT_SESSION", "Cannot revoke current session. Use logout instead."));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Revoke session failed");
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
+        }
     }
 
     #region Private Methods

@@ -24,6 +24,8 @@ public class AuthServiceRegistrationTests
     private readonly Mock<IDistributedCache> _mockCache;
     private readonly Mock<IEmailService> _mockEmailService;
     private readonly Mock<ILogger<AuthService>> _mockLogger;
+    private readonly Mock<ITwoFactorService> _mockTwoFactorService;
+    private readonly Mock<IOtpService> _mockOtpService;
     private readonly IConfiguration _configuration;
 
     public AuthServiceRegistrationTests()
@@ -33,6 +35,8 @@ public class AuthServiceRegistrationTests
         _mockCache = MockHelpers.CreateMockDistributedCache();
         _mockEmailService = new Mock<IEmailService>();
         _mockLogger = new Mock<ILogger<AuthService>>();
+        _mockTwoFactorService = new Mock<ITwoFactorService>();
+        _mockOtpService = new Mock<IOtpService>();
 
         var inMemorySettings = new Dictionary<string, string?>
         {
@@ -78,7 +82,9 @@ public class AuthServiceRegistrationTests
             _mockCache.Object,
             _mockEmailService.Object,
             _mockLogger.Object,
-            _configuration
+            _configuration,
+            _mockTwoFactorService.Object,
+            _mockOtpService.Object
         );
     }
 }
@@ -90,6 +96,8 @@ public class AuthServiceLoginTests
     private readonly Mock<IDistributedCache> _mockCache;
     private readonly Mock<IEmailService> _mockEmailService;
     private readonly Mock<ILogger<AuthService>> _mockLogger;
+    private readonly Mock<ITwoFactorService> _mockTwoFactorService;
+    private readonly Mock<IOtpService> _mockOtpService;
     private readonly IConfiguration _configuration;
 
     public AuthServiceLoginTests()
@@ -99,6 +107,8 @@ public class AuthServiceLoginTests
         _mockCache = MockHelpers.CreateMockDistributedCache();
         _mockEmailService = new Mock<IEmailService>();
         _mockLogger = new Mock<ILogger<AuthService>>();
+        _mockTwoFactorService = new Mock<ITwoFactorService>();
+        _mockOtpService = new Mock<IOtpService>();
 
         var inMemorySettings = new Dictionary<string, string?>
         {
@@ -255,7 +265,9 @@ public class AuthServiceLoginTests
             _mockCache.Object,
             _mockEmailService.Object,
             _mockLogger.Object,
-            _configuration
+            _configuration,
+            _mockTwoFactorService.Object,
+            _mockOtpService.Object
         );
     }
 }
@@ -267,6 +279,8 @@ public class AuthServiceEmailVerificationTests
     private readonly Mock<IDistributedCache> _mockCache;
     private readonly Mock<IEmailService> _mockEmailService;
     private readonly Mock<ILogger<AuthService>> _mockLogger;
+    private readonly Mock<ITwoFactorService> _mockTwoFactorService;
+    private readonly Mock<IOtpService> _mockOtpService;
     private readonly IConfiguration _configuration;
 
     public AuthServiceEmailVerificationTests()
@@ -276,6 +290,8 @@ public class AuthServiceEmailVerificationTests
         _mockCache = new Mock<IDistributedCache>();
         _mockEmailService = new Mock<IEmailService>();
         _mockLogger = new Mock<ILogger<AuthService>>();
+        _mockTwoFactorService = new Mock<ITwoFactorService>();
+        _mockOtpService = new Mock<IOtpService>();
 
         var inMemorySettings = new Dictionary<string, string?>
         {
@@ -384,7 +400,9 @@ public class AuthServiceEmailVerificationTests
             _mockCache.Object,
             _mockEmailService.Object,
             _mockLogger.Object,
-            _configuration
+            _configuration,
+            _mockTwoFactorService.Object,
+            _mockOtpService.Object
         );
     }
 }
@@ -396,6 +414,8 @@ public class AuthServicePasswordTests
     private readonly Mock<IDistributedCache> _mockCache;
     private readonly Mock<IEmailService> _mockEmailService;
     private readonly Mock<ILogger<AuthService>> _mockLogger;
+    private readonly Mock<ITwoFactorService> _mockTwoFactorService;
+    private readonly Mock<IOtpService> _mockOtpService;
     private readonly IConfiguration _configuration;
 
     public AuthServicePasswordTests()
@@ -405,6 +425,8 @@ public class AuthServicePasswordTests
         _mockCache = new Mock<IDistributedCache>();
         _mockEmailService = new Mock<IEmailService>();
         _mockLogger = new Mock<ILogger<AuthService>>();
+        _mockTwoFactorService = new Mock<ITwoFactorService>();
+        _mockOtpService = new Mock<IOtpService>();
 
         var inMemorySettings = new Dictionary<string, string?>
         {
@@ -527,7 +549,9 @@ public class AuthServicePasswordTests
             _mockCache.Object,
             _mockEmailService.Object,
             _mockLogger.Object,
-            _configuration
+            _configuration,
+            _mockTwoFactorService.Object,
+            _mockOtpService.Object
         );
     }
 }

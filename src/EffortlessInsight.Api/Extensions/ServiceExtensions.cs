@@ -21,6 +21,10 @@ public static class ServiceExtensions
     {
         // Register auth services
         services.AddScoped<IJwtService, JwtService>();
+        services.AddScoped<ITwoFactorService, TwoFactorService>();
+        services.AddScoped<ISmsService, ConsoleSmsSer­vice>();
+        services.AddScoped<IOtpService, OtpService>();
+        services.AddScoped<ISessionService, SessionService>();
         services.AddScoped<IAuthService, AuthService>();
 
         // Register application services

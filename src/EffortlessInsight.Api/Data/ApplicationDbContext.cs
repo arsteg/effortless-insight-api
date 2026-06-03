@@ -27,6 +27,7 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
     public DbSet<KnowledgeBase> KnowledgeBase => Set<KnowledgeBase>();
     public DbSet<UserSession> UserSessions => Set<UserSession>();
     public DbSet<LoginAudit> LoginAudits => Set<LoginAudit>();
+    public DbSet<PasswordHistory> PasswordHistory => Set<PasswordHistory>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -152,6 +153,10 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
             .HasIndex(l => l.IpAddress);
         modelBuilder.Entity<LoginAudit>()
             .HasIndex(l => l.CreatedAt);
+
+        // Password History indexes
+        modelBuilder.Entity<PasswordHistory>()
+            .HasIndex(p => p.UserId);
 
         // Seed initial data
         SeedData(modelBuilder);

@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.DTOs;
@@ -18,11 +19,14 @@ public class AuthService : IAuthService
     private readonly IEmailService _emailService;
     private readonly ILogger<AuthService> _logger;
     private readonly IConfiguration _configuration;
+    private readonly ITwoFactorService _twoFactorService;
+    private readonly IOtpService _otpService;
 
     private const int MaxFailedAttempts = 5;
     private const int LockoutMinutes = 15;
     private const int VerificationTokenExpiryHours = 24;
     private const int PasswordResetTokenExpiryHours = 24;
+    private const int PasswordHistoryCount = 5;
 
     public AuthService(
         UserManager<ApplicationUser> userManager,
@@ -31,7 +35,9 @@ public class AuthService : IAuthService
         IDistributedCache cache,
         IEmailService emailService,
         ILogger<AuthService> logger,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        ITwoFactorService twoFactorService,
+        IOtpService otpService)
     {
         _userManager = userManager;
         _dbContext = dbContext;
@@ -40,6 +46,8 @@ public class AuthService : IAuthService
         _emailService = emailService;
         _logger = logger;
         _configuration = configuration;
+        _twoFactorService = twoFactorService;
+        _otpService = otpService;
     }
 
     public async Task<RegisterResponse> RegisterAsync(RegisterRequest request, string ipAddress, string? userAgent)
@@ -399,7 +407,7 @@ public class AuthService : IAuthService
             throw new InvalidOperationException("INVALID_TOKEN");
         }
 
-        var resetData = System.Text.Json.JsonSerializer.Deserialize<PasswordResetData>(cachedData);
+        var resetData = JsonSerializer.Deserialize<PasswordResetData>(cachedData);
         if (resetData == null)
         {
             throw new InvalidOperationException("INVALID_TOKEN");
@@ -411,6 +419,12 @@ public class AuthService : IAuthService
             throw new InvalidOperationException("USER_NOT_FOUND");
         }
 
+        // Check password history
+        if (await IsPasswordRecentlyUsedAsync(user.Id, request.Password))
+        {
+            throw new InvalidOperationException("PASSWORD_RECENTLY_USED");
+        }
+
         // Reset password
         var resetToken = await _userManager.GeneratePasswordResetTokenAsync(user);
         var result = await _userManager.ResetPasswordAsync(user, resetToken, request.Password);
@@ -420,6 +434,9 @@ public class AuthService : IAuthService
             var errors = string.Join(", ", result.Errors.Select(e => e.Description));
             throw new InvalidOperationException($"PASSWORD_RESET_FAILED: {errors}");
         }
+
+        // Add to password history
+        await AddPasswordHistoryAsync(user.Id, user.PasswordHash!);
 
         // Update password changed timestamp
         user.PasswordChangedAt = DateTime.UtcNow;
@@ -448,6 +465,15 @@ public class AuthService : IAuthService
             throw new InvalidOperationException("USER_NOT_FOUND");
         }
 
+        // Check password history
+        if (await IsPasswordRecentlyUsedAsync(userId, request.NewPassword))
+        {
+            throw new InvalidOperationException("PASSWORD_RECENTLY_USED");
+        }
+
+        // Store old password hash before changing
+        var oldPasswordHash = user.PasswordHash!;
+
         var result = await _userManager.ChangePasswordAsync(user, request.CurrentPassword, request.NewPassword);
         if (!result.Succeeded)
         {
@@ -458,6 +484,9 @@ public class AuthService : IAuthService
             }
             throw new InvalidOperationException($"PASSWORD_CHANGE_FAILED: {errors}");
         }
+
+        // Add old password to history
+        await AddPasswordHistoryAsync(userId, oldPasswordHash);
 
         // Update password changed timestamp
         user.PasswordChangedAt = DateTime.UtcNow;
@@ -488,6 +517,398 @@ public class AuthService : IAuthService
 
         _logger.LogInformation("User logged out: {UserId}, AllDevices: {AllDevices}", userId, allDevices);
     }
+
+    #region OTP Login
+
+    public async Task<OtpResponse> RequestOtpLoginAsync(string mobile, string ipAddress)
+    {
+        // For login purpose, verify mobile exists in database first
+        var normalizedMobile = NormalizeMobile(mobile);
+        var userExists = await _dbContext.Users
+            .AnyAsync(u => u.MobileNormalized == normalizedMobile && u.DeletedAt == null);
+
+        if (!userExists)
+        {
+            throw new InvalidOperationException("MOBILE_NOT_FOUND");
+        }
+
+        return await _otpService.RequestOtpAsync(mobile, "login", ipAddress);
+    }
+
+    public async Task<object> VerifyOtpLoginAsync(OtpVerifyRequest request, string ipAddress, string? userAgent)
+    {
+        var isValid = await _otpService.VerifyOtpAsync(request.Mobile, request.Otp, "login");
+        if (!isValid)
+        {
+            throw new UnauthorizedAccessException("INVALID_OTP");
+        }
+
+        // Find user by mobile
+        var normalizedMobile = NormalizeMobile(request.Mobile);
+        var user = await _dbContext.Users
+            .Include(u => u.Organization)
+            .FirstOrDefaultAsync(u => u.MobileNormalized == normalizedMobile && u.DeletedAt == null);
+
+        if (user == null)
+        {
+            throw new UnauthorizedAccessException("USER_NOT_FOUND");
+        }
+
+        // Check if account is active
+        if (!user.IsActive)
+        {
+            throw new UnauthorizedAccessException("ACCOUNT_DISABLED");
+        }
+
+        // Check if mobile is verified, if not verify it now
+        if (!user.IsMobileVerified)
+        {
+            user.IsMobileVerified = true;
+            user.MobileVerifiedAt = DateTime.UtcNow;
+            await _userManager.UpdateAsync(user);
+        }
+
+        // Check if 2FA is enabled
+        if (user.Is2faEnabled)
+        {
+            var partialToken = GenerateSecureToken();
+            var partialTokenData = new PartialTokenData
+            {
+                UserId = user.Id,
+                Email = user.Email!,
+                RememberMe = false,
+                DeviceInfo = null,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            await _cache.SetStringAsync(
+                $"2fa_partial:{partialToken}",
+                JsonSerializer.Serialize(partialTokenData),
+                new DistributedCacheEntryOptions
+                {
+                    AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5)
+                });
+
+            return new TwoFactorRequiredResponse(
+                Requires2fa: true,
+                PartialToken: partialToken,
+                ExpiresIn: 300,
+                Methods: new List<string> { "totp", "backup_code" }
+            );
+        }
+
+        // Generate tokens and create session
+        var loginResponse = await CreateLoginSessionAsync(user, false, null, ipAddress, userAgent);
+
+        await LogLoginAuditAsync(user.Id, user.Email, true, null, ipAddress, userAgent, "otp");
+
+        return loginResponse;
+    }
+
+    #endregion
+
+    #region 2FA Setup
+
+    public async Task<TwoFactorSetupResponse> Setup2faAsync(Guid userId)
+    {
+        var user = await _userManager.FindByIdAsync(userId.ToString());
+        if (user == null)
+        {
+            throw new InvalidOperationException("USER_NOT_FOUND");
+        }
+
+        if (user.Is2faEnabled)
+        {
+            throw new InvalidOperationException("2FA_ALREADY_ENABLED");
+        }
+
+        // Generate 2FA setup
+        var (secret, qrCodeDataUrl, otpauthUrl, backupCodes) = _twoFactorService.GenerateSetup(user.Email!);
+
+        // Store pending setup in cache (not in DB until verified)
+        var setupData = new TwoFactorSetupData
+        {
+            UserId = userId,
+            Secret = secret,
+            BackupCodes = backupCodes,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await _cache.SetStringAsync(
+            $"2fa_setup:{userId}",
+            JsonSerializer.Serialize(setupData),
+            new DistributedCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(15)
+            });
+
+        _logger.LogInformation("2FA setup initiated for user: {UserId}", userId);
+
+        return new TwoFactorSetupResponse(
+            Secret: secret,
+            QrCodeDataUrl: qrCodeDataUrl,
+            OtpauthUrl: otpauthUrl,
+            BackupCodes: backupCodes
+        );
+    }
+
+    public async Task<TwoFactorVerifySetupResponse> VerifySetup2faAsync(Guid userId, string code)
+    {
+        var user = await _userManager.FindByIdAsync(userId.ToString());
+        if (user == null)
+        {
+            throw new InvalidOperationException("USER_NOT_FOUND");
+        }
+
+        if (user.Is2faEnabled)
+        {
+            throw new InvalidOperationException("2FA_ALREADY_ENABLED");
+        }
+
+        // Get pending setup from cache
+        var setupDataJson = await _cache.GetStringAsync($"2fa_setup:{userId}");
+        if (string.IsNullOrEmpty(setupDataJson))
+        {
+            throw new InvalidOperationException("2FA_SETUP_NOT_FOUND");
+        }
+
+        var setupData = JsonSerializer.Deserialize<TwoFactorSetupData>(setupDataJson);
+        if (setupData == null)
+        {
+            throw new InvalidOperationException("2FA_SETUP_NOT_FOUND");
+        }
+
+        // Verify the code
+        if (!_twoFactorService.VerifyCode(setupData.Secret, code))
+        {
+            throw new UnauthorizedAccessException("INVALID_2FA_CODE");
+        }
+
+        // Enable 2FA for user
+        user.Is2faEnabled = true;
+        user.TotpSecretEncrypted = _twoFactorService.EncryptSecret(setupData.Secret);
+        user.BackupCodesHash = _twoFactorService.HashBackupCodes(setupData.BackupCodes);
+        user.UpdatedAt = DateTime.UtcNow;
+
+        await _userManager.UpdateAsync(user);
+
+        // Remove setup from cache
+        await _cache.RemoveAsync($"2fa_setup:{userId}");
+
+        _logger.LogInformation("2FA enabled for user: {UserId}", userId);
+
+        return new TwoFactorVerifySetupResponse(
+            Message: "Two-factor authentication enabled successfully",
+            BackupCodesRemaining: setupData.BackupCodes.Count
+        );
+    }
+
+    public async Task Disable2faAsync(Guid userId, string password)
+    {
+        var user = await _userManager.FindByIdAsync(userId.ToString());
+        if (user == null)
+        {
+            throw new InvalidOperationException("USER_NOT_FOUND");
+        }
+
+        if (!user.Is2faEnabled)
+        {
+            throw new InvalidOperationException("2FA_NOT_ENABLED");
+        }
+
+        // Verify password
+        var isPasswordValid = await _userManager.CheckPasswordAsync(user, password);
+        if (!isPasswordValid)
+        {
+            throw new UnauthorizedAccessException("INVALID_PASSWORD");
+        }
+
+        // Disable 2FA
+        user.Is2faEnabled = false;
+        user.TotpSecretEncrypted = null;
+        user.BackupCodesHash = null;
+        user.UpdatedAt = DateTime.UtcNow;
+
+        await _userManager.UpdateAsync(user);
+
+        _logger.LogInformation("2FA disabled for user: {UserId}", userId);
+    }
+
+    #endregion
+
+    #region 2FA Login
+
+    public async Task<TwoFactorLoginResponse> Complete2faLoginAsync(TwoFactorLoginRequest request, string ipAddress, string? userAgent)
+    {
+        // Get partial token data
+        var partialTokenDataJson = await _cache.GetStringAsync($"2fa_partial:{request.PartialToken}");
+        if (string.IsNullOrEmpty(partialTokenDataJson))
+        {
+            throw new UnauthorizedAccessException("INVALID_PARTIAL_TOKEN");
+        }
+
+        var partialTokenData = JsonSerializer.Deserialize<PartialTokenData>(partialTokenDataJson);
+        if (partialTokenData == null)
+        {
+            throw new UnauthorizedAccessException("INVALID_PARTIAL_TOKEN");
+        }
+
+        var user = await _userManager.FindByIdAsync(partialTokenData.UserId.ToString());
+        if (user == null)
+        {
+            throw new UnauthorizedAccessException("USER_NOT_FOUND");
+        }
+
+        if (!user.Is2faEnabled || user.TotpSecretEncrypted == null)
+        {
+            throw new UnauthorizedAccessException("2FA_NOT_ENABLED");
+        }
+
+        var backupCodeUsed = false;
+        var isValid = false;
+
+        // Check if it's a backup code (8 alphanumeric characters)
+        if (request.Code.Length == 8 && request.Code.All(c => char.IsLetterOrDigit(c)))
+        {
+            // Try to verify as backup code
+            if (user.BackupCodesHash != null && _twoFactorService.VerifyBackupCode(user.BackupCodesHash, request.Code, out var usedIndex))
+            {
+                // Mark backup code as used
+                user.BackupCodesHash[usedIndex] = string.Empty;
+                await _userManager.UpdateAsync(user);
+                isValid = true;
+                backupCodeUsed = true;
+            }
+        }
+
+        // If not a backup code or backup verification failed, try TOTP
+        if (!isValid)
+        {
+            var secret = _twoFactorService.DecryptSecret(user.TotpSecretEncrypted);
+            isValid = _twoFactorService.VerifyCode(secret, request.Code);
+        }
+
+        if (!isValid)
+        {
+            await LogLoginAuditAsync(user.Id, user.Email, false, "invalid_2fa_code", ipAddress, userAgent, "2fa");
+            throw new UnauthorizedAccessException("INVALID_2FA_CODE");
+        }
+
+        // Remove partial token
+        await _cache.RemoveAsync($"2fa_partial:{request.PartialToken}");
+
+        // Reset failed login attempts
+        await ResetFailedLoginAttemptsAsync(user);
+
+        // Create session
+        var organization = user.OrganizationId.HasValue
+            ? await _dbContext.Organizations.FindAsync(user.OrganizationId.Value)
+            : null;
+
+        var accessToken = _jwtService.GenerateAccessToken(user, organization);
+        var (refreshToken, _, expiresAt) = _jwtService.GenerateRefreshToken(partialTokenData.RememberMe);
+
+        var session = new UserSession
+        {
+            UserId = user.Id,
+            RefreshTokenHash = ComputeSha256Hash(refreshToken),
+            RefreshTokenJti = refreshToken.Split(':')[0],
+            DeviceId = partialTokenData.DeviceInfo?.DeviceId,
+            DeviceName = partialTokenData.DeviceInfo?.DeviceName ?? ExtractDeviceName(userAgent),
+            Platform = partialTokenData.DeviceInfo?.Platform ?? "web",
+            UserAgent = userAgent,
+            IpAddress = ipAddress,
+            ExpiresAt = expiresAt,
+            LastActiveAt = DateTime.UtcNow
+        };
+
+        _dbContext.UserSessions.Add(session);
+
+        user.LastLoginAt = DateTime.UtcNow;
+        user.LastLoginIp = ipAddress;
+        user.LastLoginUserAgent = userAgent;
+
+        await _dbContext.SaveChangesAsync();
+
+        await LogLoginAuditAsync(user.Id, user.Email, true, null, ipAddress, userAgent, backupCodeUsed ? "2fa_backup" : "2fa");
+
+        _logger.LogInformation("2FA login successful for user: {UserId} (backup code: {BackupCodeUsed})", user.Id, backupCodeUsed);
+
+        return new TwoFactorLoginResponse(
+            AccessToken: accessToken,
+            RefreshToken: refreshToken,
+            TokenType: "Bearer",
+            ExpiresIn: _jwtService.GetAccessTokenExpiryMinutes() * 60,
+            BackupCodeUsed: backupCodeUsed
+        );
+    }
+
+    #endregion
+
+    #region Password History
+
+    public async Task<bool> IsPasswordRecentlyUsedAsync(Guid userId, string password)
+    {
+        var recentPasswords = await _dbContext.PasswordHistory
+            .Where(p => p.UserId == userId)
+            .OrderByDescending(p => p.CreatedAt)
+            .Take(PasswordHistoryCount)
+            .Select(p => p.PasswordHash)
+            .ToListAsync();
+
+        var user = await _userManager.FindByIdAsync(userId.ToString());
+        if (user == null)
+        {
+            return false;
+        }
+
+        // Check current password
+        var currentPasswordResult = _userManager.PasswordHasher.VerifyHashedPassword(user, user.PasswordHash!, password);
+        if (currentPasswordResult == PasswordVerificationResult.Success || currentPasswordResult == PasswordVerificationResult.SuccessRehashNeeded)
+        {
+            return true;
+        }
+
+        // Check historical passwords
+        foreach (var hash in recentPasswords)
+        {
+            var result = _userManager.PasswordHasher.VerifyHashedPassword(user, hash, password);
+            if (result == PasswordVerificationResult.Success || result == PasswordVerificationResult.SuccessRehashNeeded)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public async Task AddPasswordHistoryAsync(Guid userId, string passwordHash)
+    {
+        var passwordHistory = new PasswordHistory
+        {
+            UserId = userId,
+            PasswordHash = passwordHash,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        _dbContext.PasswordHistory.Add(passwordHistory);
+
+        // Remove old entries beyond the limit
+        var oldEntries = await _dbContext.PasswordHistory
+            .Where(p => p.UserId == userId)
+            .OrderByDescending(p => p.CreatedAt)
+            .Skip(PasswordHistoryCount)
+            .ToListAsync();
+
+        if (oldEntries.Any())
+        {
+            _dbContext.PasswordHistory.RemoveRange(oldEntries);
+        }
+
+        await _dbContext.SaveChangesAsync();
+    }
+
+    #endregion
 
     #region Private Methods
 
@@ -682,6 +1103,14 @@ internal class PartialTokenData
     public string Email { get; set; } = string.Empty;
     public bool RememberMe { get; set; }
     public DeviceInfo? DeviceInfo { get; set; }
+    public DateTime CreatedAt { get; set; }
+}
+
+internal class TwoFactorSetupData
+{
+    public Guid UserId { get; set; }
+    public string Secret { get; set; } = string.Empty;
+    public List<string> BackupCodes { get; set; } = new();
     public DateTime CreatedAt { get; set; }
 }
 
