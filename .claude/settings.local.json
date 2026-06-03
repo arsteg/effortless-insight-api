@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dotnet build:*)",
+      "Bash(dotnet test:*)",
+      "Bash(del \"C:\\\\Work\\\\EffortlessInsight\\\\apps\\\\effortless-insight-api\\\\src\\\\EffortlessInsight.Api\\\\Migrations\\\\20260603071615_ConfigureJsonColumns.cs\")",
+      "Bash(del:*)",
+      "Bash(del \"C:\\\\Work\\\\EffortlessInsight\\\\apps\\\\effortless-insight-api\\\\src\\\\EffortlessInsight.Api\\\\Migrations\\\\ApplicationDbContextModelSnapshot.cs\")",
+      "Bash(dotnet ef migrations add:*)",
+      "Bash(dotnet ef database update:*)",
+      "Bash(dotnet ef migrations remove:*)",
+      "Bash(docker ps:*)",
+      "Bash(docker run:*)",
+      "Bash(docker port:*)",
+      "Bash(netstat:*)",
+      "Bash(docker stop:*)",
+      "Bash(docker rm:*)",
+      "Bash(docker logs:*)",
+      "Bash(docker exec:*)",
+      "Bash(docker restart:*)",
+      "Bash(tasklist:*)",
+      "Bash(net stop:*)",
+      "Bash(taskkill:*)",
+      "Bash(dotnet user-secrets:*)",
+      "Bash(set ASPNETCORE_ENVIRONMENT=Development:*)",
+      "Bash(findstr:*)",
+      "Bash(docker-compose up:*)",
+      "Bash(docker start:*)",
+      "Bash(timeout /t 5 /nobreak)",
+      "Bash(docker-compose down:*)",
+      "Bash(ping:*)"
+    ]
+  }
+}

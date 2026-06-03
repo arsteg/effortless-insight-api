@@ -1,11 +1,15 @@
 using System.Text;
 using Amazon.S3;
+using EffortlessInsight.Api.Data;
+using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.Services;
+using EffortlessInsight.Api.Services.Auth;
 using FluentValidation;
 using FluentValidation.AspNetCore;
 using Hangfire;
 using Hangfire.Redis.StackExchange;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.IdentityModel.Tokens;
 using StackExchange.Redis;
 
@@ -15,6 +19,10 @@ public static class ServiceExtensions
 {
     public static IServiceCollection AddApplicationServices(this IServiceCollection services, IConfiguration configuration)
     {
+        // Register auth services
+        services.AddScoped<IJwtService, JwtService>();
+        services.AddScoped<IAuthService, AuthService>();
+
         // Register application services
         services.AddScoped<INoticeService, NoticeService>();
         services.AddScoped<IOrganizationService, OrganizationService>();
@@ -23,6 +31,35 @@ public static class ServiceExtensions
         services.AddScoped<IFileStorageService, S3FileStorageService>();
         services.AddScoped<IEmailService, SendGridEmailService>();
         services.AddScoped<IAuditService, AuditService>();
+
+        return services;
+    }
+
+    public static IServiceCollection AddIdentityServices(this IServiceCollection services, IConfiguration configuration)
+    {
+        services.AddIdentity<ApplicationUser, ApplicationRole>(options =>
+        {
+            // Password settings
+            options.Password.RequireDigit = true;
+            options.Password.RequireLowercase = true;
+            options.Password.RequireUppercase = true;
+            options.Password.RequireNonAlphanumeric = true;
+            options.Password.RequiredLength = 8;
+            options.Password.RequiredUniqueChars = 4;
+
+            // Lockout settings (handled manually in AuthService for more control)
+            options.Lockout.AllowedForNewUsers = false;
+
+            // User settings
+            options.User.RequireUniqueEmail = true;
+            options.User.AllowedUserNameCharacters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._@+";
+
+            // SignIn settings
+            options.SignIn.RequireConfirmedEmail = false; // We handle this in AuthService
+            options.SignIn.RequireConfirmedPhoneNumber = false;
+        })
+        .AddEntityFrameworkStores<ApplicationDbContext>()
+        .AddDefaultTokenProviders();
 
         return services;
     }
@@ -121,8 +158,7 @@ public static class ServiceExtensions
                 ?? throw new InvalidOperationException("AI Service base URL not configured");
             client.BaseAddress = new Uri(baseUrl);
             client.Timeout = TimeSpan.FromSeconds(120); // AI processing can take time
-        })
-        .AddTransientHttpErrorPolicy(p => p.WaitAndRetryAsync(3, _ => TimeSpan.FromSeconds(2)));
+        });
 
         return services;
     }
@@ -141,8 +177,12 @@ public class HangfireAuthorizationFilter : Hangfire.Dashboard.IDashboardAuthoriz
 {
     public bool Authorize(Hangfire.Dashboard.DashboardContext context)
     {
-        var httpContext = context.GetHttpContext();
-        return httpContext.User.Identity?.IsAuthenticated == true
-            && httpContext.User.IsInRole("owner");
+        // Get HttpContext from the AspNetCore context
+        if (context is Hangfire.Dashboard.AspNetCoreDashboardContext aspNetContext)
+        {
+            return aspNetContext.HttpContext.User.Identity?.IsAuthenticated == true
+                && aspNetContext.HttpContext.User.IsInRole("owner");
+        }
+        return false;
     }
 }

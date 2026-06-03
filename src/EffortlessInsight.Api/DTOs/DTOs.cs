@@ -4,6 +4,78 @@ namespace EffortlessInsight.Api.DTOs;
 // Auth DTOs
 // ============================================================================
 
+public record RegisterRequest(
+    string Email,
+    string Password,
+    string Name,
+    string? Mobile,
+    bool AcceptTerms
+);
+
+public record RegisterResponse(
+    Guid UserId,
+    string Email,
+    string Name,
+    bool EmailVerified,
+    string Message
+);
+
+public record LoginRequest(
+    string Email,
+    string Password,
+    bool RememberMe = false,
+    DeviceInfo? DeviceInfo = null
+);
+
+public record DeviceInfo(
+    string? DeviceId,
+    string? DeviceName,
+    string Platform // web, ios, android
+);
+
+public record LoginResponse(
+    string AccessToken,
+    string RefreshToken,
+    string TokenType,
+    int ExpiresIn,
+    UserDto User
+);
+
+public record TwoFactorRequiredResponse(
+    bool Requires2fa,
+    string PartialToken,
+    int ExpiresIn,
+    List<string> Methods
+);
+
+public record VerifyEmailRequest(string Token);
+
+public record RefreshTokenRequest(string RefreshToken);
+
+public record TokenResponse(
+    string AccessToken,
+    string RefreshToken,
+    string TokenType,
+    int ExpiresIn
+);
+
+public record ForgotPasswordRequest(string Email);
+
+public record ResetPasswordRequest(
+    string Token,
+    string Password,
+    string ConfirmPassword
+);
+
+public record ChangePasswordRequest(
+    string CurrentPassword,
+    string NewPassword,
+    string ConfirmPassword
+);
+
+public record LogoutRequest(bool AllDevices = false);
+
+// Legacy DTOs for backward compatibility
 public record LoginDto(string Email, string Password);
 public record RegisterDto(string Email, string Password, string Name, string? Mobile);
 public record AuthResponse(string AccessToken, string RefreshToken, UserDto User, DateTime ExpiresAt);
@@ -279,3 +351,16 @@ public record AttachmentDto(Guid Id, string FileName, string FileUrl, int? FileS
 // ============================================================================
 
 public record PagedResult<T>(List<T> Items, int TotalCount, int Page, int PageSize, int TotalPages);
+
+// ============================================================================
+// API Response Wrappers
+// ============================================================================
+
+public record ApiResponse<T>(bool Success, T Data);
+
+public record ApiErrorResponse(
+    bool Success,
+    string Code,
+    string Message,
+    Dictionary<string, string[]>? Errors = null
+);

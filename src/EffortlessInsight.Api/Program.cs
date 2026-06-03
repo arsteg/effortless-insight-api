@@ -34,6 +34,9 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
             npgsqlOptions.EnableRetryOnFailure(3);
         }));
 
+// Add Identity
+builder.Services.AddIdentityServices(builder.Configuration);
+
 // Add custom services
 builder.Services.AddApplicationServices(builder.Configuration);
 builder.Services.AddAuthenticationServices(builder.Configuration);

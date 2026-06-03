@@ -25,6 +25,8 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
     public DbSet<Subscription> Subscriptions => Set<Subscription>();
     public DbSet<Embedding> Embeddings => Set<Embedding>();
     public DbSet<KnowledgeBase> KnowledgeBase => Set<KnowledgeBase>();
+    public DbSet<UserSession> UserSessions => Set<UserSession>();
+    public DbSet<LoginAudit> LoginAudits => Set<LoginAudit>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -41,6 +43,80 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
         modelBuilder.Entity<ApplicationUser>().HasQueryFilter(u => u.DeletedAt == null);
         modelBuilder.Entity<Notice>().HasQueryFilter(n => n.DeletedAt == null);
         modelBuilder.Entity<Comment>().HasQueryFilter(c => c.DeletedAt == null);
+
+        // Configure JSON columns for Dictionary properties
+        modelBuilder.Entity<ApplicationUser>()
+            .Property(u => u.Preferences)
+            .HasColumnType("jsonb");
+
+        modelBuilder.Entity<Notice>()
+            .Property(n => n.Metadata)
+            .HasColumnType("jsonb");
+
+        modelBuilder.Entity<AuditLog>()
+            .Property(a => a.OldValues)
+            .HasColumnType("jsonb");
+
+        modelBuilder.Entity<AuditLog>()
+            .Property(a => a.NewValues)
+            .HasColumnType("jsonb");
+
+        modelBuilder.Entity<Plan>()
+            .Property(p => p.Features)
+            .HasColumnType("jsonb");
+
+        modelBuilder.Entity<Embedding>()
+            .Property(e => e.Metadata)
+            .HasColumnType("jsonb");
+
+        modelBuilder.Entity<KnowledgeBase>()
+            .Property(k => k.Metadata)
+            .HasColumnType("jsonb");
+
+        // Configure JSON columns for array/list properties
+        modelBuilder.Entity<ApplicationUser>()
+            .Property(u => u.BackupCodesHash)
+            .HasColumnType("jsonb");
+
+        modelBuilder.Entity<Notice>()
+            .Property(n => n.Tags)
+            .HasColumnType("jsonb");
+
+        modelBuilder.Entity<Comment>()
+            .Property(c => c.Mentions)
+            .HasColumnType("jsonb");
+
+        modelBuilder.Entity<Comment>()
+            .Property(c => c.AttachmentUrls)
+            .HasColumnType("jsonb");
+
+        modelBuilder.Entity<Organization>()
+            .Property(o => o.Gstins)
+            .HasColumnType("jsonb");
+
+        modelBuilder.Entity<Organization>()
+            .Property(o => o.Settings)
+            .HasColumnType("jsonb");
+
+        modelBuilder.Entity<NoticeAiReport>()
+            .Property(r => r.ActionItems)
+            .HasColumnType("jsonb");
+
+        modelBuilder.Entity<NoticeAiReport>()
+            .Property(r => r.RequiredDocuments)
+            .HasColumnType("jsonb");
+
+        modelBuilder.Entity<NoticeAiReport>()
+            .Property(r => r.LegalReferences)
+            .HasColumnType("jsonb");
+
+        modelBuilder.Entity<NoticeAiReport>()
+            .Property(r => r.ConfidenceScores)
+            .HasColumnType("jsonb");
+
+        modelBuilder.Entity<NoticeAiReport>()
+            .Property(r => r.FullReportJson)
+            .HasColumnType("jsonb");
 
         // Configure vector column
         modelBuilder.Entity<Embedding>()
@@ -60,12 +136,32 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
         modelBuilder.Entity<Embedding>()
             .HasIndex(e => e.SourceType);
 
+        // User Sessions indexes
+        modelBuilder.Entity<UserSession>()
+            .HasIndex(s => s.UserId);
+        modelBuilder.Entity<UserSession>()
+            .HasIndex(s => s.RefreshTokenJti)
+            .IsUnique();
+        modelBuilder.Entity<UserSession>()
+            .HasIndex(s => s.ExpiresAt);
+
+        // Login Audit indexes
+        modelBuilder.Entity<LoginAudit>()
+            .HasIndex(l => l.UserId);
+        modelBuilder.Entity<LoginAudit>()
+            .HasIndex(l => l.IpAddress);
+        modelBuilder.Entity<LoginAudit>()
+            .HasIndex(l => l.CreatedAt);
+
         // Seed initial data
         SeedData(modelBuilder);
     }
 
     private static void SeedData(ModelBuilder modelBuilder)
     {
+        // Use a fixed date for seed data to avoid migration changes
+        var seedDate = new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
         // Seed Plans
         modelBuilder.Entity<Plan>().HasData(
             new Plan
@@ -80,7 +176,7 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
                 GstinLimit = 1,
                 StorageLimitGb = 1,
                 IsActive = true,
-                CreatedAt = DateTime.UtcNow
+                CreatedAt = seedDate
             },
             new Plan
             {
@@ -94,7 +190,7 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
                 GstinLimit = 1,
                 StorageLimitGb = 5,
                 IsActive = true,
-                CreatedAt = DateTime.UtcNow
+                CreatedAt = seedDate
             },
             new Plan
             {
@@ -108,7 +204,7 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
                 GstinLimit = 3,
                 StorageLimitGb = 20,
                 IsActive = true,
-                CreatedAt = DateTime.UtcNow
+                CreatedAt = seedDate
             },
             new Plan
             {
@@ -122,7 +218,7 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
                 GstinLimit = null, // Unlimited
                 StorageLimitGb = 100,
                 IsActive = true,
-                CreatedAt = DateTime.UtcNow
+                CreatedAt = seedDate
             }
         );
     }
