@@ -142,6 +142,297 @@ public record UpdateUserDto(string? Name, string? Mobile, string? AvatarUrl, Dic
 // Organization DTOs
 // ============================================================================
 
+public record CreateOrganizationRequest(
+    string Name,
+    string? LegalName,
+    string Gstin,
+    string? Industry,
+    string State,
+    string? City,
+    string? AnnualTurnoverRange
+);
+
+public record CreateOrganizationResponse(
+    Guid Id,
+    string Name,
+    string? LegalName,
+    List<GstinDto> Gstins,
+    string? Industry,
+    string? State,
+    string? City,
+    string SubscriptionStatus,
+    DateTime? TrialEndsAt,
+    int MemberCount,
+    string CurrentUserRole,
+    DateTime CreatedAt
+);
+
+public record UpdateOrganizationRequest(
+    string? Name,
+    string? LegalName,
+    string? DisplayName,
+    string? Industry,
+    string? SubIndustry,
+    string? BusinessType,
+    string? AnnualTurnoverRange,
+    string? EmployeeCountRange,
+    string? Email,
+    string? Phone,
+    string? Website,
+    AddressDto? Address,
+    string? Pan,
+    string? Tan
+);
+
+public record AddressDto(
+    string? Line1,
+    string? Line2,
+    string? City,
+    string? State,
+    string? PinCode,
+    string? Country
+);
+
+public record OrganizationDetailResponse(
+    Guid Id,
+    string Name,
+    string? LegalName,
+    string? DisplayName,
+    string? Industry,
+    string? SubIndustry,
+    string? BusinessType,
+    string? AnnualTurnoverRange,
+    string? EmployeeCountRange,
+    string? Email,
+    string? Phone,
+    string? Website,
+    AddressDto? Address,
+    string? Pan,
+    List<GstinDto> Gstins,
+    SubscriptionInfoDto? Subscription,
+    OrganizationSettingsDto? Settings,
+    string? LogoUrl,
+    int MemberCount,
+    string CurrentUserRole,
+    DateTime CreatedAt,
+    DateTime? UpdatedAt
+);
+
+public record OrganizationListItemDto(
+    Guid Id,
+    string Name,
+    string? LogoUrl,
+    string Role,
+    bool IsExternal,
+    int NoticeCount,
+    int PendingNoticeCount,
+    int MemberCount,
+    int GstinCount,
+    string SubscriptionStatus
+);
+
+public record OrganizationListResponse(
+    List<OrganizationListItemDto> Organizations,
+    int Total
+);
+
+public record SubscriptionInfoDto(
+    string Status,
+    PlanInfoDto? Plan,
+    DateTime? CurrentPeriodEnd,
+    UsageInfoDto? Usage
+);
+
+public record PlanInfoDto(
+    Guid Id,
+    string Name,
+    int? NoticeLimit,
+    int? UserLimit,
+    int? GstinLimit
+);
+
+public record UsageInfoDto(
+    int NoticesThisMonth,
+    int Users,
+    int Gstins
+);
+
+public record OrganizationSettingsDto(
+    List<int>? DefaultReminderDays,
+    bool NotificationEmail,
+    bool NotificationSms,
+    bool AllowCaAccess,
+    bool RequireResponseApproval,
+    string Timezone,
+    string Language,
+    string DateFormat
+);
+
+public record UpdateOrganizationSettingsRequest(
+    List<int>? DefaultReminderDays,
+    bool? NotificationEmail,
+    bool? NotificationSms,
+    bool? AllowCaAccess,
+    bool? RequireResponseApproval,
+    string? Timezone,
+    string? Language,
+    string? DateFormat
+);
+
+public record DeleteOrganizationRequest(
+    string Confirmation,
+    string Password
+);
+
+// ============================================================================
+// GSTIN DTOs
+// ============================================================================
+
+public record GstinDto(
+    Guid Id,
+    string Gstin,
+    string? TradeName,
+    string StateCode,
+    string StateName,
+    string Status,
+    bool IsPrimary,
+    bool IsVerified,
+    DateTime? VerifiedAt
+);
+
+public record AddGstinRequest(
+    string Gstin,
+    string? TradeName,
+    bool IsPrimary = false
+);
+
+public record GstinValidationResult(
+    bool IsValid,
+    string? ErrorMessage,
+    string? Gstin,
+    string? StateCode,
+    string? StateName,
+    string? Pan,
+    string? EntityCode
+);
+
+// ============================================================================
+// Organization Member DTOs
+// ============================================================================
+
+public record MemberDto(
+    Guid Id,
+    MemberUserDto User,
+    string Role,
+    bool IsExternal,
+    string Status,
+    DateTime? AccessExpiresAt,
+    string? ClientReference,
+    DateTime JoinedAt,
+    DateTime? LastActiveAt
+);
+
+public record MemberUserDto(
+    Guid Id,
+    string Name,
+    string Email,
+    string? AvatarUrl
+);
+
+public record MemberListResponse(
+    List<MemberDto> Members,
+    int Total,
+    int Page,
+    int Limit,
+    int TotalPages
+);
+
+public record ChangeMemberRoleRequest(string Role);
+
+public record ChangeMemberRoleResponse(
+    Guid MemberId,
+    string PreviousRole,
+    string NewRole
+);
+
+// ============================================================================
+// Organization Invitation DTOs
+// ============================================================================
+
+public record InviteMemberRequest(
+    string Email,
+    string Role,
+    bool IsExternal = false,
+    int? AccessDurationDays = null,
+    string? ClientReference = null,
+    string? Message = null
+);
+
+public record InvitationDto(
+    Guid Id,
+    string Email,
+    string Role,
+    bool IsExternal,
+    string Status,
+    InvitedByDto InvitedBy,
+    DateTime ExpiresAt,
+    DateTime LastSentAt,
+    int SendCount,
+    DateTime CreatedAt
+);
+
+public record InvitedByDto(Guid Id, string Name);
+
+public record InvitationListResponse(
+    List<InvitationDto> Invitations,
+    int Total
+);
+
+public record ResendInvitationResponse(
+    string Message,
+    int SendCount,
+    DateTime ExpiresAt
+);
+
+public record AcceptInvitationResponse(
+    string Message,
+    OrganizationBasicDto Organization
+);
+
+public record OrganizationBasicDto(
+    Guid Id,
+    string Name,
+    string Role
+);
+
+// ============================================================================
+// Ownership Transfer DTOs
+// ============================================================================
+
+public record TransferOwnershipRequest(
+    Guid NewOwnerId,
+    string Password
+);
+
+public record TransferOwnershipResponse(
+    string Message,
+    MemberUserDto NewOwner,
+    string YourNewRole
+);
+
+// ============================================================================
+// Organization Switch DTOs
+// ============================================================================
+
+public record SwitchOrganizationRequest(Guid OrganizationId);
+
+public record SwitchOrganizationResponse(
+    string AccessToken,
+    string RefreshToken,
+    OrganizationBasicDto Organization
+);
+
+// Legacy DTOs for backward compatibility
 public record CreateOrganizationDto(
     string Name,
     List<string> Gstins,

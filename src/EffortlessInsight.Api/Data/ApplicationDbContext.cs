@@ -13,6 +13,10 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
     }
 
     public DbSet<Organization> Organizations => Set<Organization>();
+    public DbSet<OrganizationMember> OrganizationMembers => Set<OrganizationMember>();
+    public DbSet<OrganizationGstin> OrganizationGstins => Set<OrganizationGstin>();
+    public DbSet<OrganizationInvitation> OrganizationInvitations => Set<OrganizationInvitation>();
+    public DbSet<GstinStateCode> GstinStateCodes => Set<GstinStateCode>();
     public DbSet<Notice> Notices => Set<Notice>();
     public DbSet<NoticeAiReport> NoticeAiReports => Set<NoticeAiReport>();
     public DbSet<Comment> Comments => Set<Comment>();
@@ -124,7 +128,156 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
             .Property(e => e.Vector)
             .HasColumnType("vector(3072)");
 
-        // Indexes
+        // ============================================================================
+        // Organization Member Configuration
+        // ============================================================================
+        modelBuilder.Entity<OrganizationMember>(entity =>
+        {
+            // Composite unique constraint: one membership per user per org
+            entity.HasIndex(e => new { e.OrganizationId, e.UserId })
+                .IsUnique();
+
+            // Only one owner per organization
+            entity.HasIndex(e => e.OrganizationId)
+                .HasFilter("\"Role\" = 'owner'")
+                .IsUnique()
+                .HasDatabaseName("IX_OrganizationMembers_SingleOwner");
+
+            // Performance indexes
+            entity.HasIndex(e => e.OrganizationId);
+            entity.HasIndex(e => e.UserId);
+            entity.HasIndex(e => e.Role);
+            entity.HasIndex(e => e.Status);
+
+            // JSON column
+            entity.Property(e => e.NotificationPreferences)
+                .HasColumnType("jsonb");
+
+            // Role constraint
+            entity.Property(e => e.Role)
+                .HasMaxLength(20);
+
+            // Relationships
+            entity.HasOne(e => e.Organization)
+                .WithMany(o => o.Members)
+                .HasForeignKey(e => e.OrganizationId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.InvitedBy)
+                .WithMany()
+                .HasForeignKey(e => e.InvitedById)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(e => e.SuspendedBy)
+                .WithMany()
+                .HasForeignKey(e => e.SuspendedById)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ============================================================================
+        // Organization GSTIN Configuration
+        // ============================================================================
+        modelBuilder.Entity<OrganizationGstin>(entity =>
+        {
+            // GSTIN must be unique across the platform
+            entity.HasIndex(e => e.Gstin)
+                .IsUnique();
+
+            // Only one primary GSTIN per organization
+            entity.HasIndex(e => e.OrganizationId)
+                .HasFilter("\"IsPrimary\" = true")
+                .IsUnique()
+                .HasDatabaseName("IX_OrganizationGstins_SinglePrimary");
+
+            // Performance indexes
+            entity.HasIndex(e => e.OrganizationId);
+            entity.HasIndex(e => e.StateCode);
+
+            // GSTIN format check constraint (applied at database level)
+            entity.ToTable(t => t.HasCheckConstraint(
+                "CK_OrganizationGstins_Gstin_Format",
+                "\"Gstin\" ~ '^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[A-Z0-9]{1}Z[A-Z0-9]{1}$'"
+            ));
+
+            // Relationship
+            entity.HasOne(e => e.Organization)
+                .WithMany(o => o.OrganizationGstins)
+                .HasForeignKey(e => e.OrganizationId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ============================================================================
+        // Organization Invitation Configuration
+        // ============================================================================
+        modelBuilder.Entity<OrganizationInvitation>(entity =>
+        {
+            // Token hash must be unique
+            entity.HasIndex(e => e.TokenHash)
+                .IsUnique();
+
+            // Prevent duplicate pending invitations for same email in same org
+            entity.HasIndex(e => new { e.OrganizationId, e.EmailNormalized })
+                .HasFilter("\"Status\" = 'pending'")
+                .IsUnique()
+                .HasDatabaseName("IX_OrganizationInvitations_PendingUnique");
+
+            // Performance indexes
+            entity.HasIndex(e => e.OrganizationId);
+            entity.HasIndex(e => e.EmailNormalized);
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => e.ExpiresAt)
+                .HasFilter("\"Status\" = 'pending'");
+
+            // Relationships
+            entity.HasOne(e => e.Organization)
+                .WithMany(o => o.Invitations)
+                .HasForeignKey(e => e.OrganizationId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.InvitedBy)
+                .WithMany()
+                .HasForeignKey(e => e.InvitedById)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.AcceptedUser)
+                .WithMany()
+                .HasForeignKey(e => e.AcceptedUserId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ============================================================================
+        // GSTIN State Code Configuration (Reference Table)
+        // ============================================================================
+        modelBuilder.Entity<GstinStateCode>(entity =>
+        {
+            entity.HasKey(e => e.Code);
+        });
+
+        // ============================================================================
+        // Organization Configuration Updates
+        // ============================================================================
+        modelBuilder.Entity<Organization>(entity =>
+        {
+            // Unique normalized name (excluding soft-deleted)
+            entity.HasIndex(e => e.NameNormalized)
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .IsUnique()
+                .HasDatabaseName("IX_Organizations_NameNormalized_Unique");
+
+            // Performance indexes
+            entity.HasIndex(e => e.State)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.SubscriptionStatus)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.CreatedAt);
+        });
+
+        // Existing indexes
         modelBuilder.Entity<Notice>()
             .HasIndex(n => n.OrganizationId);
         modelBuilder.Entity<Notice>()
@@ -157,6 +310,43 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
         // Password History indexes
         modelBuilder.Entity<PasswordHistory>()
             .HasIndex(p => p.UserId);
+
+        // ============================================================================
+        // Audit Log Configuration
+        // ============================================================================
+        modelBuilder.Entity<AuditLog>(entity =>
+        {
+            // JSON columns
+            entity.Property(e => e.OldValues)
+                .HasColumnType("jsonb");
+            entity.Property(e => e.NewValues)
+                .HasColumnType("jsonb");
+            entity.Property(e => e.Metadata)
+                .HasColumnType("jsonb");
+
+            // Performance indexes
+            entity.HasIndex(e => e.Action);
+            entity.HasIndex(e => e.EntityType);
+            entity.HasIndex(e => e.EntityId);
+            entity.HasIndex(e => e.UserId);
+            entity.HasIndex(e => e.OrganizationId);
+            entity.HasIndex(e => e.CreatedAt);
+
+            // Composite index for common queries
+            entity.HasIndex(e => new { e.OrganizationId, e.CreatedAt });
+            entity.HasIndex(e => new { e.EntityType, e.EntityId });
+
+            // Relationships (optional - no cascade delete)
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(e => e.Organization)
+                .WithMany()
+                .HasForeignKey(e => e.OrganizationId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
 
         // Seed initial data
         SeedData(modelBuilder);
@@ -225,6 +415,49 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
                 IsActive = true,
                 CreatedAt = seedDate
             }
+        );
+
+        // Seed GSTIN State Codes
+        modelBuilder.Entity<GstinStateCode>().HasData(
+            new GstinStateCode { Code = "01", Name = "Jammu and Kashmir", IsUnionTerritory = true },
+            new GstinStateCode { Code = "02", Name = "Himachal Pradesh", IsUnionTerritory = false },
+            new GstinStateCode { Code = "03", Name = "Punjab", IsUnionTerritory = false },
+            new GstinStateCode { Code = "04", Name = "Chandigarh", IsUnionTerritory = true },
+            new GstinStateCode { Code = "05", Name = "Uttarakhand", IsUnionTerritory = false },
+            new GstinStateCode { Code = "06", Name = "Haryana", IsUnionTerritory = false },
+            new GstinStateCode { Code = "07", Name = "Delhi", IsUnionTerritory = true },
+            new GstinStateCode { Code = "08", Name = "Rajasthan", IsUnionTerritory = false },
+            new GstinStateCode { Code = "09", Name = "Uttar Pradesh", IsUnionTerritory = false },
+            new GstinStateCode { Code = "10", Name = "Bihar", IsUnionTerritory = false },
+            new GstinStateCode { Code = "11", Name = "Sikkim", IsUnionTerritory = false },
+            new GstinStateCode { Code = "12", Name = "Arunachal Pradesh", IsUnionTerritory = false },
+            new GstinStateCode { Code = "13", Name = "Nagaland", IsUnionTerritory = false },
+            new GstinStateCode { Code = "14", Name = "Manipur", IsUnionTerritory = false },
+            new GstinStateCode { Code = "15", Name = "Mizoram", IsUnionTerritory = false },
+            new GstinStateCode { Code = "16", Name = "Tripura", IsUnionTerritory = false },
+            new GstinStateCode { Code = "17", Name = "Meghalaya", IsUnionTerritory = false },
+            new GstinStateCode { Code = "18", Name = "Assam", IsUnionTerritory = false },
+            new GstinStateCode { Code = "19", Name = "West Bengal", IsUnionTerritory = false },
+            new GstinStateCode { Code = "20", Name = "Jharkhand", IsUnionTerritory = false },
+            new GstinStateCode { Code = "21", Name = "Odisha", IsUnionTerritory = false },
+            new GstinStateCode { Code = "22", Name = "Chhattisgarh", IsUnionTerritory = false },
+            new GstinStateCode { Code = "23", Name = "Madhya Pradesh", IsUnionTerritory = false },
+            new GstinStateCode { Code = "24", Name = "Gujarat", IsUnionTerritory = false },
+            new GstinStateCode { Code = "26", Name = "Dadra and Nagar Haveli and Daman and Diu", IsUnionTerritory = true },
+            new GstinStateCode { Code = "27", Name = "Maharashtra", IsUnionTerritory = false },
+            new GstinStateCode { Code = "28", Name = "Andhra Pradesh (Old)", IsUnionTerritory = false },
+            new GstinStateCode { Code = "29", Name = "Karnataka", IsUnionTerritory = false },
+            new GstinStateCode { Code = "30", Name = "Goa", IsUnionTerritory = false },
+            new GstinStateCode { Code = "31", Name = "Lakshadweep", IsUnionTerritory = true },
+            new GstinStateCode { Code = "32", Name = "Kerala", IsUnionTerritory = false },
+            new GstinStateCode { Code = "33", Name = "Tamil Nadu", IsUnionTerritory = false },
+            new GstinStateCode { Code = "34", Name = "Puducherry", IsUnionTerritory = true },
+            new GstinStateCode { Code = "35", Name = "Andaman and Nicobar Islands", IsUnionTerritory = true },
+            new GstinStateCode { Code = "36", Name = "Telangana", IsUnionTerritory = false },
+            new GstinStateCode { Code = "37", Name = "Andhra Pradesh", IsUnionTerritory = false },
+            new GstinStateCode { Code = "38", Name = "Ladakh", IsUnionTerritory = true },
+            new GstinStateCode { Code = "97", Name = "Other Territory", IsUnionTerritory = false },
+            new GstinStateCode { Code = "99", Name = "Centre Jurisdiction", IsUnionTerritory = false }
         );
     }
 

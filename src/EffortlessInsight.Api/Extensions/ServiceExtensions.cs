@@ -4,6 +4,8 @@ using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.Services;
 using EffortlessInsight.Api.Services.Auth;
+using EffortlessInsight.Api.Jobs;
+using EffortlessInsight.Api.Services.Organizations;
 using FluentValidation;
 using FluentValidation.AspNetCore;
 using Hangfire;
@@ -34,7 +36,16 @@ public static class ServiceExtensions
         services.AddScoped<IAiServiceClient, AiServiceClient>();
         services.AddScoped<IFileStorageService, S3FileStorageService>();
         services.AddScoped<IEmailService, SendGridEmailService>();
-        services.AddScoped<IAuditService, AuditService>();
+        services.AddScoped<IAuditService, AuditServiceImpl>();
+
+        // Register organization management services
+        services.AddScoped<IGstinValidatorService, GstinValidatorService>();
+        services.AddScoped<ICurrentOrganizationService, CurrentOrganizationService>();
+        services.AddScoped<IOrganizationManagementService, OrganizationManagementService>();
+        services.AddScoped<IOrganizationDataMigrationService, OrganizationDataMigrationService>();
+
+        // Register background jobs
+        services.AddScoped<Jobs.OrganizationJobs>();
 
         return services;
     }

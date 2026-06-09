@@ -28,7 +28,10 @@
       "Bash(docker start:*)",
       "Bash(timeout /t 5 /nobreak)",
       "Bash(docker-compose down:*)",
-      "Bash(ping:*)"
+      "Bash(ping:*)",
+      "Bash(tree:*)",
+      "Bash(dotnet restore:*)",
+      "Bash(wc:*)"
     ]
   }
 }

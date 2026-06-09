@@ -58,11 +58,7 @@ public interface IEmailService
     Task SendBulkAsync(List<string> recipients, string subject, string htmlBody);
 }
 
-public interface IAuditService
-{
-    Task LogAsync(string action, string? entityType = null, Guid? entityId = null,
-        object? oldValues = null, object? newValues = null);
-}
+// IAuditService is defined in AuditService.cs
 
 // Placeholder implementations - to be completed
 public class NoticeService : INoticeService
@@ -120,8 +116,4 @@ public class SendGridEmailService : IEmailService
     public Task SendBulkAsync(List<string> recipients, string subject, string htmlBody) => throw new NotImplementedException();
 }
 
-public class AuditService : IAuditService
-{
-    public Task LogAsync(string action, string? entityType = null, Guid? entityId = null,
-        object? oldValues = null, object? newValues = null) => throw new NotImplementedException();
-}
+// AuditServiceImpl is defined in AuditService.cs

@@ -2,6 +2,7 @@ using System.Security.Claims;
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.DTOs;
 using EffortlessInsight.Api.Services.Auth;
+using EffortlessInsight.Api.Services.Organizations;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -14,17 +15,20 @@ public class AuthController : ControllerBase
 {
     private readonly IAuthService _authService;
     private readonly ISessionService _sessionService;
+    private readonly IOrganizationManagementService _organizationService;
     private readonly ApplicationDbContext _dbContext;
     private readonly ILogger<AuthController> _logger;
 
     public AuthController(
         IAuthService authService,
         ISessionService sessionService,
+        IOrganizationManagementService organizationService,
         ApplicationDbContext dbContext,
         ILogger<AuthController> logger)
     {
         _authService = authService;
         _sessionService = sessionService;
+        _organizationService = organizationService;
         _dbContext = dbContext;
         _logger = logger;
     }
@@ -346,10 +350,30 @@ public class AuthController : ControllerBase
                 return NotFound(new ApiErrorResponse(false, "USER_NOT_FOUND", "User not found"));
             }
 
-            // Get current organization
+            // Get all organization memberships for this user
+            var memberships = await _dbContext.OrganizationMembers
+                .Include(m => m.Organization)
+                .Where(m => m.UserId == userId && m.Status == "active" && m.Organization.DeletedAt == null)
+                .ToListAsync();
+
+            // Get current organization from claims or user's default
+            var currentOrgIdClaim = User.FindFirst("org_id")?.Value;
+            Guid? currentOrgId = !string.IsNullOrEmpty(currentOrgIdClaim) && Guid.TryParse(currentOrgIdClaim, out var id) ? id : user.OrganizationId;
+
+            // Determine current organization
             UserOrganizationDto? currentOrg = null;
-            if (user.Organization != null)
+            var currentMembership = memberships.FirstOrDefault(m => m.OrganizationId == currentOrgId);
+            if (currentMembership != null)
             {
+                currentOrg = new UserOrganizationDto(
+                    currentMembership.OrganizationId,
+                    currentMembership.Organization.Name,
+                    currentMembership.Role
+                );
+            }
+            else if (user.Organization != null)
+            {
+                // Fallback to legacy single-org relationship
                 currentOrg = new UserOrganizationDto(
                     user.Organization.Id,
                     user.Organization.Name,
@@ -357,10 +381,18 @@ public class AuthController : ControllerBase
                 );
             }
 
-            // For now, return single organization (multi-org support can be added later)
-            var organizations = currentOrg != null
-                ? new List<UserOrganizationDto> { currentOrg }
-                : new List<UserOrganizationDto>();
+            // Build list of all organizations
+            var organizations = memberships.Select(m => new UserOrganizationDto(
+                m.OrganizationId,
+                m.Organization.Name,
+                m.Role
+            )).ToList();
+
+            // If no memberships found but user has legacy org, include it
+            if (!organizations.Any() && currentOrg != null)
+            {
+                organizations.Add(currentOrg);
+            }
 
             var profile = new UserProfileDto(
                 Id: user.Id,
@@ -371,7 +403,7 @@ public class AuthController : ControllerBase
                 EmailVerified: user.EmailConfirmed,
                 MobileVerified: user.IsMobileVerified,
                 Is2faEnabled: user.Is2faEnabled,
-                Role: user.Role,
+                Role: currentOrg?.Role ?? user.Role,
                 Organization: currentOrg,
                 Organizations: organizations,
                 Preferences: user.Preferences,
@@ -384,6 +416,38 @@ public class AuthController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Get current user failed");
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
+        }
+    }
+
+    /// <summary>
+    /// Switch to a different organization
+    /// </summary>
+    [Authorize]
+    [HttpPost("switch-organization")]
+    [ProducesResponseType(typeof(ApiResponse<SwitchOrganizationResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> SwitchOrganization([FromBody] SwitchOrganizationRequest request)
+    {
+        try
+        {
+            var userId = GetCurrentUserId();
+            var ipAddress = GetClientIpAddress();
+            var userAgent = Request.Headers.UserAgent.ToString();
+
+            var result = await _organizationService.SwitchOrganizationAsync(request, userId, ipAddress, userAgent);
+
+            return Ok(new ApiResponse<SwitchOrganizationResponse>(true, result));
+        }
+        catch (UnauthorizedAccessException ex) when (ex.Message == "NOT_A_MEMBER")
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                new ApiErrorResponse(false, "NOT_A_MEMBER", "You are not a member of this organization or your access has expired"));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Switch organization failed");
             return StatusCode(StatusCodes.Status500InternalServerError,
                 new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
         }

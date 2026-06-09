@@ -29,15 +29,17 @@ public class JwtService : IJwtService
         _logger = logger;
     }
 
-    public string GenerateAccessToken(ApplicationUser user, Organization? organization)
+    public string GenerateAccessToken(ApplicationUser user, Organization? organization, string? roleOverride = null, bool isExternal = false)
     {
+        var role = roleOverride ?? user.Role;
+
         var claims = new List<Claim>
         {
             new(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
             new(JwtRegisteredClaimNames.Email, user.Email ?? string.Empty),
             new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
             new("name", user.Name),
-            new("role", user.Role),
+            new("role", role),
             new(JwtRegisteredClaimNames.Iat, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(), ClaimValueTypes.Integer64)
         };
 
@@ -46,6 +48,9 @@ public class JwtService : IJwtService
             claims.Add(new Claim("org_id", organization.Id.ToString()));
             claims.Add(new Claim("org_name", organization.Name));
         }
+
+        // Add external collaborator claim
+        claims.Add(new Claim("is_external", isExternal.ToString().ToLower()));
 
         // Add email verified claim
         claims.Add(new Claim("email_verified", user.EmailConfirmed.ToString().ToLower()));

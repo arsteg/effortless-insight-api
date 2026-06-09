@@ -147,6 +147,10 @@ public class DeadlineReminder : BaseEntity
     public DateTime? SentAt { get; set; }
 }
 
+/// <summary>
+/// Stores audit trail of all significant actions in the system.
+/// Used for compliance, security auditing, and forensic analysis.
+/// </summary>
 public class AuditLog : BaseEntity
 {
     public Guid? OrganizationId { get; set; }
@@ -171,6 +175,11 @@ public class AuditLog : BaseEntity
     public string? IpAddress { get; set; }
 
     public string? UserAgent { get; set; }
+
+    /// <summary>
+    /// Additional metadata about the action
+    /// </summary>
+    public Dictionary<string, object>? Metadata { get; set; }
 }
 
 public class Plan : BaseEntity
