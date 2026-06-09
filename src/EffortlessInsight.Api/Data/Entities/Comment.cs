@@ -49,15 +49,18 @@ public class NoticeTask : BaseEntity
 
     public DateTime? DueDate { get; set; }
 
+    [Required]
     [MaxLength(20)]
-    public string Priority { get; set; } = "medium";
+    public string Priority { get; set; } = "medium"; // low, medium, high, critical
 
+    [Required]
     [MaxLength(20)]
     public string Status { get; set; } = "pending"; // pending, in_progress, completed, cancelled
 
     public DateTime? CompletedAt { get; set; }
 
     public Guid? CompletedById { get; set; }
+    public ApplicationUser? CompletedBy { get; set; }
 }
 
 public class Attachment : BaseEntity
@@ -86,7 +89,13 @@ public class Attachment : BaseEntity
     public string? FileType { get; set; }
 
     [MaxLength(50)]
-    public string? DocumentType { get; set; } // invoice, gstr, bank_statement, etc.
+    public string? DocumentType { get; set; } // gstr2a, gstr3b, purchase_register, invoices, bank_statement, other
+
+    [MaxLength(500)]
+    public string? Description { get; set; }
+
+    [MaxLength(64)]
+    public string? FileHash { get; set; }
 }
 
 public class NoticeResponse : BaseEntity

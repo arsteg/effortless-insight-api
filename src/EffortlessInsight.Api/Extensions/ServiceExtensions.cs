@@ -4,8 +4,10 @@ using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.Services;
 using EffortlessInsight.Api.Services.Auth;
+using EffortlessInsight.Api.Services.Storage;
 using EffortlessInsight.Api.Jobs;
 using EffortlessInsight.Api.Services.Organizations;
+using EffortlessInsight.Api.Services.Notices;
 using FluentValidation;
 using FluentValidation.AspNetCore;
 using Hangfire;
@@ -30,11 +32,13 @@ public static class ServiceExtensions
         services.AddScoped<IAuthService, AuthService>();
 
         // Register application services
-        services.AddScoped<INoticeService, NoticeService>();
+        services.AddScoped<INoticeService, NoticeServiceImpl>();
+        services.AddScoped<INoticeServiceExtended, NoticeServiceImpl>();
         services.AddScoped<IOrganizationService, OrganizationService>();
         services.AddScoped<IUserService, UserService>();
         services.AddScoped<IAiServiceClient, AiServiceClient>();
-        services.AddScoped<IFileStorageService, S3FileStorageService>();
+        services.AddScoped<IFileStorageService, S3FileStorageServiceImpl>();
+        services.AddScoped<IFileStorageServiceExtended, S3FileStorageServiceImpl>();
         services.AddScoped<IEmailService, SendGridEmailService>();
         services.AddScoped<IAuditService, AuditServiceImpl>();
 
@@ -44,8 +48,13 @@ public static class ServiceExtensions
         services.AddScoped<IOrganizationManagementService, OrganizationManagementService>();
         services.AddScoped<IOrganizationDataMigrationService, OrganizationDataMigrationService>();
 
+        // Register notice services
+        services.AddScoped<IFileValidationService, FileValidationService>();
+        services.AddScoped<INoticeWorkflowService, NoticeWorkflowService>();
+
         // Register background jobs
         services.AddScoped<Jobs.OrganizationJobs>();
+        services.AddScoped<INoticeProcessingJob, Jobs.NoticeProcessingJob>();
 
         return services;
     }
@@ -160,6 +169,17 @@ public static class ServiceExtensions
     {
         services.AddDefaultAWSOptions(configuration.GetAWSOptions());
         services.AddAWSService<IAmazonS3>();
+
+        // Configure S3 storage options
+        services.Configure<S3StorageOptions>(options =>
+        {
+            var s3Section = configuration.GetSection("AWS:S3");
+            options.BucketName = s3Section["BucketName"] ?? "effortlessinsight-uploads";
+            options.ReportsBucket = s3Section["ReportsBucket"] ?? "effortlessinsight-reports";
+            options.Region = configuration["AWS:Region"] ?? "ap-south-1";
+            options.UploadUrlExpiryMinutes = 15;
+            options.DownloadUrlExpiryMinutes = 15;
+        });
 
         return services;
     }

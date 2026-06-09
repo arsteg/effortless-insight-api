@@ -48,6 +48,10 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
         modelBuilder.Entity<ApplicationUser>().HasQueryFilter(u => u.DeletedAt == null);
         modelBuilder.Entity<Notice>().HasQueryFilter(n => n.DeletedAt == null);
         modelBuilder.Entity<Comment>().HasQueryFilter(c => c.DeletedAt == null);
+        modelBuilder.Entity<NoticeResponse>().HasQueryFilter(r => r.DeletedAt == null);
+        modelBuilder.Entity<DeadlineReminder>().HasQueryFilter(r => r.DeletedAt == null);
+        modelBuilder.Entity<NoticeTask>().HasQueryFilter(t => t.DeletedAt == null);
+        modelBuilder.Entity<Attachment>().HasQueryFilter(a => a.DeletedAt == null);
 
         // Configure JSON columns for Dictionary properties
         modelBuilder.Entity<ApplicationUser>()
@@ -277,15 +281,50 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
             entity.HasIndex(e => e.CreatedAt);
         });
 
-        // Existing indexes
-        modelBuilder.Entity<Notice>()
-            .HasIndex(n => n.OrganizationId);
-        modelBuilder.Entity<Notice>()
-            .HasIndex(n => n.Status);
-        modelBuilder.Entity<Notice>()
-            .HasIndex(n => n.ResponseDeadline);
-        modelBuilder.Entity<Notice>()
-            .HasIndex(n => n.Gstin);
+        // ============================================================================
+        // Notice Configuration
+        // ============================================================================
+        modelBuilder.Entity<Notice>(entity =>
+        {
+            // Basic indexes
+            entity.HasIndex(n => n.OrganizationId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(n => n.Status)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(n => n.ResponseDeadline)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(n => n.Gstin)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(n => n.Priority)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(n => n.AssignedToId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(n => n.CreatedAt)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(n => n.FileHash)
+                .HasFilter("\"DeletedAt\" IS NULL");
+
+            // Composite index for common queries
+            entity.HasIndex(n => new { n.OrganizationId, n.Status, n.ResponseDeadline })
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .HasDatabaseName("IX_Notices_Org_Status_Deadline");
+
+            // Relationships
+            entity.HasOne(n => n.AssignedBy)
+                .WithMany()
+                .HasForeignKey(n => n.AssignedById)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(n => n.DeletedBy)
+                .WithMany()
+                .HasForeignKey(n => n.DeletedById)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(n => n.GstinNavigation)
+                .WithMany()
+                .HasForeignKey(n => n.GstinId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
 
         modelBuilder.Entity<Embedding>()
             .HasIndex(e => e.SourceType);
@@ -310,6 +349,49 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
         // Password History indexes
         modelBuilder.Entity<PasswordHistory>()
             .HasIndex(p => p.UserId);
+
+        // ============================================================================
+        // NoticeResponse Configuration
+        // ============================================================================
+        modelBuilder.Entity<NoticeResponse>(entity =>
+        {
+            entity.HasIndex(e => e.NoticeId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => new { e.NoticeId, e.Status })
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .HasDatabaseName("IX_NoticeResponses_NoticeId_Status");
+            entity.HasIndex(e => new { e.NoticeId, e.CreatedAt })
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .HasDatabaseName("IX_NoticeResponses_NoticeId_CreatedAt");
+        });
+
+        // ============================================================================
+        // DeadlineReminder Configuration
+        // ============================================================================
+        modelBuilder.Entity<DeadlineReminder>(entity =>
+        {
+            entity.HasIndex(e => e.NoticeId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => new { e.RemindAt, e.IsSent })
+                .HasFilter("\"DeletedAt\" IS NULL AND \"IsSent\" = false")
+                .HasDatabaseName("IX_DeadlineReminders_Pending");
+            entity.HasIndex(e => e.UserId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+        });
+
+        // ============================================================================
+        // NoticeTask Configuration
+        // ============================================================================
+        modelBuilder.Entity<NoticeTask>(entity =>
+        {
+            entity.HasIndex(e => e.NoticeId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => new { e.NoticeId, e.Status })
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .HasDatabaseName("IX_NoticeTasks_NoticeId_Status");
+            entity.HasIndex(e => e.AssignedToId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+        });
 
         // ============================================================================
         // Audit Log Configuration

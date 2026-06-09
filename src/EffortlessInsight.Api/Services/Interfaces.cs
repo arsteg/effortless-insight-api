@@ -60,17 +60,7 @@ public interface IEmailService
 
 // IAuditService is defined in AuditService.cs
 
-// Placeholder implementations - to be completed
-public class NoticeService : INoticeService
-{
-    public Task<Notice> CreateAsync(CreateNoticeDto dto, Guid userId) => throw new NotImplementedException();
-    public Task<Notice?> GetByIdAsync(Guid id) => throw new NotImplementedException();
-    public Task<PagedResult<Notice>> GetByOrganizationAsync(Guid organizationId, NoticeFilterDto filter) => throw new NotImplementedException();
-    public Task<Notice> UpdateAsync(Guid id, UpdateNoticeDto dto) => throw new NotImplementedException();
-    public Task DeleteAsync(Guid id) => throw new NotImplementedException();
-    public Task<NoticeAiReport?> GetReportAsync(Guid noticeId) => throw new NotImplementedException();
-    public Task TriggerAiProcessingAsync(Guid noticeId) => throw new NotImplementedException();
-}
+// NoticeService implementation is in Services/Notices/NoticeService.cs
 
 public class OrganizationService : IOrganizationService
 {
@@ -101,13 +91,7 @@ public class AiServiceClient : IAiServiceClient
     public Task<List<SimilarNotice>> FindSimilarNoticesAsync(Guid noticeId, int limit = 5) => throw new NotImplementedException();
 }
 
-public class S3FileStorageService : IFileStorageService
-{
-    public Task<string> UploadAsync(Stream file, string fileName, string contentType) => throw new NotImplementedException();
-    public Task<Stream> DownloadAsync(string fileUrl) => throw new NotImplementedException();
-    public Task DeleteAsync(string fileUrl) => throw new NotImplementedException();
-    public Task<string> GetPresignedUrlAsync(string fileUrl, TimeSpan expiry) => throw new NotImplementedException();
-}
+// S3FileStorageService implementation is in Services/Storage/S3FileStorageService.cs
 
 public class SendGridEmailService : IEmailService
 {
