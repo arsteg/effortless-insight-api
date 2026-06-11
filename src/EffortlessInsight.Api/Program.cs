@@ -46,6 +46,9 @@ builder.Services.AddBackgroundJobServices(builder.Configuration);
 builder.Services.AddAwsServices(builder.Configuration);
 builder.Services.AddHttpClientServices(builder.Configuration);
 
+// Add Database Seeders
+builder.Services.AddScoped<WorkflowTemplateSeeder>();
+
 // Add AutoMapper
 builder.Services.AddAutoMapper(typeof(Program));
 
@@ -123,12 +126,19 @@ app.UseHangfireDashboard("/hangfire", new DashboardOptions
         : [new HangfireAuthorizationFilter()]
 });
 
-// Apply migrations on startup in development
+// Configure recurring workflow jobs
+EffortlessInsight.Api.Jobs.WorkflowJobsExtensions.ConfigureWorkflowJobs(app);
+
+// Apply migrations and seed data on startup in development
 if (app.Environment.IsDevelopment())
 {
     using var scope = app.Services.CreateScope();
     var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
     await dbContext.Database.MigrateAsync();
+
+    // Seed default workflow template
+    var workflowSeeder = scope.ServiceProvider.GetRequiredService<WorkflowTemplateSeeder>();
+    await workflowSeeder.SeedAsync();
 }
 
 Log.Information("EffortlessInsight API starting...");

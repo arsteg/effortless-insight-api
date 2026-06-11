@@ -8,6 +8,7 @@ using EffortlessInsight.Api.Services.Storage;
 using EffortlessInsight.Api.Jobs;
 using EffortlessInsight.Api.Services.Organizations;
 using EffortlessInsight.Api.Services.Notices;
+using EffortlessInsight.Api.Features.Workflows.Services;
 using FluentValidation;
 using FluentValidation.AspNetCore;
 using Hangfire;
@@ -52,9 +53,13 @@ public static class ServiceExtensions
         services.AddScoped<IFileValidationService, FileValidationService>();
         services.AddScoped<INoticeWorkflowService, NoticeWorkflowService>();
 
+        // Register workflow engine services
+        services.AddScoped<IWorkflowEngineService, WorkflowEngineService>();
+
         // Register background jobs
         services.AddScoped<Jobs.OrganizationJobs>();
         services.AddScoped<INoticeProcessingJob, Jobs.NoticeProcessingJob>();
+        services.AddScoped<Jobs.WorkflowSlaMonitorJob>();
 
         return services;
     }

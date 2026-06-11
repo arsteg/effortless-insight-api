@@ -31,7 +31,29 @@
       "Bash(ping:*)",
       "Bash(tree:*)",
       "Bash(dotnet restore:*)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(powershell -Command:*)",
+      "Bash(dir /s /b \"C:\\\\Work\\\\EffortlessInsight\\\\apps\\\\effortless-insight-ai-service\\\\tests\\\\*.py\")",
+      "Bash(Get-ChildItem -Path \"C:\\\\Work\\\\EffortlessInsight\\\\apps\\\\effortless-insight-ai-service\\\\tests\" -Recurse -Filter \"*.py\")",
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(python -m pytest:*)",
+      "Bash(pip install:*)",
+      "Bash(ls:*)",
+      "Bash(npm run type-check:*)",
+      "Bash(npm run lint:*)",
+      "Bash(npm install:*)",
+      "Bash(npm test:*)",
+      "Bash(npx eslint:*)",
+      "Bash(dir:*)",
+      "Bash(npm run build:*)",
+      "Bash(npm run dev:*)",
+      "WebFetch(domain:localhost)",
+      "Bash(curl:*)",
+      "Bash(xargs:*)",
+      "Bash(grep:*)",
+      "Bash(npx tsc:*)",
+      "Bash(find:*)",
+      "Bash(dotnet ef migrations:*)"
     ]
   }
 }

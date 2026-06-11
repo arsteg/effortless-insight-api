@@ -33,6 +33,17 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
     public DbSet<LoginAudit> LoginAudits => Set<LoginAudit>();
     public DbSet<PasswordHistory> PasswordHistory => Set<PasswordHistory>();
 
+    // Workflow Engine entities
+    public DbSet<WorkflowTemplate> WorkflowTemplates => Set<WorkflowTemplate>();
+    public DbSet<WorkflowStage> WorkflowStages => Set<WorkflowStage>();
+    public DbSet<WorkflowAssignmentRule> WorkflowAssignmentRules => Set<WorkflowAssignmentRule>();
+    public DbSet<WorkflowEscalationRule> WorkflowEscalationRules => Set<WorkflowEscalationRule>();
+    public DbSet<NoticeWorkflowInstance> NoticeWorkflowInstances => Set<NoticeWorkflowInstance>();
+    public DbSet<WorkflowHistory> WorkflowHistories => Set<WorkflowHistory>();
+    public DbSet<NoticeDeadline> NoticeDeadlines => Set<NoticeDeadline>();
+    public DbSet<DeadlineExtension> DeadlineExtensions => Set<DeadlineExtension>();
+    public DbSet<WorkflowSlaMetric> WorkflowSlaMetrics => Set<WorkflowSlaMetric>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -52,6 +63,15 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
         modelBuilder.Entity<DeadlineReminder>().HasQueryFilter(r => r.DeletedAt == null);
         modelBuilder.Entity<NoticeTask>().HasQueryFilter(t => t.DeletedAt == null);
         modelBuilder.Entity<Attachment>().HasQueryFilter(a => a.DeletedAt == null);
+        modelBuilder.Entity<WorkflowTemplate>().HasQueryFilter(w => w.DeletedAt == null);
+        modelBuilder.Entity<WorkflowStage>().HasQueryFilter(s => s.DeletedAt == null);
+        modelBuilder.Entity<WorkflowAssignmentRule>().HasQueryFilter(r => r.DeletedAt == null);
+        modelBuilder.Entity<WorkflowEscalationRule>().HasQueryFilter(r => r.DeletedAt == null);
+        modelBuilder.Entity<NoticeWorkflowInstance>().HasQueryFilter(i => i.DeletedAt == null);
+        modelBuilder.Entity<WorkflowHistory>().HasQueryFilter(h => h.DeletedAt == null);
+        modelBuilder.Entity<NoticeDeadline>().HasQueryFilter(d => d.DeletedAt == null);
+        modelBuilder.Entity<DeadlineExtension>().HasQueryFilter(e => e.DeletedAt == null);
+        modelBuilder.Entity<WorkflowSlaMetric>().HasQueryFilter(m => m.DeletedAt == null);
 
         // Configure JSON columns for Dictionary properties
         modelBuilder.Entity<ApplicationUser>()
@@ -125,6 +145,70 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
 
         modelBuilder.Entity<NoticeAiReport>()
             .Property(r => r.FullReportJson)
+            .HasColumnType("jsonb");
+
+        // Workflow Engine JSON columns
+        modelBuilder.Entity<WorkflowTemplate>()
+            .Property(w => w.ApplicableNoticeTypes)
+            .HasColumnType("jsonb");
+
+        modelBuilder.Entity<WorkflowStage>()
+            .Property(s => s.AllowedTransitions)
+            .HasColumnType("jsonb");
+        modelBuilder.Entity<WorkflowStage>()
+            .Property(s => s.EntryActions)
+            .HasColumnType("jsonb");
+        modelBuilder.Entity<WorkflowStage>()
+            .Property(s => s.ExitActions)
+            .HasColumnType("jsonb");
+        modelBuilder.Entity<WorkflowStage>()
+            .Property(s => s.AutoTransitionRules)
+            .HasColumnType("jsonb");
+        modelBuilder.Entity<WorkflowStage>()
+            .Property(s => s.Metadata)
+            .HasColumnType("jsonb");
+
+        modelBuilder.Entity<WorkflowAssignmentRule>()
+            .Property(r => r.Conditions)
+            .HasColumnType("jsonb");
+        modelBuilder.Entity<WorkflowAssignmentRule>()
+            .Property(r => r.Actions)
+            .HasColumnType("jsonb");
+
+        modelBuilder.Entity<WorkflowEscalationRule>()
+            .Property(r => r.Actions)
+            .HasColumnType("jsonb");
+
+        modelBuilder.Entity<NoticeWorkflowInstance>()
+            .Property(i => i.Metadata)
+            .HasColumnType("jsonb");
+
+        modelBuilder.Entity<WorkflowHistory>()
+            .Property(h => h.EventData)
+            .HasColumnType("jsonb");
+
+        modelBuilder.Entity<NoticeDeadline>()
+            .Property(d => d.ReminderDaysBefore)
+            .HasColumnType("jsonb");
+        modelBuilder.Entity<NoticeDeadline>()
+            .Property(d => d.Metadata)
+            .HasColumnType("jsonb");
+
+        modelBuilder.Entity<DeadlineExtension>()
+            .Property(e => e.SupportingDocumentIds)
+            .HasColumnType("jsonb");
+        modelBuilder.Entity<DeadlineExtension>()
+            .Property(e => e.Metadata)
+            .HasColumnType("jsonb");
+
+        modelBuilder.Entity<WorkflowSlaMetric>()
+            .Property(m => m.AssigneeBreakdown)
+            .HasColumnType("jsonb");
+        modelBuilder.Entity<WorkflowSlaMetric>()
+            .Property(m => m.NoticeTypeBreakdown)
+            .HasColumnType("jsonb");
+        modelBuilder.Entity<WorkflowSlaMetric>()
+            .Property(m => m.PriorityBreakdown)
             .HasColumnType("jsonb");
 
         // Configure vector column
@@ -428,6 +512,267 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
                 .WithMany()
                 .HasForeignKey(e => e.OrganizationId)
                 .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ============================================================================
+        // Workflow Template Configuration
+        // ============================================================================
+        modelBuilder.Entity<WorkflowTemplate>(entity =>
+        {
+            entity.HasIndex(e => e.OrganizationId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.IsSystem)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.IsActive)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => new { e.OrganizationId, e.Name })
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .IsUnique()
+                .HasDatabaseName("IX_WorkflowTemplates_Org_Name_Unique");
+
+            entity.HasOne(e => e.Organization)
+                .WithMany()
+                .HasForeignKey(e => e.OrganizationId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.CreatedBy)
+                .WithMany()
+                .HasForeignKey(e => e.CreatedById)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ============================================================================
+        // Workflow Stage Configuration
+        // ============================================================================
+        modelBuilder.Entity<WorkflowStage>(entity =>
+        {
+            entity.HasIndex(e => e.WorkflowTemplateId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => new { e.WorkflowTemplateId, e.StageKey })
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .IsUnique()
+                .HasDatabaseName("IX_WorkflowStages_Template_StageKey_Unique");
+            entity.HasIndex(e => new { e.WorkflowTemplateId, e.StageOrder })
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .HasDatabaseName("IX_WorkflowStages_Template_Order");
+
+            entity.HasOne(e => e.WorkflowTemplate)
+                .WithMany(t => t.Stages)
+                .HasForeignKey(e => e.WorkflowTemplateId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ============================================================================
+        // Workflow Assignment Rule Configuration
+        // ============================================================================
+        modelBuilder.Entity<WorkflowAssignmentRule>(entity =>
+        {
+            entity.HasIndex(e => e.WorkflowTemplateId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => new { e.WorkflowTemplateId, e.Priority })
+                .HasFilter("\"DeletedAt\" IS NULL AND \"IsEnabled\" = true")
+                .HasDatabaseName("IX_WorkflowAssignmentRules_Template_Priority");
+
+            entity.HasOne(e => e.WorkflowTemplate)
+                .WithMany(t => t.AssignmentRules)
+                .HasForeignKey(e => e.WorkflowTemplateId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ============================================================================
+        // Workflow Escalation Rule Configuration
+        // ============================================================================
+        modelBuilder.Entity<WorkflowEscalationRule>(entity =>
+        {
+            entity.HasIndex(e => e.WorkflowTemplateId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => new { e.WorkflowTemplateId, e.TriggerPercent })
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .HasDatabaseName("IX_WorkflowEscalationRules_Template_Trigger");
+
+            entity.HasOne(e => e.WorkflowTemplate)
+                .WithMany(t => t.EscalationRules)
+                .HasForeignKey(e => e.WorkflowTemplateId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ============================================================================
+        // Notice Workflow Instance Configuration
+        // ============================================================================
+        modelBuilder.Entity<NoticeWorkflowInstance>(entity =>
+        {
+            entity.HasIndex(e => e.NoticeId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.WorkflowTemplateId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.Status)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.SlaStatus)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.AssignedToId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.SlaDeadline)
+                .HasFilter("\"DeletedAt\" IS NULL AND \"Status\" = 'active'")
+                .HasDatabaseName("IX_NoticeWorkflowInstances_ActiveSlaDeadline");
+            entity.HasIndex(e => new { e.NoticeId, e.Status })
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .HasDatabaseName("IX_NoticeWorkflowInstances_Notice_Status");
+
+            // Only one active workflow instance per notice
+            entity.HasIndex(e => e.NoticeId)
+                .HasFilter("\"DeletedAt\" IS NULL AND \"Status\" = 'active'")
+                .IsUnique()
+                .HasDatabaseName("IX_NoticeWorkflowInstances_SingleActivePerNotice");
+
+            entity.HasOne(e => e.Notice)
+                .WithMany()
+                .HasForeignKey(e => e.NoticeId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.WorkflowTemplate)
+                .WithMany(t => t.Instances)
+                .HasForeignKey(e => e.WorkflowTemplateId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.CurrentStage)
+                .WithMany()
+                .HasForeignKey(e => e.CurrentStageId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(e => e.AssignedTo)
+                .WithMany()
+                .HasForeignKey(e => e.AssignedToId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(e => e.PreviousAssignee)
+                .WithMany()
+                .HasForeignKey(e => e.PreviousAssigneeId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ============================================================================
+        // Workflow History Configuration
+        // ============================================================================
+        modelBuilder.Entity<WorkflowHistory>(entity =>
+        {
+            entity.HasIndex(e => e.WorkflowInstanceId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.NoticeId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.EventType)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.PerformedById)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.CreatedAt)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => new { e.WorkflowInstanceId, e.CreatedAt })
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .HasDatabaseName("IX_WorkflowHistory_Instance_CreatedAt");
+
+            entity.HasOne(e => e.WorkflowInstance)
+                .WithMany(i => i.History)
+                .HasForeignKey(e => e.WorkflowInstanceId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.Notice)
+                .WithMany()
+                .HasForeignKey(e => e.NoticeId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.PerformedBy)
+                .WithMany()
+                .HasForeignKey(e => e.PerformedById)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ============================================================================
+        // Notice Deadline Configuration
+        // ============================================================================
+        modelBuilder.Entity<NoticeDeadline>(entity =>
+        {
+            entity.HasIndex(e => e.NoticeId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.DeadlineType)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.EffectiveDeadline)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.Status)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => new { e.EffectiveDeadline, e.Status })
+                .HasFilter("\"DeletedAt\" IS NULL AND \"Status\" IN ('pending', 'in_progress')")
+                .HasDatabaseName("IX_NoticeDeadlines_ActiveDeadlines");
+
+            entity.HasOne(e => e.Notice)
+                .WithMany()
+                .HasForeignKey(e => e.NoticeId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.VerifiedBy)
+                .WithMany()
+                .HasForeignKey(e => e.VerifiedById)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ============================================================================
+        // Deadline Extension Configuration
+        // ============================================================================
+        modelBuilder.Entity<DeadlineExtension>(entity =>
+        {
+            entity.HasIndex(e => e.NoticeDeadlineId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.NoticeId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.Status)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.RequestedById)
+                .HasFilter("\"DeletedAt\" IS NULL");
+
+            entity.HasOne(e => e.NoticeDeadline)
+                .WithMany(d => d.Extensions)
+                .HasForeignKey(e => e.NoticeDeadlineId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.Notice)
+                .WithMany()
+                .HasForeignKey(e => e.NoticeId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.RequestedBy)
+                .WithMany()
+                .HasForeignKey(e => e.RequestedById)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.ReviewedBy)
+                .WithMany()
+                .HasForeignKey(e => e.ReviewedById)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ============================================================================
+        // Workflow SLA Metric Configuration
+        // ============================================================================
+        modelBuilder.Entity<WorkflowSlaMetric>(entity =>
+        {
+            entity.HasIndex(e => e.OrganizationId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.WorkflowTemplateId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.PeriodType)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => new { e.OrganizationId, e.WorkflowTemplateId, e.PeriodType, e.PeriodStart })
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .IsUnique()
+                .HasDatabaseName("IX_WorkflowSlaMetrics_Org_Template_Period_Unique");
+
+            entity.HasOne(e => e.Organization)
+                .WithMany()
+                .HasForeignKey(e => e.OrganizationId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.WorkflowTemplate)
+                .WithMany()
+                .HasForeignKey(e => e.WorkflowTemplateId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         // Seed initial data
