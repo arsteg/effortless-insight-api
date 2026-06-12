@@ -1,0 +1,60 @@
+using EffortlessInsight.Api.Jobs;
+using EffortlessInsight.Api.Services.Notifications;
+
+namespace EffortlessInsight.Api.Extensions;
+
+/// <summary>
+/// Extension methods for registering notification services
+/// </summary>
+public static class NotificationServiceExtensions
+{
+    /// <summary>
+    /// Add notification services to the dependency injection container
+    /// </summary>
+    public static IServiceCollection AddNotificationServices(this IServiceCollection services, IConfiguration configuration)
+    {
+        // Configure options
+        services.Configure<SendGridOptions>(configuration.GetSection(SendGridOptions.SectionName));
+        services.Configure<TwilioOptions>(configuration.GetSection(TwilioOptions.SectionName));
+        services.Configure<FirebaseOptions>(configuration.GetSection(FirebaseOptions.SectionName));
+
+        // Core notification services
+        services.AddScoped<INotificationEngineService, NotificationEngineService>();
+        services.AddScoped<INotificationPreferencesService, NotificationPreferencesService>();
+        services.AddScoped<INotificationTemplateService, NotificationTemplateService>();
+        services.AddScoped<IDeliveryTrackingService, DeliveryTrackingService>();
+        services.AddScoped<IPushTokenService, PushTokenService>();
+
+        // Channel services
+        services.AddScoped<IEmailChannelService, SendGridEmailService>();
+        services.AddScoped<ISmsChannelService, TwilioSmsService>();
+        services.AddScoped<IPushChannelService, FirebasePushService>();
+        services.AddScoped<IWhatsAppChannelService, TwilioWhatsAppService>();
+        services.AddScoped<IInAppChannelService, InAppNotificationService>();
+
+        // SignalR connection manager (singleton for shared state)
+        services.AddSingleton<IConnectionManager, InMemoryConnectionManager>();
+
+        // Background jobs
+        services.AddScoped<NotificationJobs>();
+
+        // SignalR hub
+        services.AddSignalR(options =>
+        {
+            options.EnableDetailedErrors = true;
+            options.KeepAliveInterval = TimeSpan.FromSeconds(15);
+            options.ClientTimeoutInterval = TimeSpan.FromSeconds(30);
+        });
+
+        return services;
+    }
+
+    /// <summary>
+    /// Map notification endpoints (SignalR hub)
+    /// </summary>
+    public static IEndpointRouteBuilder MapNotificationEndpoints(this IEndpointRouteBuilder endpoints)
+    {
+        endpoints.MapHub<NotificationHub>("/hubs/notifications");
+        return endpoints;
+    }
+}

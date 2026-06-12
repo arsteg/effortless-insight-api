@@ -56,6 +56,15 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
     public DbSet<DeadlineExtension> DeadlineExtensions => Set<DeadlineExtension>();
     public DbSet<WorkflowSlaMetric> WorkflowSlaMetrics => Set<WorkflowSlaMetric>();
 
+    // Notification Service entities
+    public DbSet<Notification> Notifications => Set<Notification>();
+    public DbSet<NotificationDelivery> NotificationDeliveries => Set<NotificationDelivery>();
+    public DbSet<UserNotificationPreference> UserNotificationPreferences => Set<UserNotificationPreference>();
+    public DbSet<PushToken> PushTokens => Set<PushToken>();
+    public DbSet<NotificationTemplate> NotificationTemplates => Set<NotificationTemplate>();
+    public DbSet<ScheduledNotification> ScheduledNotifications => Set<ScheduledNotification>();
+    public DbSet<EmailUnsubscribe> EmailUnsubscribes => Set<EmailUnsubscribe>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -1141,6 +1150,196 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
                 .HasFilter("\"DeletedAt\" IS NULL");
             entity.HasIndex(e => e.IsDeleted)
                 .HasFilter("\"DeletedAt\" IS NULL");
+        });
+
+        // ============================================================================
+        // Notification Configuration
+        // ============================================================================
+        modelBuilder.Entity<Notification>(entity =>
+        {
+            entity.HasQueryFilter(e => e.DeletedAt == null);
+
+            entity.HasIndex(e => e.UserId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.OrganizationId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.Type)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.IsRead)
+                .HasFilter("\"DeletedAt\" IS NULL AND \"IsRead\" = false")
+                .HasDatabaseName("IX_Notifications_Unread");
+            entity.HasIndex(e => e.CreatedAt)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => new { e.UserId, e.IsRead, e.CreatedAt })
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .HasDatabaseName("IX_Notifications_User_Read_CreatedAt");
+            entity.HasIndex(e => new { e.UserId, e.Type, e.ReferenceId })
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .HasDatabaseName("IX_Notifications_User_Type_Reference");
+
+            entity.Property(e => e.Data)
+                .HasColumnType("jsonb");
+            entity.Property(e => e.ActionUrl)
+                .HasMaxLength(2048);
+
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.Organization)
+                .WithMany()
+                .HasForeignKey(e => e.OrganizationId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ============================================================================
+        // Notification Delivery Configuration
+        // ============================================================================
+        modelBuilder.Entity<NotificationDelivery>(entity =>
+        {
+            entity.HasIndex(e => e.NotificationId);
+            entity.HasIndex(e => e.Channel);
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => e.ProviderMessageId)
+                .HasFilter("\"ProviderMessageId\" IS NOT NULL");
+            entity.HasIndex(e => new { e.Channel, e.ProviderMessageId })
+                .HasDatabaseName("IX_NotificationDeliveries_Channel_ProviderMessageId");
+            entity.HasIndex(e => new { e.Status, e.RetryCount })
+                .HasFilter("\"Status\" = 'failed' AND \"RetryCount\" < 3")
+                .HasDatabaseName("IX_NotificationDeliveries_FailedRetryable");
+
+            entity.Property(e => e.Metadata)
+                .HasColumnType("jsonb");
+            entity.Property(e => e.FailureReason)
+                .HasMaxLength(1000);
+
+            entity.HasOne(e => e.Notification)
+                .WithMany(n => n.Deliveries)
+                .HasForeignKey(e => e.NotificationId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ============================================================================
+        // User Notification Preference Configuration
+        // ============================================================================
+        modelBuilder.Entity<UserNotificationPreference>(entity =>
+        {
+            entity.HasIndex(e => e.UserId)
+                .IsUnique();
+
+            entity.Property(e => e.ChannelSettings)
+                .HasColumnType("jsonb");
+            entity.Property(e => e.QuietHours)
+                .HasColumnType("jsonb");
+            entity.Property(e => e.TypePreferences)
+                .HasColumnType("jsonb");
+            entity.Property(e => e.DigestSettings)
+                .HasColumnType("jsonb");
+
+            entity.HasOne(e => e.User)
+                .WithOne()
+                .HasForeignKey<UserNotificationPreference>(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ============================================================================
+        // Push Token Configuration
+        // ============================================================================
+        modelBuilder.Entity<PushToken>(entity =>
+        {
+            entity.HasIndex(e => e.Token)
+                .IsUnique();
+            entity.HasIndex(e => e.UserId);
+            entity.HasIndex(e => e.IsActive)
+                .HasFilter("\"IsActive\" = true");
+            entity.HasIndex(e => new { e.UserId, e.Platform, e.IsActive })
+                .HasDatabaseName("IX_PushTokens_User_Platform_Active");
+
+            entity.Property(e => e.Token)
+                .HasMaxLength(500);
+            entity.Property(e => e.Platform)
+                .HasMaxLength(20);
+            entity.Property(e => e.DeviceInfo)
+                .HasColumnType("jsonb");
+
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ============================================================================
+        // Notification Template Configuration
+        // ============================================================================
+        modelBuilder.Entity<NotificationTemplate>(entity =>
+        {
+            entity.HasIndex(e => new { e.Type, e.Channel, e.Language })
+                .HasFilter("\"IsActive\" = true")
+                .HasDatabaseName("IX_NotificationTemplates_Type_Channel_Language_Active");
+            entity.HasIndex(e => e.IsActive);
+
+            entity.Property(e => e.Type)
+                .HasMaxLength(100);
+            entity.Property(e => e.Channel)
+                .HasMaxLength(50);
+            entity.Property(e => e.Language)
+                .HasMaxLength(10)
+                .HasDefaultValue("en");
+            entity.Property(e => e.Subject)
+                .HasMaxLength(500);
+            entity.Property(e => e.Metadata)
+                .HasColumnType("jsonb");
+        });
+
+        // ============================================================================
+        // Scheduled Notification Configuration
+        // ============================================================================
+        modelBuilder.Entity<ScheduledNotification>(entity =>
+        {
+            entity.HasIndex(e => e.ScheduledFor)
+                .HasFilter("\"Status\" = 'pending'")
+                .HasDatabaseName("IX_ScheduledNotifications_Pending");
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => e.UserId);
+
+            entity.Property(e => e.Type)
+                .HasMaxLength(100);
+            entity.Property(e => e.Status)
+                .HasMaxLength(20)
+                .HasDefaultValue("pending");
+            entity.Property(e => e.Data)
+                .HasColumnType("jsonb");
+
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.SentNotification)
+                .WithMany()
+                .HasForeignKey(e => e.SentNotificationId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ============================================================================
+        // Email Unsubscribe Configuration
+        // ============================================================================
+        modelBuilder.Entity<EmailUnsubscribe>(entity =>
+        {
+            entity.HasIndex(e => e.Email)
+                .IsUnique();
+            entity.HasIndex(e => e.UserId);
+
+            entity.Property(e => e.Email)
+                .HasMaxLength(255);
+            entity.Property(e => e.Reason)
+                .HasMaxLength(500);
+
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         // Seed initial data

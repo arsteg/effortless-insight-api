@@ -45,6 +45,7 @@ builder.Services.AddCachingServices(builder.Configuration);
 builder.Services.AddBackgroundJobServices(builder.Configuration);
 builder.Services.AddAwsServices(builder.Configuration);
 builder.Services.AddHttpClientServices(builder.Configuration);
+builder.Services.AddNotificationServices(builder.Configuration);
 
 // Add Database Seeders
 builder.Services.AddScoped<WorkflowTemplateSeeder>();
@@ -117,6 +118,7 @@ app.UseAuthorization();
 
 app.MapControllers();
 app.MapHealthChecks("/health");
+app.MapNotificationEndpoints();
 
 // Hangfire Dashboard (protected in production)
 app.UseHangfireDashboard("/hangfire", new DashboardOptions
@@ -132,6 +134,9 @@ EffortlessInsight.Api.Jobs.WorkflowJobsExtensions.ConfigureWorkflowJobs(app);
 // Configure recurring collaboration jobs (task & document request notifications)
 EffortlessInsight.Api.Jobs.CollaborationJobsExtensions.ConfigureCollaborationJobs(app);
 
+// Configure recurring notification jobs
+EffortlessInsight.Api.Jobs.NotificationJobsExtensions.ConfigureNotificationJobs(app);
+
 // Apply migrations and seed data on startup in development
 if (app.Environment.IsDevelopment())
 {
@@ -142,6 +147,10 @@ if (app.Environment.IsDevelopment())
     // Seed default workflow template
     var workflowSeeder = scope.ServiceProvider.GetRequiredService<WorkflowTemplateSeeder>();
     await workflowSeeder.SeedAsync();
+
+    // Seed default notification templates
+    var templateService = scope.ServiceProvider.GetRequiredService<EffortlessInsight.Api.Services.Notifications.INotificationTemplateService>();
+    await templateService.SeedDefaultTemplatesAsync();
 }
 
 Log.Information("EffortlessInsight API starting...");
