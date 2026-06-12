@@ -18,14 +18,48 @@ public class Comment : BaseEntity
     [Required]
     public string Content { get; set; } = string.Empty;
 
+    /// <summary>
+    /// HTML-rendered content with sanitized markdown output.
+    /// </summary>
+    public string? ContentHtml { get; set; }
+
+    /// <summary>
+    /// Visibility: 'all' (visible to everyone) or 'internal' (hidden from clients).
+    /// </summary>
+    [Required]
+    [MaxLength(10)]
+    public string Visibility { get; set; } = "all";
+
     public List<Guid>? Mentions { get; set; }
 
     public bool IsInternal { get; set; }
 
+    /// <summary>
+    /// Whether this comment has been edited.
+    /// </summary>
+    public bool IsEdited { get; set; }
+
+    /// <summary>
+    /// Number of times this comment has been edited (max 10 stored).
+    /// </summary>
+    public int EditCount { get; set; }
+
+    /// <summary>
+    /// Soft delete flag for showing "This comment was deleted" placeholder.
+    /// </summary>
+    public bool IsDeleted { get; set; }
+
     public List<string>? AttachmentUrls { get; set; }
+
+    /// <summary>
+    /// Max nesting depth (for validation, up to 3 levels).
+    /// </summary>
+    public int Depth { get; set; }
 
     // Navigation
     public ICollection<Comment> Replies { get; set; } = [];
+    public ICollection<CommentEditHistory> EditHistory { get; set; } = [];
+    public ICollection<CommentReaction> Reactions { get; set; } = [];
 }
 
 public class NoticeTask : BaseEntity
@@ -34,33 +68,75 @@ public class NoticeTask : BaseEntity
     public Guid NoticeId { get; set; }
     public Notice Notice { get; set; } = null!;
 
+    /// <summary>
+    /// Parent task for subtask support.
+    /// </summary>
+    public Guid? ParentTaskId { get; set; }
+    public NoticeTask? ParentTask { get; set; }
+
     [Required]
     public Guid CreatedById { get; set; }
     public ApplicationUser CreatedBy { get; set; } = null!;
 
+    /// <summary>
+    /// Legacy single assignee (kept for backward compatibility).
+    /// Use Assignees collection for multi-assignee support.
+    /// </summary>
     public Guid? AssignedToId { get; set; }
     public ApplicationUser? AssignedTo { get; set; }
 
     [Required]
-    [MaxLength(255)]
+    [MaxLength(200)]
     public string Title { get; set; } = string.Empty;
 
+    [MaxLength(2000)]
     public string? Description { get; set; }
 
     public DateTime? DueDate { get; set; }
 
-    [Required]
-    [MaxLength(20)]
-    public string Priority { get; set; } = "medium"; // low, medium, high, critical
+    /// <summary>
+    /// Estimated hours to complete the task.
+    /// </summary>
+    public decimal? EstimatedHours { get; set; }
+
+    /// <summary>
+    /// Actual hours spent on the task.
+    /// </summary>
+    public decimal? ActualHours { get; set; }
 
     [Required]
     [MaxLength(20)]
-    public string Status { get; set; } = "pending"; // pending, in_progress, completed, cancelled
+    public string Priority { get; set; } = TaskPriorityValues.Medium;
+
+    [Required]
+    [MaxLength(20)]
+    public string Status { get; set; } = TaskStatusValues.Todo;
+
+    /// <summary>
+    /// Note added when completing the task.
+    /// </summary>
+    public string? CompletionNote { get; set; }
 
     public DateTime? CompletedAt { get; set; }
 
     public Guid? CompletedById { get; set; }
     public ApplicationUser? CompletedBy { get; set; }
+
+    /// <summary>
+    /// Task labels/tags for categorization.
+    /// </summary>
+    public List<string>? Labels { get; set; }
+
+    /// <summary>
+    /// Template used to create this task.
+    /// </summary>
+    public Guid? TemplateId { get; set; }
+    public TaskTemplate? Template { get; set; }
+
+    // Navigation
+    public ICollection<TaskAssignee> Assignees { get; set; } = [];
+    public ICollection<NoticeTask> Subtasks { get; set; } = [];
+    public ICollection<Attachment> Attachments { get; set; } = [];
 }
 
 public class Attachment : BaseEntity

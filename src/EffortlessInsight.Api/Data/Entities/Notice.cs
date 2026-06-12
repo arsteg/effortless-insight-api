@@ -204,6 +204,10 @@ public class Notice : BaseEntity
     public ICollection<Attachment> Attachments { get; set; } = [];
     public ICollection<NoticeResponse> Responses { get; set; } = [];
     public ICollection<DeadlineReminder> Reminders { get; set; } = [];
+    public ICollection<DocumentRequest> DocumentRequests { get; set; } = [];
+    public ICollection<NoticeFile> Files { get; set; } = [];
+    public ICollection<FileFolder> Folders { get; set; } = [];
+    public ICollection<ActivityLog> ActivityLogs { get; set; } = [];
 }
 
 /// <summary>

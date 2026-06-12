@@ -636,23 +636,10 @@ public record CommentDto(
 );
 
 // ============================================================================
-// Task DTOs
+// Task DTOs - See TaskCollaborationDtos.cs for full task module DTOs
 // ============================================================================
 
-public record CreateTaskDto(string Title, string? Description, Guid? AssignedToId, DateTime? DueDate, string? Priority);
-public record UpdateTaskDto(string? Title, string? Description, Guid? AssignedToId, DateTime? DueDate, string? Priority, string? Status);
-public record TaskDto(
-    Guid Id,
-    string Title,
-    string? Description,
-    Guid? AssignedToId,
-    string? AssignedToName,
-    DateTime? DueDate,
-    string Priority,
-    string Status,
-    DateTime CreatedAt,
-    DateTime? CompletedAt
-);
+// Legacy simple task DTOs removed - use CreateTaskDto, UpdateTaskDto, TaskDto from TaskCollaborationDtos.cs
 
 // ============================================================================
 // Response DTOs

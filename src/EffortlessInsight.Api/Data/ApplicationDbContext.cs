@@ -33,6 +33,18 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
     public DbSet<LoginAudit> LoginAudits => Set<LoginAudit>();
     public DbSet<PasswordHistory> PasswordHistory => Set<PasswordHistory>();
 
+    // Task & Collaboration entities
+    public DbSet<TaskAssignee> TaskAssignees => Set<TaskAssignee>();
+    public DbSet<TaskTemplate> TaskTemplates => Set<TaskTemplate>();
+    public DbSet<CommentEditHistory> CommentEditHistory => Set<CommentEditHistory>();
+    public DbSet<CommentReaction> CommentReactions => Set<CommentReaction>();
+    public DbSet<DocumentRequest> DocumentRequests => Set<DocumentRequest>();
+    public DbSet<DocumentRequestDocument> DocumentRequestDocuments => Set<DocumentRequestDocument>();
+    public DbSet<DocumentRequestTemplate> DocumentRequestTemplates => Set<DocumentRequestTemplate>();
+    public DbSet<NoticeFile> NoticeFiles => Set<NoticeFile>();
+    public DbSet<FileFolder> FileFolders => Set<FileFolder>();
+    public DbSet<ActivityLog> ActivityLogs => Set<ActivityLog>();
+
     // Workflow Engine entities
     public DbSet<WorkflowTemplate> WorkflowTemplates => Set<WorkflowTemplate>();
     public DbSet<WorkflowStage> WorkflowStages => Set<WorkflowStage>();
@@ -773,6 +785,362 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
                 .WithMany()
                 .HasForeignKey(e => e.WorkflowTemplateId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ============================================================================
+        // Task Assignee Configuration (Many-to-Many)
+        // ============================================================================
+        modelBuilder.Entity<TaskAssignee>(entity =>
+        {
+            entity.HasKey(e => new { e.TaskId, e.UserId });
+
+            entity.HasIndex(e => e.UserId);
+
+            entity.HasOne(e => e.Task)
+                .WithMany(t => t.Assignees)
+                .HasForeignKey(e => e.TaskId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.AssignedBy)
+                .WithMany()
+                .HasForeignKey(e => e.AssignedById)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ============================================================================
+        // Task Template Configuration
+        // ============================================================================
+        modelBuilder.Entity<TaskTemplate>(entity =>
+        {
+            entity.HasQueryFilter(e => e.DeletedAt == null);
+
+            entity.HasIndex(e => e.OrganizationId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.IsActive)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => new { e.OrganizationId, e.Name })
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .IsUnique()
+                .HasDatabaseName("IX_TaskTemplates_Org_Name_Unique");
+
+            entity.Property(e => e.DefaultLabels)
+                .HasColumnType("jsonb");
+            entity.Property(e => e.ApplicableNoticeTypes)
+                .HasColumnType("jsonb");
+
+            entity.HasOne(e => e.Organization)
+                .WithMany()
+                .HasForeignKey(e => e.OrganizationId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.CreatedBy)
+                .WithMany()
+                .HasForeignKey(e => e.CreatedById)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ============================================================================
+        // Comment Edit History Configuration
+        // ============================================================================
+        modelBuilder.Entity<CommentEditHistory>(entity =>
+        {
+            entity.HasQueryFilter(e => e.DeletedAt == null);
+
+            entity.HasIndex(e => e.CommentId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => new { e.CommentId, e.EditedAt })
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .HasDatabaseName("IX_CommentEditHistory_Comment_EditedAt");
+
+            entity.HasOne(e => e.Comment)
+                .WithMany(c => c.EditHistory)
+                .HasForeignKey(e => e.CommentId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ============================================================================
+        // Comment Reaction Configuration
+        // ============================================================================
+        modelBuilder.Entity<CommentReaction>(entity =>
+        {
+            entity.HasKey(e => new { e.CommentId, e.UserId, e.Emoji });
+
+            entity.HasIndex(e => e.CommentId);
+            entity.HasIndex(e => e.UserId);
+
+            entity.HasOne(e => e.Comment)
+                .WithMany(c => c.Reactions)
+                .HasForeignKey(e => e.CommentId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            // Constraint for allowed emojis will be enforced at application level
+        });
+
+        // ============================================================================
+        // Document Request Configuration
+        // ============================================================================
+        modelBuilder.Entity<DocumentRequest>(entity =>
+        {
+            entity.HasQueryFilter(e => e.DeletedAt == null);
+
+            entity.HasIndex(e => e.NoticeId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.Status)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.RequestedFromId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.DueDate)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => new { e.NoticeId, e.Status })
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .HasDatabaseName("IX_DocumentRequests_Notice_Status");
+
+            entity.Property(e => e.AcceptedFormats)
+                .HasColumnType("jsonb");
+
+            entity.HasOne(e => e.Notice)
+                .WithMany(n => n.DocumentRequests)
+                .HasForeignKey(e => e.NoticeId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.RequestedFrom)
+                .WithMany()
+                .HasForeignKey(e => e.RequestedFromId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.RequestedBy)
+                .WithMany()
+                .HasForeignKey(e => e.RequestedById)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.ReviewedBy)
+                .WithMany()
+                .HasForeignKey(e => e.ReviewedById)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(e => e.Template)
+                .WithMany()
+                .HasForeignKey(e => e.TemplateId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ============================================================================
+        // Document Request Document Configuration
+        // ============================================================================
+        modelBuilder.Entity<DocumentRequestDocument>(entity =>
+        {
+            entity.HasQueryFilter(e => e.DeletedAt == null);
+
+            entity.HasIndex(e => e.RequestId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.FileId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+
+            entity.HasOne(e => e.Request)
+                .WithMany(r => r.Documents)
+                .HasForeignKey(e => e.RequestId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.File)
+                .WithMany()
+                .HasForeignKey(e => e.FileId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.UploadedBy)
+                .WithMany()
+                .HasForeignKey(e => e.UploadedById)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // ============================================================================
+        // Document Request Template Configuration
+        // ============================================================================
+        modelBuilder.Entity<DocumentRequestTemplate>(entity =>
+        {
+            entity.HasQueryFilter(e => e.DeletedAt == null);
+
+            entity.HasIndex(e => e.OrganizationId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.IsActive)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => new { e.OrganizationId, e.Name })
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .IsUnique()
+                .HasDatabaseName("IX_DocumentRequestTemplates_Org_Name_Unique");
+
+            entity.Property(e => e.AcceptedFormats)
+                .HasColumnType("jsonb");
+            entity.Property(e => e.ApplicableNoticeTypes)
+                .HasColumnType("jsonb");
+
+            entity.HasOne(e => e.Organization)
+                .WithMany()
+                .HasForeignKey(e => e.OrganizationId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ============================================================================
+        // Notice File Configuration
+        // ============================================================================
+        modelBuilder.Entity<NoticeFile>(entity =>
+        {
+            entity.HasQueryFilter(e => e.DeletedAt == null);
+
+            entity.HasIndex(e => e.NoticeId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.OrganizationId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.FolderId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.Checksum)
+                .HasFilter("\"DeletedAt\" IS NULL");
+
+            entity.Property(e => e.Metadata)
+                .HasColumnType("jsonb");
+
+            entity.HasOne(e => e.Organization)
+                .WithMany()
+                .HasForeignKey(e => e.OrganizationId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.Notice)
+                .WithMany(n => n.Files)
+                .HasForeignKey(e => e.NoticeId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(e => e.Folder)
+                .WithMany(f => f.Files)
+                .HasForeignKey(e => e.FolderId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(e => e.UploadedBy)
+                .WithMany()
+                .HasForeignKey(e => e.UploadedById)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // ============================================================================
+        // File Folder Configuration
+        // ============================================================================
+        modelBuilder.Entity<FileFolder>(entity =>
+        {
+            entity.HasQueryFilter(e => e.DeletedAt == null);
+
+            entity.HasIndex(e => e.NoticeId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.ParentFolderId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => new { e.NoticeId, e.Name, e.ParentFolderId })
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .IsUnique()
+                .HasDatabaseName("IX_FileFolders_Notice_Name_Parent_Unique");
+
+            entity.HasOne(e => e.Notice)
+                .WithMany(n => n.Folders)
+                .HasForeignKey(e => e.NoticeId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.ParentFolder)
+                .WithMany(f => f.SubFolders)
+                .HasForeignKey(e => e.ParentFolderId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.CreatedBy)
+                .WithMany()
+                .HasForeignKey(e => e.CreatedById)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // ============================================================================
+        // Activity Log Configuration
+        // ============================================================================
+        modelBuilder.Entity<ActivityLog>(entity =>
+        {
+            entity.HasQueryFilter(e => e.DeletedAt == null);
+
+            entity.HasIndex(e => e.NoticeId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.OrganizationId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.ActivityType)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.ActorId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.CreatedAt)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => new { e.NoticeId, e.CreatedAt })
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .HasDatabaseName("IX_ActivityLog_Notice_CreatedAt");
+            entity.HasIndex(e => new { e.OrganizationId, e.CreatedAt })
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .HasDatabaseName("IX_ActivityLog_Org_CreatedAt");
+
+            entity.Property(e => e.Data)
+                .HasColumnType("jsonb");
+
+            entity.HasOne(e => e.Organization)
+                .WithMany()
+                .HasForeignKey(e => e.OrganizationId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.Notice)
+                .WithMany(n => n.ActivityLogs)
+                .HasForeignKey(e => e.NoticeId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.Actor)
+                .WithMany()
+                .HasForeignKey(e => e.ActorId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ============================================================================
+        // Update NoticeTask Configuration for Subtasks and Templates
+        // ============================================================================
+        modelBuilder.Entity<NoticeTask>(entity =>
+        {
+            entity.HasIndex(e => e.ParentTaskId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => new { e.NoticeId, e.ParentTaskId })
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .HasDatabaseName("IX_NoticeTasks_Notice_Parent");
+            entity.HasIndex(e => e.DueDate)
+                .HasFilter("\"DeletedAt\" IS NULL AND \"Status\" NOT IN ('done', 'archived')")
+                .HasDatabaseName("IX_NoticeTasks_ActiveDueDate");
+
+            entity.Property(e => e.Labels)
+                .HasColumnType("jsonb");
+
+            entity.HasOne(e => e.ParentTask)
+                .WithMany(t => t.Subtasks)
+                .HasForeignKey(e => e.ParentTaskId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.Template)
+                .WithMany()
+                .HasForeignKey(e => e.TemplateId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ============================================================================
+        // Update Comment Configuration for Edit History and Reactions
+        // ============================================================================
+        modelBuilder.Entity<Comment>(entity =>
+        {
+            entity.HasIndex(e => e.Visibility)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.IsDeleted)
+                .HasFilter("\"DeletedAt\" IS NULL");
         });
 
         // Seed initial data

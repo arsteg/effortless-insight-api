@@ -53,7 +53,8 @@
       "Bash(grep:*)",
       "Bash(npx tsc:*)",
       "Bash(find:*)",
-      "Bash(dotnet ef migrations:*)"
+      "Bash(dotnet ef migrations:*)",
+      "Bash(dotnet add package:*)"
     ]
   }
 }

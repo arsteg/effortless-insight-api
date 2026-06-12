@@ -129,6 +129,9 @@ app.UseHangfireDashboard("/hangfire", new DashboardOptions
 // Configure recurring workflow jobs
 EffortlessInsight.Api.Jobs.WorkflowJobsExtensions.ConfigureWorkflowJobs(app);
 
+// Configure recurring collaboration jobs (task & document request notifications)
+EffortlessInsight.Api.Jobs.CollaborationJobsExtensions.ConfigureCollaborationJobs(app);
+
 // Apply migrations and seed data on startup in development
 if (app.Environment.IsDevelopment())
 {

@@ -9,6 +9,7 @@ using EffortlessInsight.Api.Jobs;
 using EffortlessInsight.Api.Services.Organizations;
 using EffortlessInsight.Api.Services.Notices;
 using EffortlessInsight.Api.Features.Workflows.Services;
+using EffortlessInsight.Api.Services.Collaboration;
 using FluentValidation;
 using FluentValidation.AspNetCore;
 using Hangfire;
@@ -56,10 +57,18 @@ public static class ServiceExtensions
         // Register workflow engine services
         services.AddScoped<IWorkflowEngineService, WorkflowEngineService>();
 
+        // Register Task & Collaboration services
+        services.AddScoped<ITaskService, TaskService>();
+        services.AddScoped<ICommentService, CommentService>();
+        services.AddScoped<IDocumentRequestService, DocumentRequestService>();
+        services.AddScoped<IActivityService, ActivityService>();
+        services.AddScoped<INotificationService, NotificationService>();
+
         // Register background jobs
         services.AddScoped<Jobs.OrganizationJobs>();
         services.AddScoped<INoticeProcessingJob, Jobs.NoticeProcessingJob>();
         services.AddScoped<Jobs.WorkflowSlaMonitorJob>();
+        services.AddScoped<Jobs.OverdueNotificationJob>();
 
         return services;
     }
