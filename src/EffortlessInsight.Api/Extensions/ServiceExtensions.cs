@@ -10,6 +10,8 @@ using EffortlessInsight.Api.Services.Organizations;
 using EffortlessInsight.Api.Services.Notices;
 using EffortlessInsight.Api.Features.Workflows.Services;
 using EffortlessInsight.Api.Services.Collaboration;
+using EffortlessInsight.Api.Services.Billing;
+using EffortlessInsight.Api.Options;
 using FluentValidation;
 using FluentValidation.AspNetCore;
 using Hangfire;
@@ -69,6 +71,28 @@ public static class ServiceExtensions
         services.AddScoped<INoticeProcessingJob, Jobs.NoticeProcessingJob>();
         services.AddScoped<Jobs.WorkflowSlaMonitorJob>();
         services.AddScoped<Jobs.OverdueNotificationJob>();
+
+        // Register billing services
+        services.AddScoped<IPlanService, PlanService>();
+        services.AddScoped<ISubscriptionService, SubscriptionService>();
+        services.AddScoped<IUsageService, UsageService>();
+        services.AddScoped<ICouponService, CouponService>();
+        services.AddScoped<IRazorpayService, RazorpayService>();
+        services.AddScoped<IInvoiceService, InvoiceService>();
+        services.AddScoped<IBillingNotificationService, BillingNotificationService>();
+        services.AddScoped<IPaymentMethodService, PaymentMethodService>();
+        services.AddScoped<Jobs.BillingJobs>();
+
+        return services;
+    }
+
+    public static IServiceCollection AddBillingServices(this IServiceCollection services, IConfiguration configuration)
+    {
+        // Configure Razorpay options
+        services.Configure<RazorpayOptions>(configuration.GetSection(RazorpayOptions.SectionName));
+
+        // Configure Billing options
+        services.Configure<BillingOptions>(configuration.GetSection(BillingOptions.SectionName));
 
         return services;
     }

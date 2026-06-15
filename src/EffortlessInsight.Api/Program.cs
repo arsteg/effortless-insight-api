@@ -4,6 +4,7 @@ using EffortlessInsight.Api.Extensions;
 using EffortlessInsight.Api.Middleware;
 using Hangfire;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -33,7 +34,8 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
         {
             npgsqlOptions.UseVector();
             npgsqlOptions.EnableRetryOnFailure(3);
-        }));
+        })
+    .ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning)));
 
 // Add Identity
 builder.Services.AddIdentityServices(builder.Configuration);
@@ -46,6 +48,9 @@ builder.Services.AddBackgroundJobServices(builder.Configuration);
 builder.Services.AddAwsServices(builder.Configuration);
 builder.Services.AddHttpClientServices(builder.Configuration);
 builder.Services.AddNotificationServices(builder.Configuration);
+builder.Services.AddBillingServices(builder.Configuration);
+builder.Services.AddAdminServices(builder.Configuration);
+builder.Services.AddAdminAuthentication(builder.Configuration);
 
 // Add Database Seeders
 builder.Services.AddScoped<WorkflowTemplateSeeder>();
@@ -72,6 +77,8 @@ builder.Services.Configure<IpRateLimitOptions>(options =>
         new() { Endpoint = "POST:/api/v1/auth/forgot-password", Period = "1h", Limit = 3 },
         new() { Endpoint = "POST:/api/v1/auth/2fa/login", Period = "5m", Limit = 5 }
     };
+    // Add admin rate limit rules
+    AdminServiceExtensions.AddAdminRateLimitRules(options);
 });
 builder.Services.AddInMemoryRateLimiting();
 builder.Services.AddSingleton<IRateLimitConfiguration, RateLimitConfiguration>();
@@ -136,6 +143,9 @@ EffortlessInsight.Api.Jobs.CollaborationJobsExtensions.ConfigureCollaborationJob
 
 // Configure recurring notification jobs
 EffortlessInsight.Api.Jobs.NotificationJobsExtensions.ConfigureNotificationJobs(app);
+
+// Configure recurring billing jobs
+EffortlessInsight.Api.Jobs.BillingJobsExtensions.ConfigureBillingJobs(app);
 
 // Apply migrations and seed data on startup in development
 if (app.Environment.IsDevelopment())

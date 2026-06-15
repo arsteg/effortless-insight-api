@@ -50,7 +50,7 @@ public class TestWebApplicationFactory : WebApplicationFactory<Program>
             services.RemoveAll<IDistributedCache>();
             services.AddSingleton<IDistributedCache>(sp =>
             {
-                var options = Options.Create(new MemoryDistributedCacheOptions());
+                var options = Microsoft.Extensions.Options.Options.Create(new MemoryDistributedCacheOptions());
                 return new MemoryDistributedCache(options);
             });
 

@@ -54,7 +54,19 @@
       "Bash(npx tsc:*)",
       "Bash(find:*)",
       "Bash(dotnet ef migrations:*)",
-      "Bash(dotnet add package:*)"
+      "Bash(dotnet add package:*)",
+      "Bash(npx expo start)",
+      "Bash(npx expo --version)",
+      "Bash(npx expo start --web)",
+      "Bash(npx expo install:*)",
+      "Bash(copy \"C:\\\\Work\\\\EffortlessInsight\\\\apps\\\\effortless-insight-web\\\\public\\\\logo.png\" \"C:\\\\Work\\\\EffortlessInsight\\\\apps\\\\effortless-insight-mobile\\\\assets\\\\images\"\" && copy \"C:WorkEffortlessInsightappseffortless-insight-webpubliclogo.svg\" \"C:WorkEffortlessInsightappseffortless-insight-mobileassetsimages\"\")",
+      "Bash(copy \"C:\\\\Work\\\\EffortlessInsight\\\\apps\\\\effortless-insight-web\\\\public\\\\small-logo.png\" \"C:\\\\Work\\\\EffortlessInsight\\\\apps\\\\effortless-insight-mobile\\\\assets\\\\images\"\" && copy \"C:WorkEffortlessInsightappseffortless-insight-webpublicsmall-logo.svg\" \"C:WorkEffortlessInsightappseffortless-insight-mobileassetsimages\"\")",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(npx create-next-app@latest:*)",
+      "Bash(npx shadcn@latest init:*)",
+      "Bash(npx shadcn@latest add card input label form dialog dropdown-menu avatar badge separator tabs toast skeleton scroll-area select checkbox switch table alert alert-dialog popover command progress radio-group textarea tooltip)",
+      "Bash(npx shadcn@latest add card input label form dialog dropdown-menu avatar badge separator tabs skeleton scroll-area select checkbox switch table alert alert-dialog popover command progress radio-group textarea tooltip sonner -y)"
     ]
   }
 }

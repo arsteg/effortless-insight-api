@@ -1,4 +1,6 @@
 using EffortlessInsight.Api.Data.Entities;
+using EffortlessInsight.Api.Data.Entities.Admin;
+using EffortlessInsight.Api.Data.Entities.Billing;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Pgvector;
@@ -64,6 +66,31 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
     public DbSet<NotificationTemplate> NotificationTemplates => Set<NotificationTemplate>();
     public DbSet<ScheduledNotification> ScheduledNotifications => Set<ScheduledNotification>();
     public DbSet<EmailUnsubscribe> EmailUnsubscribes => Set<EmailUnsubscribe>();
+
+    // Billing Service entities
+    public DbSet<SubscriptionPlan> SubscriptionPlans => Set<SubscriptionPlan>();
+    public DbSet<BillingSubscription> BillingSubscriptions => Set<BillingSubscription>();
+    public DbSet<BillingDetails> BillingDetails => Set<BillingDetails>();
+    public DbSet<PaymentMethod> PaymentMethods => Set<PaymentMethod>();
+    public DbSet<Invoice> Invoices => Set<Invoice>();
+    public DbSet<InvoiceLineItem> InvoiceLineItems => Set<InvoiceLineItem>();
+    public DbSet<Payment> Payments => Set<Payment>();
+    public DbSet<UsageRecord> UsageRecords => Set<UsageRecord>();
+    public DbSet<Coupon> Coupons => Set<Coupon>();
+    public DbSet<CouponRedemption> CouponRedemptions => Set<CouponRedemption>();
+    public DbSet<WebhookEvent> WebhookEvents => Set<WebhookEvent>();
+
+    // Admin Portal entities
+    public DbSet<AdminUser> AdminUsers => Set<AdminUser>();
+    public DbSet<AdminAuditLog> AdminAuditLogs => Set<AdminAuditLog>();
+    public DbSet<ImpersonationSession> ImpersonationSessions => Set<ImpersonationSession>();
+    public DbSet<OrganizationCredit> OrganizationCredits => Set<OrganizationCredit>();
+    public DbSet<CreditUsageRecord> CreditUsageRecords => Set<CreditUsageRecord>();
+    public DbSet<SystemAlert> SystemAlerts => Set<SystemAlert>();
+    public DbSet<ContentPage> ContentPages => Set<ContentPage>();
+    public DbSet<ContentPageVersion> ContentPageVersions => Set<ContentPageVersion>();
+    public DbSet<PromptVersion> PromptVersions => Set<PromptVersion>();
+    public DbSet<AdminSession> AdminSessions => Set<AdminSession>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -1342,6 +1369,529 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
                 .OnDelete(DeleteBehavior.SetNull);
         });
 
+        // ============================================================================
+        // Billing Service Configurations
+        // ============================================================================
+
+        // SubscriptionPlan Configuration
+        modelBuilder.Entity<SubscriptionPlan>(entity =>
+        {
+            entity.HasQueryFilter(e => e.DeletedAt == null);
+
+            entity.HasIndex(e => e.Code)
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .IsUnique()
+                .HasDatabaseName("IX_SubscriptionPlans_Code_Unique");
+            entity.HasIndex(e => e.IsActive)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.SortOrder)
+                .HasFilter("\"DeletedAt\" IS NULL AND \"IsActive\" = true");
+
+            entity.OwnsOne(e => e.Limits, limits =>
+            {
+                limits.ToJson();
+            });
+            entity.Property(e => e.Features)
+                .HasColumnType("jsonb");
+            entity.Property(e => e.Metadata)
+                .HasColumnType("jsonb");
+        });
+
+        // BillingSubscription Configuration
+        modelBuilder.Entity<BillingSubscription>(entity =>
+        {
+            entity.HasQueryFilter(e => e.DeletedAt == null);
+
+            entity.HasIndex(e => e.OrganizationId)
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .IsUnique()
+                .HasDatabaseName("IX_BillingSubscriptions_Org_Unique");
+            entity.HasIndex(e => e.Status)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.CurrentPeriodEnd)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.RazorpaySubscriptionId)
+                .HasFilter("\"RazorpaySubscriptionId\" IS NOT NULL");
+
+            entity.Property(e => e.Metadata)
+                .HasColumnType("jsonb");
+
+            entity.HasOne(e => e.Organization)
+                .WithOne()
+                .HasForeignKey<BillingSubscription>(e => e.OrganizationId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.Plan)
+                .WithMany()
+                .HasForeignKey(e => e.PlanId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // BillingDetails Configuration
+        modelBuilder.Entity<BillingDetails>(entity =>
+        {
+            entity.HasQueryFilter(e => e.DeletedAt == null);
+
+            entity.HasIndex(e => e.OrganizationId)
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .IsUnique()
+                .HasDatabaseName("IX_BillingDetails_Org_Unique");
+
+            entity.HasOne(e => e.Organization)
+                .WithOne()
+                .HasForeignKey<BillingDetails>(e => e.OrganizationId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // PaymentMethod Configuration
+        modelBuilder.Entity<PaymentMethod>(entity =>
+        {
+            entity.HasQueryFilter(e => e.DeletedAt == null);
+
+            entity.HasIndex(e => e.OrganizationId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => new { e.OrganizationId, e.IsDefault })
+                .HasFilter("\"DeletedAt\" IS NULL AND \"IsDefault\" = true")
+                .IsUnique()
+                .HasDatabaseName("IX_PaymentMethods_Org_Default_Unique");
+            entity.HasIndex(e => e.RazorpayTokenId)
+                .HasFilter("\"RazorpayTokenId\" IS NOT NULL");
+
+            entity.Property(e => e.Metadata)
+                .HasColumnType("jsonb");
+
+            entity.HasOne(e => e.Organization)
+                .WithMany()
+                .HasForeignKey(e => e.OrganizationId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Invoice Configuration
+        modelBuilder.Entity<Invoice>(entity =>
+        {
+            entity.HasQueryFilter(e => e.DeletedAt == null);
+
+            entity.HasIndex(e => e.InvoiceNumber)
+                .IsUnique()
+                .HasDatabaseName("IX_Invoices_Number_Unique");
+            entity.HasIndex(e => e.OrganizationId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.Status)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.InvoiceDate)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.RazorpayInvoiceId)
+                .HasFilter("\"RazorpayInvoiceId\" IS NOT NULL");
+
+            entity.Property(e => e.BillingDetails)
+                .HasColumnType("jsonb");
+
+            entity.HasOne(e => e.Organization)
+                .WithMany()
+                .HasForeignKey(e => e.OrganizationId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.Subscription)
+                .WithMany(s => s.Invoices)
+                .HasForeignKey(e => e.SubscriptionId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // InvoiceLineItem Configuration
+        modelBuilder.Entity<InvoiceLineItem>(entity =>
+        {
+            entity.HasQueryFilter(e => e.DeletedAt == null);
+
+            entity.HasIndex(e => e.InvoiceId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+
+            entity.Property(e => e.Metadata)
+                .HasColumnType("jsonb");
+
+            entity.HasOne(e => e.Invoice)
+                .WithMany(i => i.LineItems)
+                .HasForeignKey(e => e.InvoiceId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Payment Configuration
+        modelBuilder.Entity<Payment>(entity =>
+        {
+            entity.HasQueryFilter(e => e.DeletedAt == null);
+
+            entity.HasIndex(e => e.OrganizationId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.Status)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.RazorpayPaymentId)
+                .HasFilter("\"RazorpayPaymentId\" IS NOT NULL");
+            entity.HasIndex(e => e.RazorpayOrderId)
+                .HasFilter("\"RazorpayOrderId\" IS NOT NULL");
+
+            entity.Property(e => e.Metadata)
+                .HasColumnType("jsonb");
+
+            entity.HasOne(e => e.Organization)
+                .WithMany()
+                .HasForeignKey(e => e.OrganizationId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.Invoice)
+                .WithMany(i => i.Payments)
+                .HasForeignKey(e => e.InvoiceId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(e => e.Subscription)
+                .WithMany(s => s.Payments)
+                .HasForeignKey(e => e.SubscriptionId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // UsageRecord Configuration
+        modelBuilder.Entity<UsageRecord>(entity =>
+        {
+            entity.HasQueryFilter(e => e.DeletedAt == null);
+
+            entity.HasIndex(e => e.OrganizationId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => new { e.OrganizationId, e.PeriodStart, e.PeriodEnd })
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .IsUnique()
+                .HasDatabaseName("IX_UsageRecords_Org_Period_Unique");
+
+            entity.Property(e => e.AdditionalMetrics)
+                .HasColumnType("jsonb");
+
+            entity.HasOne(e => e.Organization)
+                .WithMany()
+                .HasForeignKey(e => e.OrganizationId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Coupon Configuration
+        modelBuilder.Entity<Coupon>(entity =>
+        {
+            entity.HasQueryFilter(e => e.DeletedAt == null);
+
+            entity.HasIndex(e => e.Code)
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .IsUnique()
+                .HasDatabaseName("IX_Coupons_Code_Unique");
+            entity.HasIndex(e => e.IsActive)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => new { e.ValidFrom, e.ValidUntil })
+                .HasFilter("\"DeletedAt\" IS NULL AND \"IsActive\" = true")
+                .HasDatabaseName("IX_Coupons_ValidDates");
+
+            entity.Property(e => e.ApplicablePlans)
+                .HasColumnType("jsonb");
+            entity.Property(e => e.ApplicableCycles)
+                .HasColumnType("jsonb");
+            entity.Property(e => e.Metadata)
+                .HasColumnType("jsonb");
+        });
+
+        // CouponRedemption Configuration
+        modelBuilder.Entity<CouponRedemption>(entity =>
+        {
+            entity.HasQueryFilter(e => e.DeletedAt == null);
+
+            entity.HasIndex(e => e.CouponId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.OrganizationId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => new { e.CouponId, e.OrganizationId })
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .IsUnique()
+                .HasDatabaseName("IX_CouponRedemptions_Coupon_Org_Unique");
+
+            entity.HasOne(e => e.Coupon)
+                .WithMany(c => c.Redemptions)
+                .HasForeignKey(e => e.CouponId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.Organization)
+                .WithMany()
+                .HasForeignKey(e => e.OrganizationId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.Subscription)
+                .WithMany(s => s.CouponRedemptions)
+                .HasForeignKey(e => e.SubscriptionId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(e => e.Invoice)
+                .WithMany()
+                .HasForeignKey(e => e.InvoiceId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(e => e.RedeemedBy)
+                .WithMany()
+                .HasForeignKey(e => e.RedeemedById)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // WebhookEvent Configuration
+        modelBuilder.Entity<WebhookEvent>(entity =>
+        {
+            entity.HasIndex(e => new { e.Provider, e.EventId })
+                .IsUnique()
+                .HasDatabaseName("IX_WebhookEvents_Provider_EventId_Unique");
+            entity.HasIndex(e => e.EventType);
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => e.CreatedAt);
+            entity.HasIndex(e => new { e.Status, e.AttemptCount })
+                .HasFilter("\"Status\" = 'failed' AND \"AttemptCount\" < 5")
+                .HasDatabaseName("IX_WebhookEvents_FailedRetryable");
+
+            entity.Property(e => e.ProcessingResult)
+                .HasColumnType("jsonb");
+        });
+
+        // ============================================================================
+        // Admin Portal Entity Configurations
+        // ============================================================================
+
+        // AdminUser Configuration
+        modelBuilder.Entity<AdminUser>(entity =>
+        {
+            entity.HasQueryFilter(e => e.DeletedAt == null);
+
+            entity.HasIndex(e => e.Email)
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .IsUnique()
+                .HasDatabaseName("IX_AdminUsers_Email_Unique");
+            entity.HasIndex(e => e.EmailNormalized)
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .IsUnique()
+                .HasDatabaseName("IX_AdminUsers_EmailNormalized_Unique");
+            entity.HasIndex(e => e.Role)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.IsActive)
+                .HasFilter("\"DeletedAt\" IS NULL");
+
+            entity.Property(e => e.Permissions)
+                .HasColumnType("jsonb");
+            entity.Property(e => e.BackupCodesHash)
+                .HasColumnType("jsonb");
+            entity.Property(e => e.IpWhitelist)
+                .HasColumnType("jsonb");
+        });
+
+        // AdminAuditLog Configuration
+        modelBuilder.Entity<AdminAuditLog>(entity =>
+        {
+            entity.HasIndex(e => e.AdminUserId);
+            entity.HasIndex(e => e.Action);
+            entity.HasIndex(e => new { e.TargetType, e.TargetId })
+                .HasDatabaseName("IX_AdminAuditLogs_Target");
+            entity.HasIndex(e => e.CreatedAt);
+            entity.HasIndex(e => new { e.AdminUserId, e.CreatedAt })
+                .HasDatabaseName("IX_AdminAuditLogs_Admin_Created");
+
+            entity.Property(e => e.Details)
+                .HasColumnType("jsonb");
+        });
+
+        // ImpersonationSession Configuration
+        modelBuilder.Entity<ImpersonationSession>(entity =>
+        {
+            entity.HasIndex(e => e.TokenHash)
+                .HasFilter("\"Status\" = 'active'")
+                .IsUnique()
+                .HasDatabaseName("IX_ImpersonationSessions_TokenHash_Active");
+            entity.HasIndex(e => e.AdminUserId);
+            entity.HasIndex(e => e.TargetUserId);
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => e.ExpiresAt)
+                .HasFilter("\"Status\" = 'active'");
+
+            entity.Property(e => e.Permissions)
+                .HasColumnType("jsonb");
+            entity.Property(e => e.PagesVisited)
+                .HasColumnType("jsonb");
+
+            entity.HasOne(e => e.TargetUser)
+                .WithMany()
+                .HasForeignKey(e => e.TargetUserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.TargetOrganization)
+                .WithMany()
+                .HasForeignKey(e => e.TargetOrganizationId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // OrganizationCredit Configuration
+        modelBuilder.Entity<OrganizationCredit>(entity =>
+        {
+            entity.HasIndex(e => e.OrganizationId);
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => e.ExpiresAt)
+                .HasFilter("\"Status\" = 'active' AND \"ExpiresAt\" IS NOT NULL");
+            entity.HasIndex(e => new { e.OrganizationId, e.Status })
+                .HasFilter("\"Status\" = 'active'")
+                .HasDatabaseName("IX_OrgCredits_Org_Active");
+
+            entity.HasOne(e => e.Organization)
+                .WithMany()
+                .HasForeignKey(e => e.OrganizationId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // CreditUsageRecord Configuration
+        modelBuilder.Entity<CreditUsageRecord>(entity =>
+        {
+            entity.HasIndex(e => e.OrganizationCreditId);
+            entity.HasIndex(e => e.InvoiceId);
+
+            entity.HasOne(e => e.OrganizationCredit)
+                .WithMany(c => c.UsageRecords)
+                .HasForeignKey(e => e.OrganizationCreditId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // SystemAlert Configuration
+        modelBuilder.Entity<SystemAlert>(entity =>
+        {
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => e.AlertType);
+            entity.HasIndex(e => e.Category);
+            entity.HasIndex(e => e.Priority);
+            entity.HasIndex(e => e.CreatedAt);
+            entity.HasIndex(e => new { e.Status, e.Priority })
+                .HasFilter("\"Status\" = 'active'")
+                .HasDatabaseName("IX_SystemAlerts_Active_Priority");
+            entity.HasIndex(e => new { e.Source, e.Status })
+                .HasDatabaseName("IX_SystemAlerts_Source_Status");
+
+            entity.Property(e => e.Data)
+                .HasColumnType("jsonb");
+            entity.Property(e => e.NotifiedEmails)
+                .HasColumnType("jsonb");
+
+            entity.HasOne(e => e.AcknowledgedBy)
+                .WithMany()
+                .HasForeignKey(e => e.AcknowledgedById)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(e => e.ResolvedBy)
+                .WithMany()
+                .HasForeignKey(e => e.ResolvedById)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ContentPage Configuration
+        modelBuilder.Entity<ContentPage>(entity =>
+        {
+            entity.HasQueryFilter(e => e.DeletedAt == null);
+
+            entity.HasIndex(e => e.Slug)
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .IsUnique()
+                .HasDatabaseName("IX_ContentPages_Slug_Unique");
+            entity.HasIndex(e => e.ContentType)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.Status)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.Category)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => new { e.ContentType, e.Status, e.DisplayOrder })
+                .HasFilter("\"DeletedAt\" IS NULL AND \"Status\" = 'published'")
+                .HasDatabaseName("IX_ContentPages_Published_Order");
+
+            entity.Property(e => e.Tags)
+                .HasColumnType("jsonb");
+
+            entity.HasOne(e => e.CreatedBy)
+                .WithMany()
+                .HasForeignKey(e => e.CreatedById)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.UpdatedBy)
+                .WithMany()
+                .HasForeignKey(e => e.UpdatedById)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(e => e.PublishedBy)
+                .WithMany()
+                .HasForeignKey(e => e.PublishedById)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ContentPageVersion Configuration
+        modelBuilder.Entity<ContentPageVersion>(entity =>
+        {
+            entity.HasIndex(e => e.ContentPageId);
+            entity.HasIndex(e => new { e.ContentPageId, e.Version })
+                .IsUnique()
+                .HasDatabaseName("IX_ContentPageVersions_Page_Version");
+
+            entity.HasOne(e => e.ContentPage)
+                .WithMany(p => p.Versions)
+                .HasForeignKey(e => e.ContentPageId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.CreatedBy)
+                .WithMany()
+                .HasForeignKey(e => e.CreatedById)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // PromptVersion Configuration
+        modelBuilder.Entity<PromptVersion>(entity =>
+        {
+            entity.HasIndex(e => e.PromptKey);
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => new { e.PromptKey, e.IsActive })
+                .HasFilter("\"IsActive\" = true")
+                .IsUnique()
+                .HasDatabaseName("IX_PromptVersions_Key_Active_Unique");
+            entity.HasIndex(e => new { e.PromptKey, e.Version })
+                .IsUnique()
+                .HasDatabaseName("IX_PromptVersions_Key_Version");
+
+            entity.Property(e => e.Variables)
+                .HasColumnType("jsonb");
+            entity.Property(e => e.ModelConfig)
+                .HasColumnType("jsonb");
+            entity.Property(e => e.OutputSchema)
+                .HasColumnType("jsonb");
+            entity.Property(e => e.TestResults)
+                .HasColumnType("jsonb");
+
+            entity.HasOne(e => e.CreatedBy)
+                .WithMany()
+                .HasForeignKey(e => e.CreatedById)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.ActivatedBy)
+                .WithMany()
+                .HasForeignKey(e => e.ActivatedById)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // AdminSession Configuration
+        modelBuilder.Entity<AdminSession>(entity =>
+        {
+            entity.HasIndex(e => e.AdminUserId);
+            entity.HasIndex(e => e.RefreshToken)
+                .HasFilter("\"IsActive\" = true AND \"RefreshToken\" IS NOT NULL")
+                .IsUnique()
+                .HasDatabaseName("IX_AdminSessions_RefreshToken_Active");
+            entity.HasIndex(e => e.IsActive)
+                .HasFilter("\"IsActive\" = true");
+            entity.HasIndex(e => e.ExpiresAt)
+                .HasFilter("\"IsActive\" = true");
+            entity.HasIndex(e => new { e.AdminUserId, e.IsActive, e.ExpiresAt })
+                .HasDatabaseName("IX_AdminSessions_Admin_Active_Expires");
+
+            entity.HasOne(e => e.AdminUser)
+                .WithMany(u => u.Sessions)
+                .HasForeignKey(e => e.AdminUserId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
         // Seed initial data
         SeedData(modelBuilder);
     }
@@ -1453,6 +2003,10 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
             new GstinStateCode { Code = "97", Name = "Other Territory", IsUnionTerritory = false },
             new GstinStateCode { Code = "99", Name = "Centre Jurisdiction", IsUnionTerritory = false }
         );
+
+        // Note: SubscriptionPlan seeding is done via SQL migration because
+        // EF Core HasData doesn't support owned JSON types (Limits property).
+        // See migration "SeedSubscriptionPlans" for the seed data.
     }
 
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)

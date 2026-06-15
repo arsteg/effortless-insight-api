@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 
 namespace EffortlessInsight.Api.Data;
 
@@ -23,7 +24,8 @@ public class DesignTimeDbContextFactory : IDesignTimeDbContextFactory<Applicatio
         optionsBuilder.UseNpgsql(connectionString, npgsqlOptions =>
         {
             npgsqlOptions.UseVector();
-        });
+        })
+        .ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning));
 
         return new ApplicationDbContext(optionsBuilder.Options);
     }

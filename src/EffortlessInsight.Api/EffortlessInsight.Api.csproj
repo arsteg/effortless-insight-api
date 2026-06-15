@@ -62,10 +62,18 @@
     <!-- Two-Factor Authentication -->
     <PackageReference Include="Otp.NET" Version="1.4.0" />
     <PackageReference Include="QRCoder" Version="1.6.0" />
+    <PackageReference Include="BCrypt.Net-Next" Version="4.0.3" />
 
     <!-- Rate Limiting -->
     <PackageReference Include="AspNetCoreRateLimit" Version="5.0.0" />
     <PackageReference Include="Twilio" Version="7.14.9" />
+
+    <!-- Billing & Payments -->
+    <PackageReference Include="Razorpay" Version="3.2.0" />
+    <PackageReference Include="QuestPDF" Version="2024.10.0" />
+
+    <!-- Discriminated Unions -->
+    <PackageReference Include="OneOf" Version="3.0.271" />
   </ItemGroup>
 
 </Project>
