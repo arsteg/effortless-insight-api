@@ -19,9 +19,14 @@ public class DesignTimeDbContextFactory : IDesignTimeDbContextFactory<Applicatio
             .Build();
 
         var optionsBuilder = new DbContextOptionsBuilder<ApplicationDbContext>();
-        var connectionString = configuration.GetConnectionString("DefaultConnection");
+        var connectionString = configuration.GetConnectionString("DefaultConnection")!;
 
-        optionsBuilder.UseNpgsql(connectionString, npgsqlOptions =>
+        // Build NpgsqlDataSource with dynamic JSON support for JSONB columns with List<T> types
+        var dataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(connectionString);
+        dataSourceBuilder.EnableDynamicJson();
+        var dataSource = dataSourceBuilder.Build();
+
+        optionsBuilder.UseNpgsql(dataSource, npgsqlOptions =>
         {
             npgsqlOptions.UseVector();
         })

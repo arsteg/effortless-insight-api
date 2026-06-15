@@ -628,9 +628,10 @@ public class NoticesController : ControllerBase
     #region Comments
 
     /// <summary>
-    /// Get comments for a notice
+    /// Get comments for a notice (legacy endpoint - use CommentsController instead)
     /// </summary>
     [HttpGet("{noticeId:guid}/comments")]
+    [ApiExplorerSettings(IgnoreApi = true)] // Hidden from Swagger - duplicate of CommentsController.GetCommentsForNotice
     [ProducesResponseType(typeof(ApiResponse<List<CommentDto>>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetComments(Guid noticeId, CancellationToken cancellationToken)
@@ -657,9 +658,10 @@ public class NoticesController : ControllerBase
     }
 
     /// <summary>
-    /// Add a comment to a notice
+    /// Add a comment to a notice (legacy endpoint - use CommentsController instead)
     /// </summary>
     [HttpPost("{noticeId:guid}/comments")]
+    [ApiExplorerSettings(IgnoreApi = true)] // Hidden from Swagger - duplicate of CommentsController.CreateComment
     [ProducesResponseType(typeof(ApiResponse<CommentDto>), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
@@ -698,9 +700,10 @@ public class NoticesController : ControllerBase
     }
 
     /// <summary>
-    /// Delete a comment
+    /// Delete a comment (legacy endpoint - use CommentsController instead)
     /// </summary>
     [HttpDelete("{noticeId:guid}/comments/{commentId:guid}")]
+    [ApiExplorerSettings(IgnoreApi = true)] // Hidden from Swagger - duplicate of CommentsController.DeleteComment
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
     public async Task<IActionResult> DeleteComment(
@@ -734,9 +737,10 @@ public class NoticesController : ControllerBase
     #region Tasks
 
     /// <summary>
-    /// Get tasks for a notice
+    /// Get tasks for a notice (legacy endpoint - use TasksController instead)
     /// </summary>
     [HttpGet("{noticeId:guid}/tasks")]
+    [ApiExplorerSettings(IgnoreApi = true)]
     [ProducesResponseType(typeof(ApiResponse<List<NoticeTaskDto>>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetTasks(Guid noticeId, CancellationToken cancellationToken)
@@ -763,9 +767,10 @@ public class NoticesController : ControllerBase
     }
 
     /// <summary>
-    /// Create a task for a notice
+    /// Create a task for a notice (legacy endpoint - use TasksController instead)
     /// </summary>
     [HttpPost("{noticeId:guid}/tasks")]
+    [ApiExplorerSettings(IgnoreApi = true)]
     [Authorize(Policy = "RequireManager")]
     [ProducesResponseType(typeof(ApiResponse<NoticeTaskDto>), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
@@ -810,9 +815,10 @@ public class NoticesController : ControllerBase
     }
 
     /// <summary>
-    /// Update a task
+    /// Update a task (legacy endpoint - use TasksController instead)
     /// </summary>
     [HttpPut("{noticeId:guid}/tasks/{taskId:guid}")]
+    [ApiExplorerSettings(IgnoreApi = true)]
     [ProducesResponseType(typeof(ApiResponse<NoticeTaskDto>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
@@ -857,9 +863,10 @@ public class NoticesController : ControllerBase
     }
 
     /// <summary>
-    /// Delete a task
+    /// Delete a task (legacy endpoint - use TasksController instead)
     /// </summary>
     [HttpDelete("{noticeId:guid}/tasks/{taskId:guid}")]
+    [ApiExplorerSettings(IgnoreApi = true)]
     [Authorize(Policy = "RequireManager")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]

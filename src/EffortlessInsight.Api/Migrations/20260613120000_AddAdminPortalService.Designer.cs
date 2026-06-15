@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
-namespace EffortlessInsight.Api.Data.Migrations
+namespace EffortlessInsight.Api.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
     [Migration("20260613120000_AddAdminPortalService")]

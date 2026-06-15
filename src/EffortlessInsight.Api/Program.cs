@@ -24,12 +24,21 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
     options.SwaggerDoc("v1", new() { Title = "EffortlessInsight API", Version = "v1" });
+
+    // Use full type name to avoid schema ID conflicts for types with same name in different namespaces
+    options.CustomSchemaIds(type => type.FullName?.Replace("+", ".") ?? type.Name);
 });
 
 // Configure DbContext with PostgreSQL + pgvector
+// Build NpgsqlDataSource with dynamic JSON support for JSONB columns with List<T> types
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")!;
+var dataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(connectionString);
+dataSourceBuilder.EnableDynamicJson();
+var dataSource = dataSourceBuilder.Build();
+
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseNpgsql(
-        builder.Configuration.GetConnectionString("DefaultConnection"),
+        dataSource,
         npgsqlOptions =>
         {
             npgsqlOptions.UseVector();

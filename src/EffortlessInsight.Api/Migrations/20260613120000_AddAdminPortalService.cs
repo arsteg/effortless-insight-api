@@ -4,7 +4,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
-namespace EffortlessInsight.Api.Data.Migrations
+namespace EffortlessInsight.Api.Migrations
 {
     /// <inheritdoc />
     public partial class AddAdminPortalService : Migration

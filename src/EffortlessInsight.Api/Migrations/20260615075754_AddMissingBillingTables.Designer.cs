@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities;
+using EffortlessInsight.Api.Data.Entities.Billing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
@@ -12,11 +13,11 @@ using Pgvector;
 
 #nullable disable
 
-namespace EffortlessInsight.Api.Data.Migrations
+namespace EffortlessInsight.Api.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    [Migration("20260612161047_AddNotificationService")]
-    partial class AddNotificationService
+    [Migration("20260615075754_AddMissingBillingTables")]
+    partial class AddMissingBillingTables
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -97,6 +98,875 @@ namespace EffortlessInsight.Api.Data.Migrations
                         .HasFilter("\"DeletedAt\" IS NULL");
 
                     b.ToTable("ActivityLogs");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Admin.AdminAuditLog", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<Guid>("AdminUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<Dictionary<string, object>>("Details")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<int?>("DurationMs")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasColumnType("text");
+
+                    b.Property<string>("IpAddress")
+                        .HasMaxLength(45)
+                        .HasColumnType("character varying(45)");
+
+                    b.Property<string>("Outcome")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("RequestId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("SessionId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("TargetId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("TargetType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("UserAgent")
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Action");
+
+                    b.HasIndex("AdminUserId");
+
+                    b.HasIndex("CreatedAt");
+
+                    b.HasIndex("AdminUserId", "CreatedAt")
+                        .HasDatabaseName("IX_AdminAuditLogs_Admin_Created");
+
+                    b.HasIndex("TargetType", "TargetId")
+                        .HasDatabaseName("IX_AdminAuditLogs_Target");
+
+                    b.ToTable("AdminAuditLogs");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Admin.AdminSession", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(36)
+                        .HasColumnType("character varying(36)");
+
+                    b.Property<Guid>("AdminUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DeviceFingerprint")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("InvalidatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("InvalidationReason")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("IpAddress")
+                        .HasMaxLength(45)
+                        .HasColumnType("character varying(45)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime>("LastActivityAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Location")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("RefreshToken")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<DateTime?>("RefreshTokenExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("UserAgent")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AdminUserId");
+
+                    b.HasIndex("ExpiresAt")
+                        .HasFilter("\"IsActive\" = true");
+
+                    b.HasIndex("IsActive")
+                        .HasFilter("\"IsActive\" = true");
+
+                    b.HasIndex("RefreshToken")
+                        .IsUnique()
+                        .HasDatabaseName("IX_AdminSessions_RefreshToken_Active")
+                        .HasFilter("\"IsActive\" = true AND \"RefreshToken\" IS NOT NULL");
+
+                    b.HasIndex("AdminUserId", "IsActive", "ExpiresAt")
+                        .HasDatabaseName("IX_AdminSessions_Admin_Active_Expires");
+
+                    b.ToTable("AdminSessions");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Admin.AdminUser", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AvatarUrl")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.PrimitiveCollection<string[]>("BackupCodesHash")
+                        .HasColumnType("jsonb");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Email")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<string>("EmailNormalized")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<int>("FailedLoginAttempts")
+                        .HasColumnType("integer");
+
+                    b.PrimitiveCollection<List<string>>("IpWhitelist")
+                        .HasColumnType("jsonb");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsLocked")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("LastFailedLoginAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("LastLoginAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LastLoginIp")
+                        .HasMaxLength(45)
+                        .HasColumnType("character varying(45)");
+
+                    b.Property<string>("LastLoginUserAgent")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("LockedUntil")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("MfaEnabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<byte[]>("MfaSecretEncrypted")
+                        .HasColumnType("bytea");
+
+                    b.Property<bool>("MustChangePassword")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime?>("PasswordChangedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PasswordHash")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.PrimitiveCollection<List<string>>("Permissions")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Email")
+                        .IsUnique()
+                        .HasDatabaseName("IX_AdminUsers_Email_Unique")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("EmailNormalized")
+                        .IsUnique()
+                        .HasDatabaseName("IX_AdminUsers_EmailNormalized_Unique")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("IsActive")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("Role")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.ToTable("AdminUsers");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Admin.ContentPage", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("AllowFeedback")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Category")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("Content")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ContentFormat")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("ContentType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CreatedById")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("DisplayOrder")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Excerpt")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<int>("HelpfulCount")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("IsFeatured")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Language")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<string>("MetaDescription")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("MetaTitle")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<int>("NotHelpfulCount")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("PublishedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("PublishedById")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Slug")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.PrimitiveCollection<List<string>>("Tags")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("UpdatedById")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("ViewCount")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Category")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("ContentType")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("CreatedById");
+
+                    b.HasIndex("PublishedById");
+
+                    b.HasIndex("Slug")
+                        .IsUnique()
+                        .HasDatabaseName("IX_ContentPages_Slug_Unique")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("Status")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("UpdatedById");
+
+                    b.HasIndex("ContentType", "Status", "DisplayOrder")
+                        .HasDatabaseName("IX_ContentPages_Published_Order")
+                        .HasFilter("\"DeletedAt\" IS NULL AND \"Status\" = 'published'");
+
+                    b.ToTable("ContentPages");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Admin.ContentPageVersion", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ChangeNotes")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("Content")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("ContentPageId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CreatedById")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ContentPageId");
+
+                    b.HasIndex("CreatedById");
+
+                    b.HasIndex("ContentPageId", "Version")
+                        .IsUnique()
+                        .HasDatabaseName("IX_ContentPageVersions_Page_Version");
+
+                    b.ToTable("ContentPageVersions");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Admin.CreditUsageRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Amount")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<Guid?>("InvoiceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("OrganizationCreditId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("InvoiceId");
+
+                    b.HasIndex("OrganizationCreditId");
+
+                    b.ToTable("CreditUsageRecords");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Admin.ImpersonationSession", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("AdminUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("EndedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("IpAddress")
+                        .HasMaxLength(45)
+                        .HasColumnType("character varying(45)");
+
+                    b.PrimitiveCollection<List<string>>("PagesVisited")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.PrimitiveCollection<List<string>>("Permissions")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<int>("RequestCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<Guid?>("TargetOrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("TargetUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("TicketId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("Token")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("UserAgent")
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AdminUserId");
+
+                    b.HasIndex("ExpiresAt")
+                        .HasFilter("\"Status\" = 'active'");
+
+                    b.HasIndex("Status");
+
+                    b.HasIndex("TargetOrganizationId");
+
+                    b.HasIndex("TargetUserId");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique()
+                        .HasDatabaseName("IX_ImpersonationSessions_TokenHash_Active")
+                        .HasFilter("\"Status\" = 'active'");
+
+                    b.ToTable("ImpersonationSessions");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Admin.OrganizationCredit", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Amount")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("AmountUsed")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreditType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<DateTime?>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("FullyUsedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("GrantedById")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("InternalNotes")
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("TicketId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("VoidReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTime?>("VoidedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("VoidedById")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAt")
+                        .HasFilter("\"Status\" = 'active' AND \"ExpiresAt\" IS NOT NULL");
+
+                    b.HasIndex("GrantedById");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.HasIndex("Status");
+
+                    b.HasIndex("OrganizationId", "Status")
+                        .HasDatabaseName("IX_OrgCredits_Org_Active")
+                        .HasFilter("\"Status\" = 'active'");
+
+                    b.ToTable("OrganizationCredits");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Admin.PromptVersion", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<double?>("AccuracyScore")
+                        .HasColumnType("double precision");
+
+                    b.Property<DateTime?>("ActivatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ActivatedById")
+                        .HasColumnType("uuid");
+
+                    b.Property<double?>("AvgProcessingTimeMs")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("ChangeNotes")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CreatedById")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Description")
+                        .HasColumnType("text");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<Dictionary<string, object>>("ModelConfig")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<string>("OutputFormat")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<Dictionary<string, object>>("OutputSchema")
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("PromptContent")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PromptKey")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("SystemInstructions")
+                        .HasColumnType("text");
+
+                    b.Property<string>("TargetModel")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<Dictionary<string, object>>("TestResults")
+                        .HasColumnType("jsonb");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("UsageCount")
+                        .HasColumnType("integer");
+
+                    b.Property<Dictionary<string, string>>("Variables")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ActivatedById");
+
+                    b.HasIndex("CreatedById");
+
+                    b.HasIndex("PromptKey");
+
+                    b.HasIndex("Status");
+
+                    b.HasIndex("PromptKey", "IsActive")
+                        .IsUnique()
+                        .HasDatabaseName("IX_PromptVersions_Key_Active_Unique")
+                        .HasFilter("\"IsActive\" = true");
+
+                    b.HasIndex("PromptKey", "Version")
+                        .IsUnique()
+                        .HasDatabaseName("IX_PromptVersions_Key_Version");
+
+                    b.ToTable("PromptVersions");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Admin.SystemAlert", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("AcknowledgedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("AcknowledgedById")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AcknowledgmentNotes")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("AlertType")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<double?>("CurrentValue")
+                        .HasColumnType("double precision");
+
+                    b.Property<Dictionary<string, object>>("Data")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("FirstOccurredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("IncidentId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime>("LastOccurredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("NotificationsSent")
+                        .HasColumnType("boolean");
+
+                    b.PrimitiveCollection<List<string>>("NotifiedEmails")
+                        .HasColumnType("jsonb");
+
+                    b.Property<int>("OccurrenceCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Priority")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("ResolutionNotes")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("ResolvedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ResolvedById")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("ThresholdInfo")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<double?>("ThresholdValue")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AcknowledgedById");
+
+                    b.HasIndex("AlertType");
+
+                    b.HasIndex("Category");
+
+                    b.HasIndex("CreatedAt");
+
+                    b.HasIndex("Priority");
+
+                    b.HasIndex("ResolvedById");
+
+                    b.HasIndex("Status");
+
+                    b.HasIndex("Source", "Status")
+                        .HasDatabaseName("IX_SystemAlerts_Source_Status");
+
+                    b.HasIndex("Status", "Priority")
+                        .HasDatabaseName("IX_SystemAlerts_Active_Priority")
+                        .HasFilter("\"Status\" = 'active'");
+
+                    b.ToTable("SystemAlerts");
                 });
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.ApplicationRole", b =>
@@ -426,6 +1296,1052 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.HasIndex("OrganizationId", "CreatedAt");
 
                     b.ToTable("AuditLogs");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Billing.BillingDetails", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Address")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("AddressLine2")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("City")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("Country")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Email")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<string>("Gstin")
+                        .HasMaxLength(15)
+                        .HasColumnType("character varying(15)");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("OrganizationName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("Phone")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("Pincode")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("StateCode")
+                        .HasMaxLength(2)
+                        .HasColumnType("character varying(2)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_BillingDetails_Org_Unique")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.ToTable("BillingDetails");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Billing.BillingSubscription", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("AdditionalSeatsAmount")
+                        .HasColumnType("numeric");
+
+                    b.Property<decimal>("BaseAmount")
+                        .HasColumnType("numeric");
+
+                    b.Property<string>("BillingCycle")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<bool>("CancelAtPeriodEnd")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("CancellationFeedback")
+                        .HasColumnType("text");
+
+                    b.Property<string>("CancellationReason")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<DateTime?>("CancelledAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)");
+
+                    b.Property<DateTime>("CurrentPeriodEnd")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CurrentPeriodStart")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("EndedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("FailedPaymentAttempts")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("GracePeriodEndAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("LastPaymentFailedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Dictionary<string, object>>("Metadata")
+                        .HasColumnType("jsonb");
+
+                    b.Property<DateTime?>("NextPaymentRetryAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("PaymentRetryCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("PlanCode")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<Guid>("PlanId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("RazorpayCustomerId")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("RazorpaySubscriptionId")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("ScheduledBillingCycle")
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<DateTime?>("ScheduledChangeDate")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ScheduledPlanCode")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<int>("SeatsAdditional")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("SeatsIncluded")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<decimal>("TaxAmount")
+                        .HasColumnType("numeric");
+
+                    b.Property<decimal>("TotalAmount")
+                        .HasColumnType("numeric");
+
+                    b.Property<DateTime?>("TrialEnd")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("TrialStart")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CurrentPeriodEnd")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("OrganizationId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_BillingSubscriptions_Org_Unique")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("PlanId");
+
+                    b.HasIndex("RazorpaySubscriptionId")
+                        .HasFilter("\"RazorpaySubscriptionId\" IS NOT NULL");
+
+                    b.HasIndex("Status")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.ToTable("BillingSubscriptions");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Billing.Coupon", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.PrimitiveCollection<List<string>>("ApplicableCycles")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.PrimitiveCollection<List<string>>("ApplicablePlans")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<bool>("AppliesRecurring")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Campaign")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Description")
+                        .HasColumnType("text");
+
+                    b.Property<string>("DiscountType")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<int>("DiscountValue")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("DurationMonths")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("FirstTimeOnly")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<int?>("MaxDiscountAmount")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("MaxRedemptions")
+                        .HasColumnType("integer");
+
+                    b.Property<Dictionary<string, object>>("Metadata")
+                        .HasColumnType("jsonb");
+
+                    b.Property<int?>("MinPurchaseAmount")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("TimesRedeemed")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("ValidFrom")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("ValidUntil")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Code")
+                        .IsUnique()
+                        .HasDatabaseName("IX_Coupons_Code_Unique")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("IsActive")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("ValidFrom", "ValidUntil")
+                        .HasDatabaseName("IX_Coupons_ValidDates")
+                        .HasFilter("\"DeletedAt\" IS NULL AND \"IsActive\" = true");
+
+                    b.ToTable("Coupons");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Billing.CouponRedemption", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CouponId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("DiscountApplied")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("FinalAmount")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("InvoiceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("OriginalAmount")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("RedeemedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("RedeemedById")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("SubscriptionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CouponId")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("InvoiceId");
+
+                    b.HasIndex("OrganizationId")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("RedeemedById");
+
+                    b.HasIndex("SubscriptionId");
+
+                    b.HasIndex("CouponId", "OrganizationId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_CouponRedemptions_Coupon_Org_Unique")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.ToTable("CouponRedemptions");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Billing.Invoice", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("AmountDue")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("AmountPaid")
+                        .HasColumnType("integer");
+
+                    b.Property<InvoiceBillingDetails>("BillingDetails")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<int?>("CgstAmount")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Description")
+                        .HasColumnType("text");
+
+                    b.Property<int>("Discount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("DiscountDescription")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateOnly>("DueDate")
+                        .HasColumnType("date");
+
+                    b.Property<string>("HsnCode")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<int?>("IgstAmount")
+                        .HasColumnType("integer");
+
+                    b.Property<DateOnly>("InvoiceDate")
+                        .HasColumnType("date");
+
+                    b.Property<string>("InvoiceNumber")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<bool>("IsInterState")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Notes")
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("PaidAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PdfUrl")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("PlaceOfSupply")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("PlaceOfSupplyCode")
+                        .HasMaxLength(2)
+                        .HasColumnType("character varying(2)");
+
+                    b.Property<string>("RazorpayInvoiceId")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<int?>("SgstAmount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<Guid?>("SubscriptionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Subtotal")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("TaxAmount")
+                        .HasColumnType("integer");
+
+                    b.Property<decimal>("TaxRate")
+                        .HasColumnType("numeric");
+
+                    b.Property<int>("Total")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("VoidReason")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("VoidedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("InvoiceDate")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("InvoiceNumber")
+                        .IsUnique()
+                        .HasDatabaseName("IX_Invoices_Number_Unique");
+
+                    b.HasIndex("OrganizationId")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("RazorpayInvoiceId")
+                        .HasFilter("\"RazorpayInvoiceId\" IS NOT NULL");
+
+                    b.HasIndex("Status")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("SubscriptionId");
+
+                    b.ToTable("Invoices");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Billing.InvoiceLineItem", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Amount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("BillingCycle")
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("HsnCode")
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<Guid>("InvoiceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("IsProration")
+                        .HasColumnType("boolean");
+
+                    b.Property<Dictionary<string, object>>("Metadata")
+                        .HasColumnType("jsonb");
+
+                    b.Property<DateOnly?>("PeriodEnd")
+                        .HasColumnType("date");
+
+                    b.Property<DateOnly?>("PeriodStart")
+                        .HasColumnType("date");
+
+                    b.Property<string>("PlanCode")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<int>("Quantity")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<int>("UnitPrice")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("InvoiceId")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.ToTable("InvoiceLineItems");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Billing.Payment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Amount")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("CapturedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("FailureCode")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("FailureReason")
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("InvoiceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Dictionary<string, object>>("Metadata")
+                        .HasColumnType("jsonb");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PaymentMethod")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("PaymentMethodDetails")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("RazorpayOrderId")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("RazorpayPaymentId")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("RazorpaySignature")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("ReceiptNumber")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<int?>("RefundAmount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("RefundId")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("RefundReason")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("RefundedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<Guid?>("SubscriptionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("InvoiceId");
+
+                    b.HasIndex("OrganizationId")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("RazorpayOrderId")
+                        .HasFilter("\"RazorpayOrderId\" IS NOT NULL");
+
+                    b.HasIndex("RazorpayPaymentId")
+                        .HasFilter("\"RazorpayPaymentId\" IS NOT NULL");
+
+                    b.HasIndex("Status")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("SubscriptionId");
+
+                    b.ToTable("Payments");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Billing.PaymentMethod", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CardBrand")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<int?>("CardExpiryMonth")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("CardExpiryYear")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("CardFunding")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("CardLast4")
+                        .HasMaxLength(4)
+                        .HasColumnType("character varying(4)");
+
+                    b.Property<string>("CardName")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsDefault")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("LastUsedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Dictionary<string, object>>("Metadata")
+                        .HasColumnType("jsonb");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("RazorpayCustomerId")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("RazorpayTokenId")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("UpiId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("RazorpayTokenId")
+                        .HasFilter("\"RazorpayTokenId\" IS NOT NULL");
+
+                    b.HasIndex("OrganizationId", "IsDefault")
+                        .IsUnique()
+                        .HasDatabaseName("IX_PaymentMethods_Org_Default_Unique")
+                        .HasFilter("\"DeletedAt\" IS NULL AND \"IsDefault\" = true");
+
+                    b.ToTable("PaymentMethods");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Billing.SubscriptionPlan", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<bool>("ContactSales")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("DisplayName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.PrimitiveCollection<List<string>>("Features")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsPopular")
+                        .HasColumnType("boolean");
+
+                    b.Property<Dictionary<string, object>>("Metadata")
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<int?>("PerSeatAnnually")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("PerSeatMonthly")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("PricingAnnually")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("PricingMonthly")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("RazorpayPlanIdAnnually")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("RazorpayPlanIdMonthly")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("StartingAt")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("TrialDays")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Code")
+                        .IsUnique()
+                        .HasDatabaseName("IX_SubscriptionPlans_Code_Unique")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("IsActive")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("SortOrder")
+                        .HasFilter("\"DeletedAt\" IS NULL AND \"IsActive\" = true");
+
+                    b.ToTable("SubscriptionPlans");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Billing.UsageRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Dictionary<string, object>>("AdditionalMetrics")
+                        .HasColumnType("jsonb");
+
+                    b.Property<int>("AiAnalysesCount")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("ApiCalls")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("DocumentsProcessed")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("EmailsSent")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("LastCalculatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("NoticesCount")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("PeakConcurrentUsers")
+                        .HasColumnType("integer");
+
+                    b.Property<DateOnly>("PeriodEnd")
+                        .HasColumnType("date");
+
+                    b.Property<DateOnly>("PeriodStart")
+                        .HasColumnType("date");
+
+                    b.Property<int>("SmsSent")
+                        .HasColumnType("integer");
+
+                    b.Property<long>("StorageBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("UsersCount")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("OrganizationId", "PeriodStart", "PeriodEnd")
+                        .IsUnique()
+                        .HasDatabaseName("IX_UsageRecords_Org_Period_Unique")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.ToTable("UsageRecords");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Billing.WebhookEvent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasColumnType("text");
+
+                    b.Property<string>("EventId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("IpAddress")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<DateTime?>("LastAttemptAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Payload")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("ProcessedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Dictionary<string, object>>("ProcessingResult")
+                        .HasColumnType("jsonb");
+
+                    b.Property<DateTime?>("ProcessingStartedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("RelatedEntityId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("RelatedEntityType")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("Signature")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAt");
+
+                    b.HasIndex("EventType");
+
+                    b.HasIndex("Status");
+
+                    b.HasIndex("Provider", "EventId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_WebhookEvents_Provider_EventId_Unique");
+
+                    b.HasIndex("Status", "AttemptCount")
+                        .HasDatabaseName("IX_WebhookEvents_FailedRetryable")
+                        .HasFilter("\"Status\" = 'failed' AND \"AttemptCount\" < 5");
+
+                    b.ToTable("WebhookEvents");
                 });
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Comment", b =>
@@ -3920,6 +5836,163 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Navigation("Organization");
                 });
 
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Admin.AdminAuditLog", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Admin.AdminUser", "AdminUser")
+                        .WithMany("AuditLogs")
+                        .HasForeignKey("AdminUserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("AdminUser");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Admin.AdminSession", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Admin.AdminUser", "AdminUser")
+                        .WithMany("Sessions")
+                        .HasForeignKey("AdminUserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("AdminUser");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Admin.ContentPage", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Admin.AdminUser", "CreatedBy")
+                        .WithMany()
+                        .HasForeignKey("CreatedById")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Admin.AdminUser", "PublishedBy")
+                        .WithMany()
+                        .HasForeignKey("PublishedById")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Admin.AdminUser", "UpdatedBy")
+                        .WithMany()
+                        .HasForeignKey("UpdatedById")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("CreatedBy");
+
+                    b.Navigation("PublishedBy");
+
+                    b.Navigation("UpdatedBy");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Admin.ContentPageVersion", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Admin.ContentPage", "ContentPage")
+                        .WithMany("Versions")
+                        .HasForeignKey("ContentPageId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Admin.AdminUser", "CreatedBy")
+                        .WithMany()
+                        .HasForeignKey("CreatedById")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("ContentPage");
+
+                    b.Navigation("CreatedBy");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Admin.CreditUsageRecord", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Admin.OrganizationCredit", "OrganizationCredit")
+                        .WithMany("UsageRecords")
+                        .HasForeignKey("OrganizationCreditId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("OrganizationCredit");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Admin.ImpersonationSession", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Admin.AdminUser", "AdminUser")
+                        .WithMany("ImpersonationSessions")
+                        .HasForeignKey("AdminUserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Organization", "TargetOrganization")
+                        .WithMany()
+                        .HasForeignKey("TargetOrganizationId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "TargetUser")
+                        .WithMany()
+                        .HasForeignKey("TargetUserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("AdminUser");
+
+                    b.Navigation("TargetOrganization");
+
+                    b.Navigation("TargetUser");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Admin.OrganizationCredit", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Admin.AdminUser", "GrantedBy")
+                        .WithMany("GrantedCredits")
+                        .HasForeignKey("GrantedById")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Organization", "Organization")
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("GrantedBy");
+
+                    b.Navigation("Organization");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Admin.PromptVersion", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Admin.AdminUser", "ActivatedBy")
+                        .WithMany()
+                        .HasForeignKey("ActivatedById")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Admin.AdminUser", "CreatedBy")
+                        .WithMany()
+                        .HasForeignKey("CreatedById")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("ActivatedBy");
+
+                    b.Navigation("CreatedBy");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Admin.SystemAlert", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Admin.AdminUser", "AcknowledgedBy")
+                        .WithMany()
+                        .HasForeignKey("AcknowledgedById")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Admin.AdminUser", "ResolvedBy")
+                        .WithMany()
+                        .HasForeignKey("ResolvedById")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("AcknowledgedBy");
+
+                    b.Navigation("ResolvedBy");
+                });
+
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.ApplicationUser", b =>
                 {
                     b.HasOne("EffortlessInsight.Api.Data.Entities.Organization", "Organization")
@@ -3971,6 +6044,191 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Navigation("Organization");
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Billing.BillingDetails", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Organization", "Organization")
+                        .WithOne()
+                        .HasForeignKey("EffortlessInsight.Api.Data.Entities.Billing.BillingDetails", "OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Organization");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Billing.BillingSubscription", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Organization", "Organization")
+                        .WithOne()
+                        .HasForeignKey("EffortlessInsight.Api.Data.Entities.Billing.BillingSubscription", "OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Billing.SubscriptionPlan", "Plan")
+                        .WithMany()
+                        .HasForeignKey("PlanId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Organization");
+
+                    b.Navigation("Plan");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Billing.CouponRedemption", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Billing.Coupon", "Coupon")
+                        .WithMany("Redemptions")
+                        .HasForeignKey("CouponId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Billing.Invoice", "Invoice")
+                        .WithMany()
+                        .HasForeignKey("InvoiceId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Organization", "Organization")
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "RedeemedBy")
+                        .WithMany()
+                        .HasForeignKey("RedeemedById")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Billing.BillingSubscription", "Subscription")
+                        .WithMany("CouponRedemptions")
+                        .HasForeignKey("SubscriptionId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("Coupon");
+
+                    b.Navigation("Invoice");
+
+                    b.Navigation("Organization");
+
+                    b.Navigation("RedeemedBy");
+
+                    b.Navigation("Subscription");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Billing.Invoice", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Organization", "Organization")
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Billing.BillingSubscription", "Subscription")
+                        .WithMany("Invoices")
+                        .HasForeignKey("SubscriptionId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("Organization");
+
+                    b.Navigation("Subscription");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Billing.InvoiceLineItem", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Billing.Invoice", "Invoice")
+                        .WithMany("LineItems")
+                        .HasForeignKey("InvoiceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Invoice");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Billing.Payment", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Billing.Invoice", "Invoice")
+                        .WithMany("Payments")
+                        .HasForeignKey("InvoiceId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Organization", "Organization")
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Billing.BillingSubscription", "Subscription")
+                        .WithMany("Payments")
+                        .HasForeignKey("SubscriptionId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("Invoice");
+
+                    b.Navigation("Organization");
+
+                    b.Navigation("Subscription");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Billing.PaymentMethod", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Organization", "Organization")
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Organization");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Billing.SubscriptionPlan", b =>
+                {
+                    b.OwnsOne("EffortlessInsight.Api.Data.Entities.Billing.PlanLimits", "Limits", b1 =>
+                        {
+                            b1.Property<Guid>("SubscriptionPlanId")
+                                .HasColumnType("uuid");
+
+                            b1.Property<bool>("AdditionalUsersAllowed")
+                                .HasColumnType("boolean");
+
+                            b1.Property<int>("ApiCalls")
+                                .HasColumnType("integer");
+
+                            b1.Property<int>("NoticesPerMonth")
+                                .HasColumnType("integer");
+
+                            b1.Property<int>("OrganizationsCount")
+                                .HasColumnType("integer");
+
+                            b1.Property<int>("StorageGb")
+                                .HasColumnType("integer");
+
+                            b1.Property<int>("Users")
+                                .HasColumnType("integer");
+
+                            b1.HasKey("SubscriptionPlanId");
+
+                            b1.ToTable("SubscriptionPlans");
+
+                            b1.ToJson("Limits");
+
+                            b1.WithOwner()
+                                .HasForeignKey("SubscriptionPlanId");
+                        });
+
+                    b.Navigation("Limits")
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Billing.UsageRecord", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Organization", "Organization")
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Organization");
                 });
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Comment", b =>
@@ -4800,6 +7058,27 @@ namespace EffortlessInsight.Api.Data.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Admin.AdminUser", b =>
+                {
+                    b.Navigation("AuditLogs");
+
+                    b.Navigation("GrantedCredits");
+
+                    b.Navigation("ImpersonationSessions");
+
+                    b.Navigation("Sessions");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Admin.ContentPage", b =>
+                {
+                    b.Navigation("Versions");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Admin.OrganizationCredit", b =>
+                {
+                    b.Navigation("UsageRecords");
+                });
+
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.ApplicationUser", b =>
                 {
                     b.Navigation("AssignedNotices");
@@ -4813,6 +7092,27 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Navigation("Sessions");
 
                     b.Navigation("UploadedNotices");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Billing.BillingSubscription", b =>
+                {
+                    b.Navigation("CouponRedemptions");
+
+                    b.Navigation("Invoices");
+
+                    b.Navigation("Payments");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Billing.Coupon", b =>
+                {
+                    b.Navigation("Redemptions");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Billing.Invoice", b =>
+                {
+                    b.Navigation("LineItems");
+
+                    b.Navigation("Payments");
                 });
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Comment", b =>

@@ -5,7 +5,7 @@ using EffortlessInsight.Api.Services.Admin;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using AdminAuditLogDto = EffortlessInsight.Api.DTOs.Admin.AdminAuditLogDto;
+using AdminAuditLogSummaryDto = EffortlessInsight.Api.DTOs.Admin.AdminAuditLogSummaryDto;
 using AdminSessionSummaryDto = EffortlessInsight.Api.DTOs.Admin.AdminSessionSummaryDto;
 
 namespace EffortlessInsight.Api.Controllers.Admin;
@@ -133,7 +133,7 @@ public class AdminAdminsController : AdminControllerBase
             .Where(a => a.AdminUserId == adminId)
             .OrderByDescending(a => a.CreatedAt)
             .Take(10)
-            .Select(a => new AdminAuditLogDto
+            .Select(a => new AdminAuditLogSummaryDto
             {
                 Id = a.Id,
                 Action = a.Action,

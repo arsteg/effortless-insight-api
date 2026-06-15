@@ -151,11 +151,11 @@ public record AdminUserDetailDto : AdminUserDto
     public bool IsLocked { get; init; }
     public DateTime? LockedUntil { get; init; }
     public DateTime? UpdatedAt { get; init; }
-    public List<AdminAuditLogDto>? RecentActivity { get; init; }
+    public List<AdminAuditLogSummaryDto>? RecentActivity { get; init; }
     public List<AdminSessionSummaryDto>? ActiveSessions { get; init; }
 }
 
-public record AdminAuditLogDto
+public record AdminAuditLogSummaryDto
 {
     public Guid Id { get; init; }
     public string Action { get; init; } = string.Empty;
