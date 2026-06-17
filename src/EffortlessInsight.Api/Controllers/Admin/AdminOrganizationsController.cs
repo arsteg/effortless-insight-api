@@ -11,6 +11,7 @@ namespace EffortlessInsight.Api.Controllers.Admin;
 /// <summary>
 /// Admin controller for managing organizations.
 /// </summary>
+[Route("api/v1/admin/organizations")]
 [Authorize(Policy = "AdminAuthenticated")]
 public class AdminOrganizationsController : AdminControllerBase
 {

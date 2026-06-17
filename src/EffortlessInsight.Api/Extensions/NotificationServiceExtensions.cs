@@ -1,5 +1,6 @@
 using EffortlessInsight.Api.Jobs;
 using EffortlessInsight.Api.Services.Notifications;
+using Resend;
 
 namespace EffortlessInsight.Api.Extensions;
 
@@ -14,9 +15,18 @@ public static class NotificationServiceExtensions
     public static IServiceCollection AddNotificationServices(this IServiceCollection services, IConfiguration configuration)
     {
         // Configure options
-        services.Configure<SendGridOptions>(configuration.GetSection(SendGridOptions.SectionName));
+        services.Configure<ResendOptions>(configuration.GetSection(ResendOptions.SectionName));
         services.Configure<TwilioOptions>(configuration.GetSection(TwilioOptions.SectionName));
         services.Configure<FirebaseOptions>(configuration.GetSection(FirebaseOptions.SectionName));
+
+        // Register Resend client
+        services.AddOptions();
+        services.AddHttpClient<ResendClient>();
+        services.Configure<ResendClientOptions>(o =>
+        {
+            o.ApiToken = configuration.GetSection("Resend:ApiKey").Value ?? string.Empty;
+        });
+        services.AddTransient<IResend, ResendClient>();
 
         // Core notification services
         services.AddScoped<INotificationEngineService, NotificationEngineService>();
@@ -26,7 +36,7 @@ public static class NotificationServiceExtensions
         services.AddScoped<IPushTokenService, PushTokenService>();
 
         // Channel services
-        services.AddScoped<IEmailChannelService, SendGridEmailService>();
+        services.AddScoped<IEmailChannelService, ResendEmailService>();
         services.AddScoped<ISmsChannelService, TwilioSmsService>();
         services.AddScoped<IPushChannelService, FirebasePushService>();
         services.AddScoped<IWhatsAppChannelService, TwilioWhatsAppService>();

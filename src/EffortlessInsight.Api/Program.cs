@@ -1,3 +1,4 @@
+using System.Text.Json;
 using AspNetCoreRateLimit;
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Extensions;
@@ -19,7 +20,11 @@ Log.Logger = new LoggerConfiguration()
 builder.Host.UseSerilog();
 
 // Add services to the container
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+    });
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
@@ -80,11 +85,11 @@ builder.Services.Configure<IpRateLimitOptions>(options =>
     options.RealIpHeader = "X-Forwarded-For";
     options.GeneralRules = new List<RateLimitRule>
     {
-        new() { Endpoint = "POST:/api/v1/auth/register", Period = "1h", Limit = 5 },
+        new() { Endpoint = "POST:/api/v1/auth/register", Period = "1h", Limit = 15 },
         new() { Endpoint = "POST:/api/v1/auth/login", Period = "1m", Limit = 10 },
-        new() { Endpoint = "POST:/api/v1/auth/otp/request", Period = "1h", Limit = 5 },
-        new() { Endpoint = "POST:/api/v1/auth/forgot-password", Period = "1h", Limit = 3 },
-        new() { Endpoint = "POST:/api/v1/auth/2fa/login", Period = "5m", Limit = 5 }
+        new() { Endpoint = "POST:/api/v1/auth/otp/request", Period = "1h", Limit = 15 },
+        new() { Endpoint = "POST:/api/v1/auth/forgot-password", Period = "1h", Limit = 10 },
+        new() { Endpoint = "POST:/api/v1/auth/2fa/login", Period = "5m", Limit = 10 }
     };
     // Add admin rate limit rules
     AdminServiceExtensions.AddAdminRateLimitRules(options);

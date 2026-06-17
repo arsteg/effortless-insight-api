@@ -43,7 +43,7 @@ public static class ServiceExtensions
         services.AddScoped<IAiServiceClient, AiServiceClient>();
         services.AddScoped<IFileStorageService, S3FileStorageServiceImpl>();
         services.AddScoped<IFileStorageServiceExtended, S3FileStorageServiceImpl>();
-        services.AddScoped<IEmailService, SendGridEmailService>();
+        services.AddScoped<IEmailService, ResendEmailServiceImpl>();
         services.AddScoped<IAuditService, AuditServiceImpl>();
 
         // Register organization management services

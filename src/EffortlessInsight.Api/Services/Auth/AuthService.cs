@@ -113,7 +113,7 @@ public class AuthService : IAuthService
         // Send verification email
         try
         {
-            var verificationLink = $"{_configuration["App:BaseUrl"]}/auth/verify-email?token={verificationToken}";
+            var verificationLink = $"{_configuration["App:BaseUrl"]}/verify-email?token={verificationToken}";
             await _emailService.SendTemplateAsync(
                 user.Email!,
                 "auth_verify_email",

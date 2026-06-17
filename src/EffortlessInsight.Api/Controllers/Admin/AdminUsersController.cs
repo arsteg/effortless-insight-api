@@ -12,6 +12,7 @@ namespace EffortlessInsight.Api.Controllers.Admin;
 /// <summary>
 /// Admin controller for managing platform users.
 /// </summary>
+[Route("api/v1/admin/users")]
 [Authorize(Policy = "AdminAuthenticated")]
 public class AdminUsersController : AdminControllerBase
 {

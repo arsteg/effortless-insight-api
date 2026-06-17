@@ -1,5 +1,7 @@
 using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.DTOs;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 
 namespace EffortlessInsight.Api.Services;
 
@@ -93,11 +95,157 @@ public class AiServiceClient : IAiServiceClient
 
 // S3FileStorageService implementation is in Services/Storage/S3FileStorageService.cs
 
-public class SendGridEmailService : IEmailService
+public class ResendEmailServiceImpl : IEmailService
 {
-    public Task SendAsync(string to, string subject, string htmlBody) => throw new NotImplementedException();
-    public Task SendTemplateAsync(string to, string templateId, Dictionary<string, object> data) => throw new NotImplementedException();
-    public Task SendBulkAsync(List<string> recipients, string subject, string htmlBody) => throw new NotImplementedException();
+    private readonly Resend.IResend _resend;
+    private readonly IConfiguration _configuration;
+    private readonly ILogger<ResendEmailServiceImpl> _logger;
+
+    public ResendEmailServiceImpl(Resend.IResend resend, IConfiguration configuration, ILogger<ResendEmailServiceImpl> logger)
+    {
+        _resend = resend;
+        _configuration = configuration;
+        _logger = logger;
+    }
+
+    public async Task SendAsync(string to, string subject, string htmlBody)
+    {
+        try
+        {
+            var fromEmail = _configuration["Resend:FromEmail"] ?? "onboarding@resend.dev";
+            var fromName = _configuration["Resend:FromName"] ?? "EffortlessInsight";
+
+            var message = new Resend.EmailMessage
+            {
+                From = $"{fromName} <{fromEmail}>",
+                To = [to],
+                Subject = subject,
+                HtmlBody = htmlBody
+            };
+
+            var response = await _resend.EmailSendAsync(message);
+            if (!response.Success)
+            {
+                _logger.LogError("Failed to send email to {To}: {Error}", to, response.Exception?.Message);
+                return; // Don't throw, just log the error
+            }
+
+            _logger.LogInformation("Email sent successfully to {To}, MessageId: {MessageId}", to, response.Content);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Exception while sending email to {To}", to);
+            // Don't rethrow - let the calling code continue
+        }
+    }
+
+    public async Task SendTemplateAsync(string to, string templateId, Dictionary<string, object> data)
+    {
+        // Render template based on templateId
+        var (subject, htmlBody) = RenderTemplate(templateId, data);
+        await SendAsync(to, subject, htmlBody);
+    }
+
+    public async Task SendBulkAsync(List<string> recipients, string subject, string htmlBody)
+    {
+        foreach (var recipient in recipients)
+        {
+            try
+            {
+                await SendAsync(recipient, subject, htmlBody);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to send bulk email to {Recipient}", recipient);
+            }
+        }
+    }
+
+    private (string Subject, string HtmlBody) RenderTemplate(string templateId, Dictionary<string, object> data)
+    {
+        var baseUrl = _configuration["App:BaseUrl"] ?? "http://localhost:3000";
+
+        return templateId switch
+        {
+            "auth_verify_email" => (
+                "Verify your email - EffortlessInsight",
+                $"""
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta charset="utf-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                </head>
+                <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+                    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 10px 10px 0 0;">
+                        <h1 style="color: white; margin: 0; font-size: 24px;">EffortlessInsight</h1>
+                    </div>
+                    <div style="background: #ffffff; padding: 30px; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 10px 10px;">
+                        <h2 style="color: #333; margin-top: 0;">Verify Your Email</h2>
+                        <p>Hi {data.GetValueOrDefault("user_name", "there")},</p>
+                        <p>Thanks for signing up! Please verify your email address by clicking the button below:</p>
+                        <div style="text-align: center; margin: 30px 0;">
+                            <a href="{data.GetValueOrDefault("verification_link", "#")}"
+                               style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 14px 30px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">
+                                Verify Email Address
+                            </a>
+                        </div>
+                        <p style="color: #666; font-size: 14px;">This link will expire in {data.GetValueOrDefault("expiry_hours", "24")} hours.</p>
+                        <p style="color: #666; font-size: 14px;">If you didn't create an account, you can safely ignore this email.</p>
+                        <hr style="border: none; border-top: 1px solid #e0e0e0; margin: 30px 0;">
+                        <p style="color: #999; font-size: 12px; margin: 0;">
+                            If the button doesn't work, copy and paste this link into your browser:<br>
+                            <a href="{data.GetValueOrDefault("verification_link", "#")}" style="color: #667eea;">{data.GetValueOrDefault("verification_link", "#")}</a>
+                        </p>
+                    </div>
+                </body>
+                </html>
+                """
+            ),
+            "auth_password_reset" => (
+                "Reset your password - EffortlessInsight",
+                $"""
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta charset="utf-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                </head>
+                <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+                    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 10px 10px 0 0;">
+                        <h1 style="color: white; margin: 0; font-size: 24px;">EffortlessInsight</h1>
+                    </div>
+                    <div style="background: #ffffff; padding: 30px; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 10px 10px;">
+                        <h2 style="color: #333; margin-top: 0;">Reset Your Password</h2>
+                        <p>Hi {data.GetValueOrDefault("user_name", "there")},</p>
+                        <p>We received a request to reset your password. Click the button below to create a new password:</p>
+                        <div style="text-align: center; margin: 30px 0;">
+                            <a href="{data.GetValueOrDefault("reset_link", "#")}"
+                               style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 14px 30px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">
+                                Reset Password
+                            </a>
+                        </div>
+                        <p style="color: #666; font-size: 14px;">This link will expire in {data.GetValueOrDefault("expiry_hours", "24")} hours.</p>
+                        <p style="color: #666; font-size: 14px;">If you didn't request a password reset, you can safely ignore this email.</p>
+                    </div>
+                </body>
+                </html>
+                """
+            ),
+            _ => (
+                "Notification from EffortlessInsight",
+                $"""
+                <!DOCTYPE html>
+                <html>
+                <body style="font-family: Arial, sans-serif; padding: 20px;">
+                    <h2>EffortlessInsight</h2>
+                    <p>{data.GetValueOrDefault("message", "You have a new notification.")}</p>
+                </body>
+                </html>
+                """
+            )
+        };
+    }
 }
 
 // AuditServiceImpl is defined in AuditService.cs

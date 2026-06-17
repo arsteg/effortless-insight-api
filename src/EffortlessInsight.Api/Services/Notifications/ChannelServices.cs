@@ -7,8 +7,7 @@ using Google.Apis.Auth.OAuth2;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using SendGrid;
-using SendGrid.Helpers.Mail;
+using Resend;
 using Twilio;
 using Twilio.Rest.Api.V2010.Account;
 using Twilio.Types;
@@ -16,23 +15,24 @@ using FcmNotification = FirebaseAdmin.Messaging.Notification;
 
 namespace EffortlessInsight.Api.Services.Notifications;
 
-#region Email Channel Service (SendGrid)
+#region Email Channel Service (Resend)
 
 /// <summary>
-/// SendGrid email channel service implementation
+/// Resend email channel service implementation
 /// </summary>
-public class SendGridEmailService : IEmailChannelService
+public class ResendEmailService : IEmailChannelService
 {
-    private readonly SendGridClient _client;
-    private readonly SendGridOptions _options;
-    private readonly ILogger<SendGridEmailService> _logger;
+    private readonly IResend _resend;
+    private readonly ResendOptions _options;
+    private readonly ILogger<ResendEmailService> _logger;
 
-    public SendGridEmailService(
-        IOptions<SendGridOptions> options,
-        ILogger<SendGridEmailService> logger)
+    public ResendEmailService(
+        IResend resend,
+        IOptions<ResendOptions> options,
+        ILogger<ResendEmailService> logger)
     {
+        _resend = resend;
         _options = options.Value;
-        _client = new SendGridClient(_options.ApiKey);
         _logger = logger;
     }
 
@@ -41,74 +41,56 @@ public class SendGridEmailService : IEmailChannelService
     {
         try
         {
-            var msg = new SendGridMessage
+            var emailMessage = new EmailMessage
             {
-                From = new EmailAddress(_options.FromEmail, _options.FromName),
+                From = $"{_options.FromName} <{_options.FromEmail}>",
+                To = [message.ToEmail],
                 Subject = message.Subject,
-                HtmlContent = message.HtmlBody,
-                PlainTextContent = message.TextBody
+                HtmlBody = message.HtmlBody,
+                TextBody = message.TextBody
             };
-
-            msg.AddTo(new EmailAddress(message.ToEmail, message.ToName));
 
             if (!string.IsNullOrEmpty(_options.ReplyTo))
             {
-                msg.ReplyTo = new EmailAddress(_options.ReplyTo);
+                emailMessage.ReplyTo = _options.ReplyTo;
             }
 
-            // Add tracking
-            msg.SetClickTracking(true, true);
-            msg.SetOpenTracking(true);
-
-            // Add custom args for webhook identification
-            if (message.CustomArgs != null)
-            {
-                foreach (var arg in message.CustomArgs)
-                {
-                    msg.AddCustomArg(arg.Key, arg.Value);
-                }
-            }
-
-            if (!string.IsNullOrEmpty(message.NotificationId))
-            {
-                msg.AddCustomArg("notification_id", message.NotificationId);
-            }
-
-            if (!string.IsNullOrEmpty(message.UserId))
-            {
-                msg.AddCustomArg("user_id", message.UserId);
-            }
-
-            // Set unsubscribe group
-            if (_options.UnsubscribeGroupId > 0)
-            {
-                msg.SetAsm(_options.UnsubscribeGroupId);
-            }
-
-            // Add attachments
-            if (message.Attachments != null)
+            // Add attachments (base64 encoded)
+            if (message.Attachments != null && message.Attachments.Count > 0)
             {
                 foreach (var attachment in message.Attachments)
                 {
-                    msg.AddAttachment(attachment.FileName, Convert.ToBase64String(attachment.Content), attachment.ContentType);
+                    emailMessage.Attachments.Add(new Resend.EmailAttachment
+                    {
+                        Filename = attachment.FileName,
+                        Content = Convert.ToBase64String(attachment.Content)
+                    });
                 }
             }
 
-            var response = await _client.SendEmailAsync(msg, cancellationToken);
-
-            if (response.IsSuccessStatusCode)
+            // Add headers for tracking
+            if (!string.IsNullOrEmpty(message.NotificationId))
             {
-                var messageId = response.Headers.TryGetValues("X-Message-Id", out var ids)
-                    ? ids.FirstOrDefault()
-                    : null;
+                emailMessage.Headers.Add("X-Notification-Id", message.NotificationId);
+            }
+            if (!string.IsNullOrEmpty(message.UserId))
+            {
+                emailMessage.Headers.Add("X-User-Id", message.UserId);
+            }
 
-                _logger.LogInformation("Email sent successfully to {Email}, MessageId: {MessageId}", message.ToEmail, messageId);
+            var response = await _resend.EmailSendAsync(emailMessage, cancellationToken);
+
+            if (response.Success)
+            {
+                var messageId = response.Content.ToString();
+                _logger.LogInformation("Email sent successfully to {Email}, MessageId: {MessageId}",
+                    message.ToEmail, messageId);
                 return new ChannelSendResult(true, messageId, null, null);
             }
 
-            var body = await response.Body.ReadAsStringAsync(cancellationToken);
-            _logger.LogError("SendGrid error {StatusCode}: {Body}", response.StatusCode, body);
-            return new ChannelSendResult(false, null, response.StatusCode.ToString(), body);
+            var errorMessage = response.Exception?.Message ?? "Unknown error";
+            _logger.LogError("Resend error: {Error}", errorMessage);
+            return new ChannelSendResult(false, null, "RESEND_ERROR", errorMessage);
         }
         catch (Exception ex)
         {
@@ -118,70 +100,17 @@ public class SendGridEmailService : IEmailChannelService
     }
 
     /// <inheritdoc />
-    public async Task<ChannelSendResult> SendTemplateAsync(
-        string templateId, string toEmail, string toName,
-        Dictionary<string, object> templateData, string? notificationId = null,
-        CancellationToken cancellationToken = default)
-    {
-        try
-        {
-            var msg = new SendGridMessage
-            {
-                From = new EmailAddress(_options.FromEmail, _options.FromName),
-                TemplateId = templateId
-            };
-
-            msg.AddTo(new EmailAddress(toEmail, toName));
-
-            // Set template data
-            msg.SetTemplateData(templateData);
-
-            // Add tracking
-            msg.SetClickTracking(true, true);
-            msg.SetOpenTracking(true);
-
-            if (!string.IsNullOrEmpty(notificationId))
-            {
-                msg.AddCustomArg("notification_id", notificationId);
-            }
-
-            var response = await _client.SendEmailAsync(msg, cancellationToken);
-
-            if (response.IsSuccessStatusCode)
-            {
-                var messageId = response.Headers.TryGetValues("X-Message-Id", out var ids)
-                    ? ids.FirstOrDefault()
-                    : null;
-
-                return new ChannelSendResult(true, messageId, null, null);
-            }
-
-            var body = await response.Body.ReadAsStringAsync(cancellationToken);
-            return new ChannelSendResult(false, null, response.StatusCode.ToString(), body);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to send template email to {Email}", toEmail);
-            return new ChannelSendResult(false, null, "EXCEPTION", ex.Message);
-        }
-    }
-
-    /// <inheritdoc />
     public async Task<bool> VerifyConfigurationAsync(CancellationToken cancellationToken = default)
     {
         try
         {
-            // Simple API call to verify credentials
-            var response = await _client.RequestAsync(
-                method: SendGridClient.Method.GET,
-                urlPath: "user/profile",
-                cancellationToken: cancellationToken);
-
-            return response.IsSuccessStatusCode;
+            // Send a simple API call to verify credentials by fetching domains
+            var response = await _resend.DomainListAsync(cancellationToken);
+            return response.Success;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "SendGrid configuration verification failed");
+            _logger.LogError(ex, "Resend configuration verification failed");
             return false;
         }
     }

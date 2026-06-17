@@ -14,6 +14,7 @@ namespace EffortlessInsight.Api.Controllers.Admin;
 /// Admin controller for managing admin users.
 /// Only accessible by super admins.
 /// </summary>
+[Route("api/v1/admin/admins")]
 [Authorize(Policy = "AdminSuperAdmin")]
 public class AdminAdminsController : AdminControllerBase
 {

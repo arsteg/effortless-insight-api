@@ -10,6 +10,7 @@ namespace EffortlessInsight.Api.Controllers.Admin;
 /// <summary>
 /// Admin controller for audit logs.
 /// </summary>
+[Route("api/v1/admin/audit")]
 [Authorize(Policy = "AdminAuthenticated")]
 public class AdminAuditController : AdminControllerBase
 {

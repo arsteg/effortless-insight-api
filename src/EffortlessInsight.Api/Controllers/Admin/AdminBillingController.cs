@@ -10,6 +10,7 @@ namespace EffortlessInsight.Api.Controllers.Admin;
 /// <summary>
 /// Admin controller for billing and subscription management.
 /// </summary>
+[Route("api/v1/admin/billing")]
 [Authorize(Policy = "AdminFinance")]
 public class AdminBillingController : AdminControllerBase
 {

@@ -9,6 +9,7 @@ namespace EffortlessInsight.Api.Controllers.Admin;
 /// <summary>
 /// Admin dashboard controller for metrics and monitoring.
 /// </summary>
+[Route("api/v1/admin/dashboard")]
 [Authorize(Policy = "AdminAuthenticated")]
 public class AdminDashboardController : AdminControllerBase
 {
@@ -54,7 +55,7 @@ public class AdminDashboardController : AdminControllerBase
     [ProducesResponseType(typeof(SystemHealthResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetHealth()
     {
-        var health = await GetSystemHealthAsync();
+        var health = await GetSystemHealthForFrontendAsync();
         return Success(health);
     }
 
@@ -62,11 +63,30 @@ public class AdminDashboardController : AdminControllerBase
     /// Get active alerts.
     /// </summary>
     [HttpGet("alerts")]
-    [ProducesResponseType(typeof(List<SystemAlertDto>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetAlerts([FromQuery] int limit = 10)
+    [ProducesResponseType(typeof(AlertsResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetAlerts([FromQuery] string? status = null, [FromQuery] string? priority = null, [FromQuery] int limit = 10)
     {
-        var alerts = await _dbContext.SystemAlerts
-            .Where(a => a.Status == AlertStatus.Active || a.Status == AlertStatus.Acknowledged)
+        var query = _dbContext.SystemAlerts.AsQueryable();
+
+        // Filter by status if provided, otherwise show active/acknowledged
+        if (!string.IsNullOrEmpty(status))
+        {
+            query = query.Where(a => a.Status == status);
+        }
+        else
+        {
+            query = query.Where(a => a.Status == AlertStatus.Active || a.Status == AlertStatus.Acknowledged);
+        }
+
+        // Filter by priority if provided
+        if (!string.IsNullOrEmpty(priority))
+        {
+            query = query.Where(a => a.Priority == priority);
+        }
+
+        var totalCount = await query.CountAsync();
+
+        var alerts = await query
             .OrderByDescending(a => a.Priority == AlertPriority.Critical)
             .ThenByDescending(a => a.Priority == AlertPriority.High)
             .ThenByDescending(a => a.CreatedAt)
@@ -77,8 +97,7 @@ public class AdminDashboardController : AdminControllerBase
                 AlertType = a.AlertType,
                 Category = a.Category,
                 Title = a.Title,
-                Message = a.Description,
-                Severity = a.Priority,
+                Description = a.Description,
                 Priority = a.Priority,
                 Status = a.Status,
                 CreatedAt = a.CreatedAt,
@@ -86,7 +105,11 @@ public class AdminDashboardController : AdminControllerBase
             })
             .ToListAsync();
 
-        return Success(alerts);
+        return Success(new AlertsResponse
+        {
+            Alerts = alerts,
+            TotalCount = totalCount
+        });
     }
 
     /// <summary>
@@ -103,11 +126,12 @@ public class AdminDashboardController : AdminControllerBase
             .Select(a => new RecentActivityDto
             {
                 Id = a.Id,
-                AdminName = a.AdminUser != null ? a.AdminUser.Name : "Unknown",
+                AdminUserName = a.AdminUser != null ? a.AdminUser.Name : "Unknown",
                 Action = a.Action,
                 TargetType = a.TargetType,
                 TargetId = a.TargetId,
                 Description = a.Description,
+                Outcome = a.Outcome ?? "success",
                 CreatedAt = a.CreatedAt
             })
             .ToListAsync();
@@ -248,7 +272,7 @@ public class AdminDashboardController : AdminControllerBase
             Processing = processing,
             Completed = completed,
             Failed = failed,
-            AvgProcessingTime = Math.Round(avgProcessingTime, 1)
+            AvgProcessingTimeSeconds = Math.Round(avgProcessingTime, 1)
         };
     }
 
@@ -300,10 +324,17 @@ public class AdminDashboardController : AdminControllerBase
             ? Math.Round((double)cancelledInPeriod / totalAtStart * 100, 1)
             : 0;
 
+        // Calculate refunds in the period (sum of refunded payment amounts)
+        var refunds = await _dbContext.Payments
+            .Where(p => p.Status == "refunded" && p.UpdatedAt >= startDate && p.UpdatedAt <= endDate)
+            .SumAsync(p => p.Amount);
+
         return new RevenueMetrics
         {
             Mrr = mrr,
             Arr = arr,
+            Collected = currentRevenue,
+            Refunds = refunds,
             Growth = growth,
             Churn = churn
         };
@@ -321,6 +352,34 @@ public class AdminDashboardController : AdminControllerBase
             Database = new ServiceHealth { Status = "healthy", Latency = 15 },
             Redis = new ServiceHealth { Status = "healthy", Latency = 2 },
             S3 = new ServiceHealth { Status = "healthy", Latency = null }
+        });
+    }
+
+    private async Task<SystemHealthFrontendResponse> GetSystemHealthForFrontendAsync()
+    {
+        // In production, these would be actual health checks
+        var components = new List<HealthComponent>
+        {
+            new() { Name = "API Gateway", Status = "healthy", LatencyMs = 45 },
+            new() { Name = "Main API", Status = "healthy", LatencyMs = 120 },
+            new() { Name = "AI Service", Status = "healthy", LatencyMs = 850 },
+            new() { Name = "Database", Status = "healthy", LatencyMs = 15 },
+            new() { Name = "Redis Cache", Status = "healthy", LatencyMs = 2 },
+            new() { Name = "S3 Storage", Status = "healthy", LatencyMs = null }
+        };
+
+        // Determine overall status based on component statuses
+        var overallStatus = "healthy";
+        if (components.Any(c => c.Status == "down"))
+            overallStatus = "critical";
+        else if (components.Any(c => c.Status == "degraded"))
+            overallStatus = "degraded";
+
+        return await Task.FromResult(new SystemHealthFrontendResponse
+        {
+            Status = overallStatus,
+            Components = components,
+            LastCheckedAt = DateTime.UtcNow
         });
     }
 }
@@ -364,13 +423,15 @@ public record NoticeMetrics
     public int Processing { get; init; }
     public int Completed { get; init; }
     public int Failed { get; init; }
-    public double AvgProcessingTime { get; init; }
+    public double AvgProcessingTimeSeconds { get; init; }
 }
 
 public record RevenueMetrics
 {
     public decimal Mrr { get; init; }
     public decimal Arr { get; init; }
+    public decimal Collected { get; init; }
+    public decimal Refunds { get; init; }
     public double Growth { get; init; }
     public double Churn { get; init; }
 }
@@ -391,14 +452,34 @@ public record ServiceHealth
     public int? Latency { get; init; }
 }
 
+public record SystemHealthFrontendResponse
+{
+    public string Status { get; init; } = "healthy";
+    public List<HealthComponent> Components { get; init; } = new();
+    public DateTime LastCheckedAt { get; init; }
+}
+
+public record HealthComponent
+{
+    public string Name { get; init; } = string.Empty;
+    public string Status { get; init; } = "healthy";
+    public int? LatencyMs { get; init; }
+    public string? Message { get; init; }
+}
+
+public record AlertsResponse
+{
+    public List<SystemAlertDto> Alerts { get; init; } = new();
+    public int TotalCount { get; init; }
+}
+
 public record SystemAlertDto
 {
     public Guid Id { get; init; }
     public string AlertType { get; init; } = string.Empty;
     public string Category { get; init; } = string.Empty;
     public string Title { get; init; } = string.Empty;
-    public string Message { get; init; } = string.Empty;
-    public string Severity { get; init; } = string.Empty;
+    public string Description { get; init; } = string.Empty;
     public string Priority { get; init; } = string.Empty;
     public string Status { get; init; } = string.Empty;
     public DateTime CreatedAt { get; init; }
@@ -408,11 +489,12 @@ public record SystemAlertDto
 public record RecentActivityDto
 {
     public Guid Id { get; init; }
-    public string AdminName { get; init; } = string.Empty;
+    public string AdminUserName { get; init; } = string.Empty;
     public string Action { get; init; } = string.Empty;
     public string TargetType { get; init; } = string.Empty;
     public string? TargetId { get; init; }
     public string? Description { get; init; }
+    public string Outcome { get; init; } = "success";
     public DateTime CreatedAt { get; init; }
 }
 

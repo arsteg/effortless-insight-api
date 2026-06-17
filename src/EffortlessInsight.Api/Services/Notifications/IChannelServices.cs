@@ -13,7 +13,7 @@ public record ChannelSendResult(
 #region Email Channel
 
 /// <summary>
-/// Email sending service (SendGrid)
+/// Email sending service (Resend)
 /// </summary>
 public interface IEmailChannelService
 {
@@ -23,12 +23,7 @@ public interface IEmailChannelService
     Task<ChannelSendResult> SendAsync(EmailNotificationMessage message, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Send using a SendGrid dynamic template
-    /// </summary>
-    Task<ChannelSendResult> SendTemplateAsync(string templateId, string toEmail, string toName, Dictionary<string, object> templateData, string? notificationId = null, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Verify SendGrid configuration
+    /// Verify email configuration
     /// </summary>
     Task<bool> VerifyConfigurationAsync(CancellationToken cancellationToken = default);
 }
@@ -255,23 +250,16 @@ public record InAppNotificationMessage(
 #region Channel Configuration
 
 /// <summary>
-/// SendGrid configuration options
+/// Resend configuration options
 /// </summary>
-public class SendGridOptions
+public class ResendOptions
 {
-    public const string SectionName = "SendGrid";
+    public const string SectionName = "Resend";
 
     public string ApiKey { get; set; } = string.Empty;
     public string FromEmail { get; set; } = "notifications@effortlessinsight.com";
     public string FromName { get; set; } = "EffortlessInsight";
     public string? ReplyTo { get; set; }
-    public int UnsubscribeGroupId { get; set; }
-    public string WebhookSigningKey { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Template IDs for different notification types
-    /// </summary>
-    public Dictionary<string, string> Templates { get; set; } = new();
 }
 
 /// <summary>
