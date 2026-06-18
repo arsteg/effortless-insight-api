@@ -115,122 +115,117 @@ public class OrganizationManagementService : IOrganizationManagementService
         // Get state name from database
         var stateName = await _gstinValidator.GetStateNameAsync(gstinResult.StateCode!) ?? gstinResult.StateName!;
 
-        // Use explicit transaction for multi-entity creation (C3 fix)
-        await using var transaction = await _dbContext.Database.BeginTransactionAsync();
-        try
+        // Create GSTIN entity
+        var gstin = new OrganizationGstin
         {
-            // Create organization
-            var organization = new Organization
-            {
-                Name = request.Name.Trim(),
-                NameNormalized = normalizedName,
-                LegalName = request.LegalName?.Trim(),
-                Industry = request.Industry,
-                State = request.State,
-                City = request.City,
-                AnnualTurnoverRange = request.AnnualTurnoverRange,
-                PlanId = freePlan?.Id,
-                SubscriptionStatus = "trial",
-                TrialEndsAt = DateTime.UtcNow.AddDays(14),
-                Settings = new Dictionary<string, object>
-                {
-                    ["default_reminder_days"] = new[] { 7, 3, 1 },
-                    ["notification_email"] = true,
-                    ["notification_sms"] = true,
-                    ["allow_ca_access"] = true,
-                    ["require_response_approval"] = false,
-                    ["timezone"] = "Asia/Kolkata",
-                    ["language"] = "en",
-                    ["date_format"] = "DD/MM/YYYY"
-                }
-            };
+            Gstin = gstinResult.Gstin!,
+            StateCode = gstinResult.StateCode!,
+            StateName = stateName,
+            IsPrimary = true,
+            Status = "active"
+        };
 
-            _dbContext.Organizations.Add(organization);
-            await _dbContext.SaveChangesAsync(); // Save to get organization ID
-
-            // Create GSTIN
-            var gstin = new OrganizationGstin
-            {
-                OrganizationId = organization.Id,
-                Gstin = gstinResult.Gstin!,
-                StateCode = gstinResult.StateCode!,
-                StateName = stateName,
-                IsPrimary = true,
-                Status = "active"
-            };
-
-            _dbContext.OrganizationGstins.Add(gstin);
-
-            // Create owner membership
-            var membership = new OrganizationMember
-            {
-                OrganizationId = organization.Id,
-                UserId = userId,
-                Role = "owner",
-                IsExternal = false,
-                Status = "active",
-                JoinedAt = DateTime.UtcNow
-            };
-
-            _dbContext.OrganizationMembers.Add(membership);
-
-            // Update user's default organization (for backward compatibility)
-            user.OrganizationId = organization.Id;
-            user.Role = "owner";
-
-            await _dbContext.SaveChangesAsync();
-            await transaction.CommitAsync();
-
-            _logger.LogInformation("Organization {OrganizationId} created by user {UserId}", organization.Id, userId);
-
-            // Audit logging (C2 fix)
-            await _auditService.LogAsync(new AuditLogEntry
-            {
-                Action = "organization.created",
-                EntityType = "Organization",
-                EntityId = organization.Id,
-                UserId = userId,
-                OrganizationId = organization.Id,
-                NewValues = new
-                {
-                    organization.Name,
-                    organization.LegalName,
-                    organization.Industry,
-                    organization.State,
-                    Gstin = gstin.Gstin
-                }
-            });
-
-            return new CreateOrganizationResponse(
-                Id: organization.Id,
-                Name: organization.Name,
-                LegalName: organization.LegalName,
-                Gstins: [new GstinDto(
-                    gstin.Id,
-                    gstin.Gstin,
-                    gstin.TradeName,
-                    gstin.StateCode,
-                    gstin.StateName,
-                    gstin.Status,
-                    gstin.IsPrimary,
-                    gstin.IsVerified,
-                    gstin.VerifiedAt
-                )],
-                Industry: organization.Industry,
-                State: organization.State,
-                City: organization.City,
-                SubscriptionStatus: organization.SubscriptionStatus,
-                TrialEndsAt: organization.TrialEndsAt,
-                MemberCount: 1,
-                CurrentUserRole: "owner",
-                CreatedAt: organization.CreatedAt
-            );
-        }
-        catch
+        // Create owner membership entity
+        var membership = new OrganizationMember
         {
-            await transaction.RollbackAsync();
-            throw;
-        }
+            UserId = userId,
+            Role = "owner",
+            IsExternal = false,
+            Status = "active",
+            JoinedAt = DateTime.UtcNow
+        };
+
+        // Create organization with related entities using navigation properties
+        // EF Core will automatically set the OrganizationId on related entities
+        var organization = new Organization
+        {
+            Name = request.Name.Trim(),
+            NameNormalized = normalizedName,
+            LegalName = request.LegalName?.Trim(),
+            Industry = request.Industry,
+            State = request.State,
+            City = request.City,
+            AnnualTurnoverRange = request.AnnualTurnoverRange,
+            PlanId = freePlan?.Id,
+            SubscriptionStatus = "trial",
+            TrialEndsAt = DateTime.UtcNow.AddDays(14),
+            Settings = new Dictionary<string, object>
+            {
+                ["default_reminder_days"] = new[] { 7, 3, 1 },
+                ["notification_email"] = true,
+                ["notification_sms"] = true,
+                ["allow_ca_access"] = true,
+                ["require_response_approval"] = false,
+                ["timezone"] = "Asia/Kolkata",
+                ["language"] = "en",
+                ["date_format"] = "DD/MM/YYYY"
+            },
+            // Add related entities via navigation properties
+            OrganizationGstins = { gstin },
+            Members = { membership }
+        };
+
+        _dbContext.Organizations.Add(organization);
+
+        // Save to get the organization ID
+        await _dbContext.SaveChangesAsync();
+
+        // Now update user's default organization (organization.Id is now set)
+        user.OrganizationId = organization.Id;
+        user.Role = "owner";
+        await _dbContext.SaveChangesAsync();
+
+        Console.WriteLine($"Organization created: orgId={organization.Id}, membershipId={membership.Id}, membership.Role={membership.Role}, userId={userId}");
+        _logger.LogInformation("Organization {OrganizationId} created by user {UserId}", organization.Id, userId);
+
+        // Audit logging (C2 fix) - outside transaction
+        await _auditService.LogAsync(new AuditLogEntry
+        {
+            Action = "organization.created",
+            EntityType = "Organization",
+            EntityId = organization.Id,
+            UserId = userId,
+            OrganizationId = organization.Id,
+            NewValues = new
+            {
+                organization.Name,
+                organization.LegalName,
+                organization.Industry,
+                organization.State,
+                Gstin = gstin.Gstin
+            }
+        });
+
+        // Generate new access token with organization context
+        var accessToken = _jwtService.GenerateAccessToken(user, organization, "owner");
+        var expiresIn = _jwtService.GetAccessTokenExpiryMinutes() * 60;
+
+        return new CreateOrganizationResponse(
+            Id: organization.Id,
+            Name: organization.Name,
+            LegalName: organization.LegalName,
+            Gstins: [new GstinDto(
+                gstin.Id,
+                gstin.Gstin,
+                gstin.TradeName,
+                gstin.StateCode,
+                gstin.StateName,
+                gstin.Status,
+                gstin.IsPrimary,
+                gstin.IsVerified,
+                gstin.VerifiedAt
+            )],
+            Industry: organization.Industry,
+            State: organization.State,
+            City: organization.City,
+            SubscriptionStatus: organization.SubscriptionStatus,
+            TrialEndsAt: organization.TrialEndsAt,
+            MemberCount: 1,
+            CurrentUserRole: "owner",
+            CreatedAt: organization.CreatedAt,
+            AccessToken: accessToken,
+            ExpiresIn: expiresIn
+        );
     }
 
     public async Task<OrganizationDetailResponse> GetByIdAsync(Guid organizationId, Guid userId)

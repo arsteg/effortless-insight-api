@@ -188,46 +188,55 @@ public class CurrentOrganizationService : ICurrentOrganizationService
     public bool HasPermission(string permission)
     {
         var role = Role?.ToLowerInvariant();
+
+        // Debug logging - remove after fixing
+        System.Diagnostics.Debug.WriteLine($"HasPermission check: permission={permission}, role={role ?? "NULL"}, orgId={OrganizationId}");
+        Console.WriteLine($"HasPermission check: permission={permission}, role={role ?? "NULL"}, orgId={OrganizationId}");
+
         if (role == null) return false;
 
         // Define permission mappings based on role
+        // Note: Use dots (.) as separator to match controller usage
         return permission.ToLowerInvariant() switch
         {
             // Organization permissions
-            "organization:view" => true, // All members can view
-            "organization:edit" => role is "owner" or "admin",
-            "organization:delete" => role == "owner",
-            "organization:billing" => role == "owner",
-            "organization:transfer" => role == "owner",
+            "organization.view" => true, // All members can view
+            "organization.edit" => role is "owner" or "admin",
+            "organization.delete" => role == "owner",
+            "organization.billing" => role == "owner",
+            "organization.transfer" => role == "owner",
 
             // Member permissions
-            "members:view" => role is not "ca", // CA cannot see members
-            "members:invite" => role is "owner" or "admin",
-            "members:remove" => role is "owner" or "admin",
-            "members:change_role" => role is "owner" or "admin",
+            "members.view" => role is not "ca", // CA cannot see members
+            "members.invite" => role is "owner" or "admin",
+            "members.remove" => role is "owner" or "admin",
+            "members.change_role" => role is "owner" or "admin",
 
             // GSTIN permissions
-            "gstins:view" => true,
-            "gstins:add" => role is "owner" or "admin",
-            "gstins:remove" => role is "owner" or "admin",
+            "gstins.view" => true,
+            "gstins.add" => role is "owner" or "admin",
+            "gstins.remove" => role is "owner" or "admin",
 
             // Notice permissions
-            "notices:view_all" => role is not "viewer" || !IsExternal,
-            "notices:upload" => role is not "viewer",
-            "notices:delete" => role is "owner" or "admin",
-            "notices:assign" => role is "owner" or "admin" or "manager",
-            "notices:comment" => role is not "viewer",
-            "notices:draft_response" => role is not "viewer",
-            "notices:approve_response" => role is "owner" or "admin" or "manager",
+            "notices.view" => true,
+            "notices.view_all" => role is not "viewer" || !IsExternal,
+            "notices.upload" => role is not "viewer",
+            "notices.edit" => role is not "viewer",
+            "notices.delete" => role is "owner" or "admin",
+            "notices.assign" => role is "owner" or "admin" or "manager",
+            "notices.comment" => role is not "viewer",
+            "notices.draft_response" => role is not "viewer",
+            "notices.approve" => role is "owner" or "admin" or "manager",
+            "notices.approve_response" => role is "owner" or "admin" or "manager",
 
             // Reports permissions
-            "reports:view" => true,
-            "reports:export" => role is "owner" or "admin" or "manager",
-            "audit:view" => role is "owner" or "admin",
+            "reports.view" => true,
+            "reports.export" => role is "owner" or "admin" or "manager",
+            "audit.view" => role is "owner" or "admin",
 
             // Settings permissions
-            "settings:view" => role is not "ca" || !IsExternal,
-            "settings:edit" => role is "owner" or "admin",
+            "settings.view" => role is not "ca" || !IsExternal,
+            "settings.edit" => role is "owner" or "admin",
 
             _ => false
         };

@@ -31,7 +31,11 @@ public class JwtService : IJwtService
 
     public string GenerateAccessToken(ApplicationUser user, Organization? organization, string? roleOverride = null, bool isExternal = false)
     {
-        var role = roleOverride ?? user.Role;
+        // Use roleOverride if provided, otherwise user.Role, default to "member" if both null
+        var role = roleOverride ?? user.Role ?? "member";
+
+        // Debug logging
+        Console.WriteLine($"GenerateAccessToken: userId={user.Id}, roleOverride={roleOverride ?? "NULL"}, userRole={user.Role ?? "NULL"}, finalRole={role}, orgId={organization?.Id}");
 
         var claims = new List<Claim>
         {

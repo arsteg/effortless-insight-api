@@ -272,9 +272,19 @@ public class AuthService : IAuthService
         session.RevokedAt = DateTime.UtcNow;
         session.RevokedReason = "token_refresh";
 
+        // Get user's organization from memberships first (multi-org support), then fallback to legacy field
+        var membership = await _dbContext.OrganizationMembers
+            .Include(m => m.Organization)
+            .Where(m => m.UserId == user.Id && m.Status == "active" && m.Organization.DeletedAt == null)
+            .OrderByDescending(m => m.JoinedAt)
+            .FirstOrDefaultAsync();
+
+        var organization = membership?.Organization ?? user.Organization;
+        var roleOverride = membership?.Role;
+
         // Generate new tokens
         var (newRefreshToken, newJti, expiresAt) = _jwtService.GenerateRefreshToken(session.ExpiresAt > DateTime.UtcNow.AddDays(7));
-        var accessToken = _jwtService.GenerateAccessToken(user, user.Organization);
+        var accessToken = _jwtService.GenerateAccessToken(user, organization, roleOverride);
 
         // Create new session
         var newSession = new UserSession
@@ -800,12 +810,21 @@ public class AuthService : IAuthService
         // Reset failed login attempts
         await ResetFailedLoginAttemptsAsync(user);
 
-        // Create session
-        var organization = user.OrganizationId.HasValue
-            ? await _dbContext.Organizations.FindAsync(user.OrganizationId.Value)
-            : null;
+        // Get user's organization from memberships first (multi-org support), then fallback to legacy field
+        var membership = await _dbContext.OrganizationMembers
+            .Include(m => m.Organization)
+            .Where(m => m.UserId == user.Id && m.Status == "active" && m.Organization.DeletedAt == null)
+            .OrderByDescending(m => m.JoinedAt)
+            .FirstOrDefaultAsync();
 
-        var accessToken = _jwtService.GenerateAccessToken(user, organization);
+        var organization = membership?.Organization
+            ?? (user.OrganizationId.HasValue
+                ? await _dbContext.Organizations.FindAsync(user.OrganizationId.Value)
+                : null);
+
+        var roleOverride = membership?.Role;
+
+        var accessToken = _jwtService.GenerateAccessToken(user, organization, roleOverride);
         var (refreshToken, _, expiresAt) = _jwtService.GenerateRefreshToken(partialTokenData.RememberMe);
 
         var session = new UserSession
@@ -919,13 +938,26 @@ public class AuthService : IAuthService
         string ipAddress,
         string? userAgent)
     {
-        // Get user's organization
-        var organization = user.OrganizationId.HasValue
-            ? await _dbContext.Organizations.FindAsync(user.OrganizationId.Value)
-            : null;
+        // Get user's organization from memberships first (multi-org support), then fallback to legacy field
+        var membership = await _dbContext.OrganizationMembers
+            .Include(m => m.Organization)
+            .Where(m => m.UserId == user.Id && m.Status == "active" && m.Organization.DeletedAt == null)
+            .OrderByDescending(m => m.JoinedAt)
+            .FirstOrDefaultAsync();
+
+        var organization = membership?.Organization
+            ?? (user.OrganizationId.HasValue
+                ? await _dbContext.Organizations.FindAsync(user.OrganizationId.Value)
+                : null);
+
+        // Use role from membership if available
+        var roleOverride = membership?.Role;
+
+        // Debug logging
+        Console.WriteLine($"CreateLoginSessionAsync: userId={user.Id}, membershipExists={membership != null}, membershipRole={membership?.Role ?? "NULL"}, orgId={organization?.Id}, roleOverride={roleOverride ?? "NULL"}");
 
         // Generate tokens
-        var accessToken = _jwtService.GenerateAccessToken(user, organization);
+        var accessToken = _jwtService.GenerateAccessToken(user, organization, roleOverride);
         var (refreshToken, jti, expiresAt) = _jwtService.GenerateRefreshToken(rememberMe);
 
         // Create session
@@ -952,6 +984,21 @@ public class AuthService : IAuthService
 
         await _dbContext.SaveChangesAsync();
 
+        // Build organization info for response
+        UserOrganizationDto? currentOrg = null;
+        var orgs = new List<UserOrganizationDto>();
+
+        if (membership != null)
+        {
+            currentOrg = new UserOrganizationDto(membership.OrganizationId, membership.Organization.Name, membership.Role);
+            orgs.Add(currentOrg);
+        }
+        else if (organization != null)
+        {
+            currentOrg = new UserOrganizationDto(organization.Id, organization.Name, user.Role ?? "member");
+            orgs.Add(currentOrg);
+        }
+
         return new LoginResponse(
             AccessToken: accessToken,
             RefreshToken: refreshToken,
@@ -963,9 +1010,9 @@ public class AuthService : IAuthService
                 Name: user.Name,
                 Mobile: user.Mobile,
                 AvatarUrl: user.AvatarUrl,
-                Role: user.Role,
-                OrganizationId: organization?.Id,
-                OrganizationName: organization?.Name
+                Role: roleOverride ?? user.Role ?? "member",
+                Organization: currentOrg,
+                Organizations: orgs
             )
         );
     }

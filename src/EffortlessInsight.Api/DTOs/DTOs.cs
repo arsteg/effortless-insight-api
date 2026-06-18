@@ -132,8 +132,8 @@ public record UserDto(
     string? Mobile,
     string? AvatarUrl,
     string Role,
-    Guid? OrganizationId,
-    string? OrganizationName
+    UserOrganizationDto? Organization,
+    List<UserOrganizationDto> Organizations
 );
 
 public record UpdateUserDto(string? Name, string? Mobile, string? AvatarUrl, Dictionary<string, object>? Preferences);
@@ -164,7 +164,9 @@ public record CreateOrganizationResponse(
     DateTime? TrialEndsAt,
     int MemberCount,
     string CurrentUserRole,
-    DateTime CreatedAt
+    DateTime CreatedAt,
+    string? AccessToken = null,
+    int? ExpiresIn = null
 );
 
 public record UpdateOrganizationRequest(
