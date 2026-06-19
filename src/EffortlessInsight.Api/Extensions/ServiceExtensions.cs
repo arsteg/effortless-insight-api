@@ -1,4 +1,5 @@
 using System.Text;
+using Amazon.Runtime;
 using Amazon.S3;
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities;
@@ -13,6 +14,8 @@ using EffortlessInsight.Api.Services.Collaboration;
 using EffortlessInsight.Api.Services.Billing;
 using EffortlessInsight.Api.Options;
 using FluentValidation;
+using Polly;
+using Polly.Extensions.Http;
 using FluentValidation.AspNetCore;
 using Hangfire;
 using Hangfire.Redis.StackExchange;
@@ -40,7 +43,7 @@ public static class ServiceExtensions
         services.AddScoped<INoticeServiceExtended, NoticeServiceImpl>();
         services.AddScoped<IOrganizationService, OrganizationService>();
         services.AddScoped<IUserService, UserService>();
-        services.AddScoped<IAiServiceClient, AiServiceClient>();
+        services.AddScoped<IAiServiceClient, AiServiceClientImpl>();
         services.AddScoped<IFileStorageService, S3FileStorageServiceImpl>();
         services.AddScoped<IFileStorageServiceExtended, S3FileStorageServiceImpl>();
         services.AddScoped<IEmailService, ResendEmailServiceImpl>();
@@ -138,6 +141,8 @@ public static class ServiceExtensions
         })
         .AddJwtBearer(options =>
         {
+            // Disable default claim type mapping so JWT claims are preserved as-is
+            options.MapInboundClaims = false;
             options.TokenValidationParameters = new TokenValidationParameters
             {
                 ValidateIssuer = true,
@@ -147,7 +152,10 @@ public static class ServiceExtensions
                 ValidIssuer = jwtSettings["Issuer"],
                 ValidAudience = jwtSettings["Audience"],
                 IssuerSigningKey = new SymmetricSecurityKey(key),
-                ClockSkew = TimeSpan.Zero
+                ClockSkew = TimeSpan.Zero,
+                // Map standard claim names
+                NameClaimType = "name",
+                RoleClaimType = "role"
             };
         });
 
@@ -205,8 +213,29 @@ public static class ServiceExtensions
 
     public static IServiceCollection AddAwsServices(this IServiceCollection services, IConfiguration configuration)
     {
-        services.AddDefaultAWSOptions(configuration.GetAWSOptions());
-        services.AddAWSService<IAmazonS3>();
+        var awsSection = configuration.GetSection("AWS");
+        var region = awsSection["Region"] ?? "ap-south-1";
+        var accessKeyId = awsSection["AccessKeyId"];
+        var secretAccessKey = awsSection["SecretAccessKey"];
+
+        // Register S3 client with explicit credentials if provided
+        services.AddSingleton<IAmazonS3>(sp =>
+        {
+            var config = new AmazonS3Config
+            {
+                RegionEndpoint = Amazon.RegionEndpoint.GetBySystemName(region)
+            };
+
+            if (!string.IsNullOrEmpty(accessKeyId) && !string.IsNullOrEmpty(secretAccessKey))
+            {
+                // Use explicit credentials from config
+                var credentials = new BasicAWSCredentials(accessKeyId, secretAccessKey);
+                return new AmazonS3Client(credentials, config);
+            }
+
+            // Fall back to default credential chain (environment, IAM role, etc.)
+            return new AmazonS3Client(config);
+        });
 
         // Configure S3 storage options
         services.Configure<S3StorageOptions>(options =>
@@ -214,7 +243,7 @@ public static class ServiceExtensions
             var s3Section = configuration.GetSection("AWS:S3");
             options.BucketName = s3Section["BucketName"] ?? "effortlessinsight-uploads";
             options.ReportsBucket = s3Section["ReportsBucket"] ?? "effortlessinsight-reports";
-            options.Region = configuration["AWS:Region"] ?? "ap-south-1";
+            options.Region = region;
             options.UploadUrlExpiryMinutes = 15;
             options.DownloadUrlExpiryMinutes = 15;
         });
@@ -224,16 +253,60 @@ public static class ServiceExtensions
 
     public static IServiceCollection AddHttpClientServices(this IServiceCollection services, IConfiguration configuration)
     {
-        // AI Service HTTP Client
+        // Configure AI Service options
+        services.Configure<AiServiceOptions>(configuration.GetSection(AiServiceOptions.SectionName));
+
+        // Get options for HttpClient configuration
+        var aiOptions = configuration.GetSection(AiServiceOptions.SectionName).Get<AiServiceOptions>()
+            ?? new AiServiceOptions();
+
+        // AI Service HTTP Client with resilience policies
         services.AddHttpClient("AiService", client =>
         {
-            var baseUrl = configuration["AiService:BaseUrl"]
-                ?? throw new InvalidOperationException("AI Service base URL not configured");
+            var baseUrl = aiOptions.BaseUrl;
+            if (string.IsNullOrEmpty(baseUrl))
+            {
+                baseUrl = "http://localhost:8000";
+            }
+
             client.BaseAddress = new Uri(baseUrl);
-            client.Timeout = TimeSpan.FromSeconds(120); // AI processing can take time
-        });
+            client.Timeout = TimeSpan.FromSeconds(aiOptions.TimeoutSeconds);
+            client.DefaultRequestHeaders.Add("Accept", "application/json");
+            client.DefaultRequestHeaders.Add("User-Agent", "EffortlessInsight-API/1.0");
+        })
+        .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+        {
+            // Allow self-signed certs in development
+            ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+        })
+        .AddPolicyHandler(GetRetryPolicy(aiOptions))
+        .AddPolicyHandler(GetCircuitBreakerPolicy());
 
         return services;
+    }
+
+    private static IAsyncPolicy<HttpResponseMessage> GetRetryPolicy(AiServiceOptions options)
+    {
+        return HttpPolicyExtensions
+            .HandleTransientHttpError()
+            .OrResult(msg => msg.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+            .WaitAndRetryAsync(
+                options.MaxRetries,
+                retryAttempt => TimeSpan.FromSeconds(
+                    Math.Pow(options.RetryDelaySeconds, retryAttempt)),
+                onRetry: (outcome, timespan, retryAttempt, context) =>
+                {
+                    // Logging handled in the client itself
+                });
+    }
+
+    private static IAsyncPolicy<HttpResponseMessage> GetCircuitBreakerPolicy()
+    {
+        return HttpPolicyExtensions
+            .HandleTransientHttpError()
+            .CircuitBreakerAsync(
+                handledEventsAllowedBeforeBreaking: 5,
+                durationOfBreak: TimeSpan.FromSeconds(30));
     }
 
     public static IServiceCollection AddValidators(this IServiceCollection services)

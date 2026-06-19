@@ -86,12 +86,7 @@ public class UserService : IUserService
     public Task LogoutAsync(Guid userId) => throw new NotImplementedException();
 }
 
-public class AiServiceClient : IAiServiceClient
-{
-    public Task<AiProcessingResult> ProcessNoticeAsync(Guid noticeId, string fileUrl) => throw new NotImplementedException();
-    public Task<string> GenerateResponseDraftAsync(Guid noticeId) => throw new NotImplementedException();
-    public Task<List<SimilarNotice>> FindSimilarNoticesAsync(Guid noticeId, int limit = 5) => throw new NotImplementedException();
-}
+// AiServiceClientImpl is defined in Services/AiServiceClient.cs
 
 // S3FileStorageService implementation is in Services/Storage/S3FileStorageService.cs
 

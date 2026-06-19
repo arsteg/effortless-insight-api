@@ -61,4 +61,14 @@ public interface INotificationService
     /// Notify overdue document requests (typically called from a background job)
     /// </summary>
     Task NotifyOverdueDocumentRequestsAsync();
+
+    /// <summary>
+    /// Notify the uploader when notice processing completes successfully
+    /// </summary>
+    Task NotifyNoticeProcessingCompleteAsync(Notice notice);
+
+    /// <summary>
+    /// Notify the uploader when notice processing fails after all retries
+    /// </summary>
+    Task NotifyNoticeProcessingFailedAsync(Notice notice, string error, int attempts);
 }

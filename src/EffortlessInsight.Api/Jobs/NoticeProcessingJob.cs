@@ -2,6 +2,7 @@ using System.Diagnostics;
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.Services;
+using EffortlessInsight.Api.Services.Collaboration;
 using EffortlessInsight.Api.Services.Notices;
 using EffortlessInsight.Api.Services.Storage;
 using Hangfire;
@@ -21,6 +22,7 @@ public class NoticeProcessingJob : INoticeProcessingJob
     private readonly INoticeWorkflowService _workflowService;
     private readonly IAuditService _auditService;
     private readonly IBackgroundJobClient _backgroundJobs;
+    private readonly INotificationService _notificationService;
     private readonly ILogger<NoticeProcessingJob> _logger;
 
     private const int MaxRetries = 3;
@@ -38,6 +40,7 @@ public class NoticeProcessingJob : INoticeProcessingJob
         INoticeWorkflowService workflowService,
         IAuditService auditService,
         IBackgroundJobClient backgroundJobs,
+        INotificationService notificationService,
         ILogger<NoticeProcessingJob> logger)
     {
         _db = db;
@@ -46,6 +49,7 @@ public class NoticeProcessingJob : INoticeProcessingJob
         _workflowService = workflowService;
         _auditService = auditService;
         _backgroundJobs = backgroundJobs;
+        _notificationService = notificationService;
         _logger = logger;
     }
 
@@ -76,9 +80,9 @@ public class NoticeProcessingJob : INoticeProcessingJob
             return;
         }
 
-        // Update status to processing
+        // Update status to OCR processing (first stage)
         notice.Status = NoticeStatus.Processing;
-        notice.ProcessingStatus = NoticeProcessingStatus.Processing;
+        notice.ProcessingStatus = NoticeProcessingStatus.OcrProcessing;
         notice.ProcessingStartedAt = DateTime.UtcNow;
         notice.ProcessingAttempts++;
         notice.UpdatedAt = DateTime.UtcNow;
@@ -95,26 +99,77 @@ public class NoticeProcessingJob : INoticeProcessingJob
                 expiryMinutes: 30,
                 cancellationToken);
 
-            // Call AI service
+            // Update status to extracting (file URL ready, AI will extract entities)
+            await UpdateProcessingStatusAsync(notice, NoticeProcessingStatus.Extracting, cancellationToken);
+
+            // Short delay to ensure status is visible to polling clients
+            await Task.Delay(100, cancellationToken);
+
+            // Update status to classifying (about to call AI for classification)
+            await UpdateProcessingStatusAsync(notice, NoticeProcessingStatus.Classifying, cancellationToken);
+
+            // Call AI service (this does the actual processing)
             var result = await _aiService.ProcessNoticeAsync(noticeId, downloadResult.Url);
 
             stopwatch.Stop();
 
             if (result.Success && result.Report != null)
             {
-                await HandleSuccessAsync(notice, result, stopwatch.ElapsedMilliseconds, cancellationToken);
+                try
+                {
+                    // Update status to analyzing (processing AI results)
+                    await UpdateProcessingStatusAsync(notice, NoticeProcessingStatus.Analyzing, cancellationToken);
+
+                    await HandleSuccessAsync(notice, result, stopwatch.ElapsedMilliseconds, cancellationToken);
+                }
+                catch (Exception successEx)
+                {
+                    _logger.LogError(successEx, "Error in HandleSuccessAsync for notice {NoticeId}", noticeId);
+                    throw;
+                }
             }
             else
             {
+                _logger.LogWarning(
+                    "AI service returned unsuccessful result for notice {NoticeId}. Success={Success}, HasReport={HasReport}, Error={Error}",
+                    noticeId, result.Success, result.Report != null, result.Error);
                 await HandleFailureAsync(notice, result.Error ?? "Unknown error", stopwatch.ElapsedMilliseconds, cancellationToken);
             }
         }
         catch (Exception ex)
         {
             stopwatch.Stop();
-            _logger.LogError(ex, "Error processing notice {NoticeId}", noticeId);
-            await HandleFailureAsync(notice, ex.Message, stopwatch.ElapsedMilliseconds, cancellationToken);
+            _logger.LogError(ex, "Error processing notice {NoticeId}. Exception type: {ExceptionType}, Message: {Message}",
+                noticeId, ex.GetType().Name, ex.Message);
+
+            try
+            {
+                await HandleFailureAsync(notice, ex.Message, stopwatch.ElapsedMilliseconds, cancellationToken);
+            }
+            catch (Exception failureEx)
+            {
+                _logger.LogError(failureEx, "HandleFailureAsync also failed for notice {NoticeId}", noticeId);
+                // Re-throw the original exception
+                throw ex;
+            }
         }
+    }
+
+    /// <summary>
+    /// Updates the processing status and saves to database.
+    /// </summary>
+    private async Task UpdateProcessingStatusAsync(
+        Notice notice,
+        string status,
+        CancellationToken cancellationToken)
+    {
+        notice.ProcessingStatus = status;
+        notice.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(cancellationToken);
+
+        _logger.LogDebug(
+            "Notice {NoticeId} processing status updated to {Status}",
+            notice.Id, status);
     }
 
     private async Task HandleSuccessAsync(
@@ -203,6 +258,17 @@ public class NoticeProcessingJob : INoticeProcessingJob
         _logger.LogInformation(
             "Notice {NoticeId} processed successfully. Risk: {RiskLevel} ({RiskScore}), Time: {ProcessingTimeMs}ms",
             notice.Id, report.RiskLevel, report.RiskScore, processingTimeMs);
+
+        // Send success notification to uploader
+        try
+        {
+            await _notificationService.NotifyNoticeProcessingCompleteAsync(notice);
+        }
+        catch (Exception ex)
+        {
+            // Don't fail the job if notification fails
+            _logger.LogWarning(ex, "Failed to send processing complete notification for notice {NoticeId}", notice.Id);
+        }
     }
 
     private async Task HandleFailureAsync(
@@ -258,7 +324,17 @@ public class NoticeProcessingJob : INoticeProcessingJob
                 "Notice {NoticeId} processing failed after {Attempts} attempts. Error: {Error}",
                 notice.Id, notice.ProcessingAttempts, error);
 
-            // TODO: Send notification to user about failed processing
+            // Send failure notification to uploader
+            try
+            {
+                await _notificationService.NotifyNoticeProcessingFailedAsync(
+                    notice, error, notice.ProcessingAttempts);
+            }
+            catch (Exception ex)
+            {
+                // Don't fail if notification fails - job already failed
+                _logger.LogWarning(ex, "Failed to send processing failed notification for notice {NoticeId}", notice.Id);
+            }
         }
     }
 
@@ -276,12 +352,34 @@ public class NoticeProcessingJob : INoticeProcessingJob
 
 /// <summary>
 /// Processing status constants for notice AI processing.
+/// These statuses are displayed to the user during the upload flow.
 /// </summary>
 public static class NoticeProcessingStatus
 {
+    /// <summary>Notice is queued for processing</summary>
     public const string Queued = "queued";
-    public const string Processing = "processing";
-    public const string Retrying = "retrying";
+
+    /// <summary>OCR is extracting text from the document</summary>
+    public const string OcrProcessing = "ocr_processing";
+
+    /// <summary>Extracting key entities (dates, amounts, GSTIN)</summary>
+    public const string Extracting = "extracting";
+
+    /// <summary>Classifying notice type and category</summary>
+    public const string Classifying = "classifying";
+
+    /// <summary>Running AI analysis and generating report</summary>
+    public const string Analyzing = "analyzing";
+
+    /// <summary>Processing completed successfully</summary>
     public const string Completed = "completed";
+
+    /// <summary>Processing failed, will retry</summary>
+    public const string Retrying = "retrying";
+
+    /// <summary>Processing failed after all retries</summary>
     public const string Failed = "failed";
+
+    /// <summary>Legacy status for backwards compatibility</summary>
+    public const string Processing = "processing";
 }

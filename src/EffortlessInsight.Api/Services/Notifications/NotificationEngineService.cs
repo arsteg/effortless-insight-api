@@ -357,8 +357,11 @@ public class NotificationEngineService : INotificationEngineService
             .Include(d => d.Notification)
                 .ThenInclude(n => n.User)
             .Where(d => d.Status == DeliveryStatus.Failed &&
-                        d.RetryCount < GetMaxRetries(d.Channel) &&
-                        d.NextRetryAt <= DateTime.UtcNow)
+                        d.NextRetryAt <= DateTime.UtcNow &&
+                        ((d.Channel == NotificationChannel.Email && d.RetryCount < 3) ||
+                         (d.Channel == NotificationChannel.Sms && d.RetryCount < 3) ||
+                         (d.Channel == NotificationChannel.Push && d.RetryCount < 2) ||
+                         (d.Channel == NotificationChannel.WhatsApp && d.RetryCount < 1)))
             .Take(50)
             .ToListAsync(cancellationToken);
 

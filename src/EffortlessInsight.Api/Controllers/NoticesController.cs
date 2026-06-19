@@ -1519,10 +1519,69 @@ public class NoticesController : ControllerBase
                 ? MapLegalReferences(report.LegalReferences)
                 : null,
             ConfidenceScores: report.ConfidenceScores?
-                .ToDictionary(kvp => kvp.Key, kvp => Convert.ToInt32(kvp.Value)),
+                .ToDictionary(kvp => kvp.Key, kvp => ConvertToInt(kvp.Value)),
             ModelUsed: report.ModelUsed,
             ProcessingTimeMs: report.ProcessingTimeMs,
             CreatedAt: report.CreatedAt);
+    }
+
+    /// <summary>
+    /// Helper to convert object (potentially JsonElement) to int
+    /// </summary>
+    private static int ConvertToInt(object value)
+    {
+        if (value is System.Text.Json.JsonElement jsonElement)
+        {
+            return jsonElement.ValueKind == System.Text.Json.JsonValueKind.Number
+                ? jsonElement.GetInt32()
+                : int.TryParse(jsonElement.GetString(), out var parsed) ? parsed : 0;
+        }
+        return Convert.ToInt32(value);
+    }
+
+    /// <summary>
+    /// Helper to convert object (potentially JsonElement) to nullable int
+    /// </summary>
+    private static int? ConvertToNullableInt(object? value)
+    {
+        if (value == null) return null;
+        if (value is System.Text.Json.JsonElement jsonElement)
+        {
+            if (jsonElement.ValueKind == System.Text.Json.JsonValueKind.Null) return null;
+            return jsonElement.ValueKind == System.Text.Json.JsonValueKind.Number
+                ? jsonElement.GetInt32()
+                : int.TryParse(jsonElement.GetString(), out var parsed) ? parsed : null;
+        }
+        return Convert.ToInt32(value);
+    }
+
+    /// <summary>
+    /// Helper to convert object (potentially JsonElement) to bool
+    /// </summary>
+    private static bool ConvertToBool(object value)
+    {
+        if (value is System.Text.Json.JsonElement jsonElement)
+        {
+            return jsonElement.ValueKind == System.Text.Json.JsonValueKind.True ||
+                   (jsonElement.ValueKind == System.Text.Json.JsonValueKind.String &&
+                    bool.TryParse(jsonElement.GetString(), out var parsed) && parsed);
+        }
+        return Convert.ToBoolean(value);
+    }
+
+    /// <summary>
+    /// Helper to convert object (potentially JsonElement) to string
+    /// </summary>
+    private static string ConvertToString(object? value)
+    {
+        if (value == null) return "";
+        if (value is System.Text.Json.JsonElement jsonElement)
+        {
+            return jsonElement.ValueKind == System.Text.Json.JsonValueKind.Null
+                ? ""
+                : jsonElement.ToString();
+        }
+        return value.ToString() ?? "";
     }
 
     private static List<ActionItemDto>? MapActionItems(Dictionary<string, object> actionItems)
@@ -1534,14 +1593,34 @@ public class NoticesController : ControllerBase
                 if (item is Dictionary<string, object> dict)
                 {
                     return new ActionItemDto(
-                        Priority: dict.TryGetValue("priority", out var p) ? Convert.ToInt32(p) : index + 1,
-                        Action: dict.TryGetValue("action", out var a) ? a.ToString()! : "",
-                        Description: dict.TryGetValue("description", out var d) ? d.ToString()! : "",
-                        DueInDays: dict.TryGetValue("due_in_days", out var days) ? Convert.ToInt32(days) : null,
-                        AssigneeSuggestion: dict.TryGetValue("assignee_suggestion", out var s) ? s.ToString() : null);
+                        Priority: dict.TryGetValue("priority", out var p) ? ConvertToInt(p) : index + 1,
+                        Action: dict.TryGetValue("action", out var a) ? ConvertToString(a) : "",
+                        Description: dict.TryGetValue("description", out var d) ? ConvertToString(d) : "",
+                        DueInDays: dict.TryGetValue("due_in_days", out var days) ? ConvertToNullableInt(days) : null,
+                        AssigneeSuggestion: dict.TryGetValue("assignee_suggestion", out var s) ? ConvertToString(s) : null);
+                }
+                if (item is System.Text.Json.JsonElement jsonItem && jsonItem.ValueKind == System.Text.Json.JsonValueKind.Object)
+                {
+                    return new ActionItemDto(
+                        Priority: jsonItem.TryGetProperty("priority", out var p) ? p.GetInt32() : index + 1,
+                        Action: jsonItem.TryGetProperty("action", out var a) ? a.GetString() ?? "" : "",
+                        Description: jsonItem.TryGetProperty("description", out var d) ? d.GetString() ?? "" : "",
+                        DueInDays: jsonItem.TryGetProperty("dueInDays", out var days) && days.ValueKind != System.Text.Json.JsonValueKind.Null ? days.GetInt32() : null,
+                        AssigneeSuggestion: jsonItem.TryGetProperty("assigneeSuggestion", out var s) ? s.GetString() : null);
                 }
                 return new ActionItemDto(index + 1, item.ToString()!, "", null, null);
             }).ToList();
+        }
+        // Handle case where items is a JsonElement array
+        if (actionItems.TryGetValue("items", out var jsonItems) && jsonItems is System.Text.Json.JsonElement jsonArray && jsonArray.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            return jsonArray.EnumerateArray().Select((item, index) => new ActionItemDto(
+                Priority: item.TryGetProperty("priority", out var p) ? p.GetInt32() : index + 1,
+                Action: item.TryGetProperty("action", out var a) ? a.GetString() ?? "" : "",
+                Description: item.TryGetProperty("description", out var d) ? d.GetString() ?? "" : "",
+                DueInDays: item.TryGetProperty("dueInDays", out var days) && days.ValueKind != System.Text.Json.JsonValueKind.Null ? days.GetInt32() : null,
+                AssigneeSuggestion: item.TryGetProperty("assigneeSuggestion", out var s) ? s.GetString() : null
+            )).ToList();
         }
         return null;
     }
@@ -1555,11 +1634,25 @@ public class NoticesController : ControllerBase
                 if (item is Dictionary<string, object> dict)
                 {
                     return new RequiredDocumentDto(
-                        Document: dict.TryGetValue("document", out var d) ? d.ToString()! : "",
-                        Mandatory: dict.TryGetValue("mandatory", out var m) && Convert.ToBoolean(m));
+                        Document: dict.TryGetValue("document", out var d) ? ConvertToString(d) : "",
+                        Mandatory: dict.TryGetValue("mandatory", out var m) && ConvertToBool(m));
+                }
+                if (item is System.Text.Json.JsonElement jsonItem && jsonItem.ValueKind == System.Text.Json.JsonValueKind.Object)
+                {
+                    return new RequiredDocumentDto(
+                        Document: jsonItem.TryGetProperty("document", out var d) ? d.GetString() ?? "" : "",
+                        Mandatory: jsonItem.TryGetProperty("mandatory", out var m) && m.GetBoolean());
                 }
                 return new RequiredDocumentDto(item.ToString()!, true);
             }).ToList();
+        }
+        // Handle case where items is a JsonElement array
+        if (documents.TryGetValue("items", out var jsonItems) && jsonItems is System.Text.Json.JsonElement jsonArray && jsonArray.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            return jsonArray.EnumerateArray().Select(item => new RequiredDocumentDto(
+                Document: item.TryGetProperty("document", out var d) ? d.GetString() ?? "" : "",
+                Mandatory: item.TryGetProperty("mandatory", out var m) && m.GetBoolean()
+            )).ToList();
         }
         return null;
     }
@@ -1573,11 +1666,25 @@ public class NoticesController : ControllerBase
                 if (item is Dictionary<string, object> dict)
                 {
                     return new LegalReferenceDto(
-                        Section: dict.TryGetValue("section", out var s) ? s.ToString()! : "",
-                        Description: dict.TryGetValue("description", out var d) ? d.ToString()! : "");
+                        Section: dict.TryGetValue("section", out var s) ? ConvertToString(s) : "",
+                        Description: dict.TryGetValue("description", out var d) ? ConvertToString(d) : "");
+                }
+                if (item is System.Text.Json.JsonElement jsonItem && jsonItem.ValueKind == System.Text.Json.JsonValueKind.Object)
+                {
+                    return new LegalReferenceDto(
+                        Section: jsonItem.TryGetProperty("section", out var s) ? s.GetString() ?? "" : "",
+                        Description: jsonItem.TryGetProperty("description", out var d) ? d.GetString() ?? "" : "");
                 }
                 return new LegalReferenceDto(item.ToString()!, "");
             }).ToList();
+        }
+        // Handle case where items is a JsonElement array
+        if (references.TryGetValue("items", out var jsonItems) && jsonItems is System.Text.Json.JsonElement jsonArray && jsonArray.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            return jsonArray.EnumerateArray().Select(item => new LegalReferenceDto(
+                Section: item.TryGetProperty("section", out var s) ? s.GetString() ?? "" : "",
+                Description: item.TryGetProperty("description", out var d) ? d.GetString() ?? "" : ""
+            )).ToList();
         }
         return null;
     }

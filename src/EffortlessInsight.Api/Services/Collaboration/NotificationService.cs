@@ -309,6 +309,57 @@ public class NotificationService : INotificationService
         }
     }
 
+    public async Task NotifyNoticeProcessingCompleteAsync(Notice notice)
+    {
+        try
+        {
+            var uploader = await _dbContext.Users.FindAsync(notice.UploadedById);
+            if (uploader == null || string.IsNullOrEmpty(uploader.Email))
+            {
+                _logger.LogWarning("Cannot send processing complete notification - uploader not found or no email for notice {NoticeId}", notice.Id);
+                return;
+            }
+
+            var riskLevel = notice.AiReport?.RiskLevel ?? "Unknown";
+            var riskScore = notice.AiReport?.RiskScore ?? 0;
+
+            var subject = $"Notice processed: {notice.NoticeType ?? "GST Notice"} - {notice.NoticeNumber ?? notice.FileName}";
+            var body = BuildNoticeProcessingCompleteEmail(notice, uploader, riskLevel, riskScore);
+
+            await _emailService.SendAsync(uploader.Email, subject, body);
+
+            _logger.LogInformation("Sent processing complete notification for notice {NoticeId} to {Email}", notice.Id, uploader.Email);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send processing complete notification for notice {NoticeId}", notice.Id);
+        }
+    }
+
+    public async Task NotifyNoticeProcessingFailedAsync(Notice notice, string error, int attempts)
+    {
+        try
+        {
+            var uploader = await _dbContext.Users.FindAsync(notice.UploadedById);
+            if (uploader == null || string.IsNullOrEmpty(uploader.Email))
+            {
+                _logger.LogWarning("Cannot send processing failed notification - uploader not found or no email for notice {NoticeId}", notice.Id);
+                return;
+            }
+
+            var subject = $"Notice processing failed: {notice.FileName}";
+            var body = BuildNoticeProcessingFailedEmail(notice, uploader, error, attempts);
+
+            await _emailService.SendAsync(uploader.Email, subject, body);
+
+            _logger.LogInformation("Sent processing failed notification for notice {NoticeId} to {Email}", notice.Id, uploader.Email);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send processing failed notification for notice {NoticeId}", notice.Id);
+        }
+    }
+
     #region Email Templates
 
     private static string BuildTaskAssignedEmail(NoticeTask task, Notice notice, ApplicationUser assigner, ApplicationUser assignee)
@@ -543,6 +594,120 @@ public class NotificationService : INotificationService
     </div>
     <p>Please submit the requested document as soon as possible.</p>
     <p>Best regards,<br>EffortlessInsight Team</p>
+</body>
+</html>";
+    }
+
+    private static string BuildNoticeProcessingCompleteEmail(Notice notice, ApplicationUser uploader, string riskLevel, int riskScore)
+    {
+        var riskColor = riskLevel.ToLower() switch
+        {
+            "low" => "#4caf50",
+            "medium" => "#ff9800",
+            "high" => "#f44336",
+            "critical" => "#d32f2f",
+            _ => "#9e9e9e"
+        };
+
+        var deadline = notice.ResponseDeadline.HasValue
+            ? $"<p><strong>Response Deadline:</strong> {notice.ResponseDeadline.Value:MMMM d, yyyy}</p>"
+            : "";
+
+        var totalAmount = (notice.TaxAmount ?? 0) + (notice.PenaltyAmount ?? 0) + (notice.InterestAmount ?? 0);
+        var amountSection = totalAmount > 0
+            ? $"<p><strong>Total Demand:</strong> ₹{totalAmount:N2}</p>"
+            : "";
+
+        return $@"
+<!DOCTYPE html>
+<html>
+<body style='font-family: Arial, sans-serif; line-height: 1.6; color: #333;'>
+    <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 10px 10px 0 0;'>
+        <h1 style='color: white; margin: 0; font-size: 24px;'>EffortlessInsight</h1>
+    </div>
+    <div style='background: #ffffff; padding: 30px; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 10px 10px;'>
+        <h2 style='color: #333; margin-top: 0;'>Notice Processing Complete</h2>
+        <p>Hi {uploader.Name},</p>
+        <p>Your notice has been successfully processed by our AI system. Here's a summary:</p>
+
+        <div style='background: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0;'>
+            <h3 style='margin-top: 0;'>{notice.NoticeType ?? "GST Notice"}</h3>
+            <p><strong>Notice Number:</strong> {notice.NoticeNumber ?? "N/A"}</p>
+            <p><strong>File:</strong> {notice.FileName}</p>
+            {(notice.Gstin != null ? $"<p><strong>GSTIN:</strong> {notice.Gstin}</p>" : "")}
+            {(notice.IssueDate.HasValue ? $"<p><strong>Issue Date:</strong> {notice.IssueDate.Value:MMMM d, yyyy}</p>" : "")}
+            {deadline}
+            {amountSection}
+        </div>
+
+        <div style='background: {riskColor}15; padding: 16px; border-radius: 8px; margin: 20px 0; border-left: 4px solid {riskColor};'>
+            <p style='margin: 0;'><strong>Risk Assessment:</strong>
+                <span style='color: {riskColor}; font-weight: bold; text-transform: uppercase;'>{riskLevel}</span>
+                <span style='color: #666;'> (Score: {riskScore}/100)</span>
+            </p>
+        </div>
+
+        <p>Log in to EffortlessInsight to view the full AI analysis, recommended actions, and required documents.</p>
+
+        <div style='text-align: center; margin: 30px 0;'>
+            <a href='#' style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 14px 30px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;'>
+                View Notice Details
+            </a>
+        </div>
+
+        <hr style='border: none; border-top: 1px solid #e0e0e0; margin: 30px 0;'>
+        <p style='color: #666; font-size: 14px;'>Best regards,<br>EffortlessInsight Team</p>
+    </div>
+</body>
+</html>";
+    }
+
+    private static string BuildNoticeProcessingFailedEmail(Notice notice, ApplicationUser uploader, string error, int attempts)
+    {
+        var sanitizedError = error.Length > 200 ? error[..200] + "..." : error;
+
+        return $@"
+<!DOCTYPE html>
+<html>
+<body style='font-family: Arial, sans-serif; line-height: 1.6; color: #333;'>
+    <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 10px 10px 0 0;'>
+        <h1 style='color: white; margin: 0; font-size: 24px;'>EffortlessInsight</h1>
+    </div>
+    <div style='background: #ffffff; padding: 30px; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 10px 10px;'>
+        <h2 style='color: #d32f2f; margin-top: 0;'>Notice Processing Failed</h2>
+        <p>Hi {uploader.Name},</p>
+        <p>Unfortunately, we were unable to process your notice after {attempts} attempts. Our team has been notified and will investigate.</p>
+
+        <div style='background: #ffebee; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #d32f2f;'>
+            <h3 style='margin-top: 0; color: #d32f2f;'>Processing Error</h3>
+            <p><strong>File:</strong> {notice.FileName}</p>
+            <p><strong>Uploaded:</strong> {notice.CreatedAt:MMMM d, yyyy 'at' h:mm tt}</p>
+            <p><strong>Error:</strong> <code style='background: #fff; padding: 2px 6px; border-radius: 4px;'>{sanitizedError}</code></p>
+        </div>
+
+        <h3>What you can do:</h3>
+        <ul>
+            <li><strong>Check the file quality:</strong> Ensure the document is clear and readable</li>
+            <li><strong>Re-upload the notice:</strong> Try uploading the file again</li>
+            <li><strong>Contact support:</strong> If the issue persists, reach out to our support team</li>
+        </ul>
+
+        <div style='background: #fff3e0; padding: 16px; border-radius: 8px; margin: 20px 0;'>
+            <p style='margin: 0;'><strong>Tip:</strong> For best results, upload clear PDF files or high-quality images. Avoid blurry scans or heavily compressed images.</p>
+        </div>
+
+        <div style='text-align: center; margin: 30px 0;'>
+            <a href='#' style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 14px 30px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;'>
+                Try Re-uploading
+            </a>
+        </div>
+
+        <hr style='border: none; border-top: 1px solid #e0e0e0; margin: 30px 0;'>
+        <p style='color: #666; font-size: 14px;'>
+            If you need assistance, please contact our support team.<br><br>
+            Best regards,<br>EffortlessInsight Team
+        </p>
+    </div>
 </body>
 </html>";
     }
