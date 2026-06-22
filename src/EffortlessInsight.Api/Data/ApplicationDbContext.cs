@@ -1,6 +1,7 @@
 using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.Data.Entities.Admin;
 using EffortlessInsight.Api.Data.Entities.Billing;
+using EffortlessInsight.Api.Services;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Pgvector;
@@ -9,10 +10,30 @@ namespace EffortlessInsight.Api.Data;
 
 public class ApplicationDbContext : IdentityDbContext<ApplicationUser, ApplicationRole, Guid>
 {
+    private readonly ITenantContext? _tenantContext;
+
     public ApplicationDbContext(DbContextOptions<ApplicationDbContext> options)
         : base(options)
     {
     }
+
+    public ApplicationDbContext(
+        DbContextOptions<ApplicationDbContext> options,
+        ITenantContext tenantContext)
+        : base(options)
+    {
+        _tenantContext = tenantContext;
+    }
+
+    /// <summary>
+    /// Current tenant organization ID for query filtering.
+    /// </summary>
+    private Guid? CurrentOrganizationId => _tenantContext?.OrganizationId;
+
+    /// <summary>
+    /// Whether to bypass tenant filtering (for admin operations).
+    /// </summary>
+    private bool BypassTenantFilter => _tenantContext?.BypassTenantFilter ?? true;
 
     public DbSet<Organization> Organizations => Set<Organization>();
     public DbSet<OrganizationMember> OrganizationMembers => Set<OrganizationMember>();
@@ -105,21 +126,62 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
         // Global query filter for soft delete
         modelBuilder.Entity<Organization>().HasQueryFilter(o => o.DeletedAt == null);
         modelBuilder.Entity<ApplicationUser>().HasQueryFilter(u => u.DeletedAt == null);
-        modelBuilder.Entity<Notice>().HasQueryFilter(n => n.DeletedAt == null);
-        modelBuilder.Entity<Comment>().HasQueryFilter(c => c.DeletedAt == null);
-        modelBuilder.Entity<NoticeResponse>().HasQueryFilter(r => r.DeletedAt == null);
-        modelBuilder.Entity<DeadlineReminder>().HasQueryFilter(r => r.DeletedAt == null);
-        modelBuilder.Entity<NoticeTask>().HasQueryFilter(t => t.DeletedAt == null);
-        modelBuilder.Entity<Attachment>().HasQueryFilter(a => a.DeletedAt == null);
-        modelBuilder.Entity<WorkflowTemplate>().HasQueryFilter(w => w.DeletedAt == null);
+
+        // Global query filters with TENANT ISOLATION (defense-in-depth)
+        // These filters ensure that even if code forgets to filter by OrganizationId,
+        // queries will only return data for the current tenant.
+
+        // Notice and related entities - tenant-scoped
+        modelBuilder.Entity<Notice>().HasQueryFilter(n =>
+            n.DeletedAt == null &&
+            (BypassTenantFilter || CurrentOrganizationId == null || n.OrganizationId == CurrentOrganizationId));
+
+        modelBuilder.Entity<Comment>().HasQueryFilter(c =>
+            c.DeletedAt == null &&
+            (BypassTenantFilter || CurrentOrganizationId == null || c.OrganizationId == CurrentOrganizationId));
+
+        modelBuilder.Entity<NoticeResponse>().HasQueryFilter(r =>
+            r.DeletedAt == null &&
+            (BypassTenantFilter || CurrentOrganizationId == null || r.OrganizationId == CurrentOrganizationId));
+
+        modelBuilder.Entity<DeadlineReminder>().HasQueryFilter(r =>
+            r.DeletedAt == null &&
+            (BypassTenantFilter || CurrentOrganizationId == null || r.OrganizationId == CurrentOrganizationId));
+
+        modelBuilder.Entity<NoticeTask>().HasQueryFilter(t =>
+            t.DeletedAt == null &&
+            (BypassTenantFilter || CurrentOrganizationId == null || t.OrganizationId == CurrentOrganizationId));
+
+        modelBuilder.Entity<Attachment>().HasQueryFilter(a =>
+            a.DeletedAt == null &&
+            (BypassTenantFilter || CurrentOrganizationId == null || a.OrganizationId == CurrentOrganizationId));
+
+        // Workflow entities - tenant-scoped
+        modelBuilder.Entity<WorkflowTemplate>().HasQueryFilter(w =>
+            w.DeletedAt == null &&
+            (BypassTenantFilter || CurrentOrganizationId == null || w.OrganizationId == null || w.OrganizationId == CurrentOrganizationId));
+
         modelBuilder.Entity<WorkflowStage>().HasQueryFilter(s => s.DeletedAt == null);
         modelBuilder.Entity<WorkflowAssignmentRule>().HasQueryFilter(r => r.DeletedAt == null);
         modelBuilder.Entity<WorkflowEscalationRule>().HasQueryFilter(r => r.DeletedAt == null);
-        modelBuilder.Entity<NoticeWorkflowInstance>().HasQueryFilter(i => i.DeletedAt == null);
-        modelBuilder.Entity<WorkflowHistory>().HasQueryFilter(h => h.DeletedAt == null);
-        modelBuilder.Entity<NoticeDeadline>().HasQueryFilter(d => d.DeletedAt == null);
+
+        modelBuilder.Entity<NoticeWorkflowInstance>().HasQueryFilter(i =>
+            i.DeletedAt == null &&
+            (BypassTenantFilter || CurrentOrganizationId == null || i.OrganizationId == CurrentOrganizationId));
+
+        modelBuilder.Entity<WorkflowHistory>().HasQueryFilter(h =>
+            h.DeletedAt == null &&
+            (BypassTenantFilter || CurrentOrganizationId == null || h.OrganizationId == CurrentOrganizationId));
+
+        modelBuilder.Entity<NoticeDeadline>().HasQueryFilter(d =>
+            d.DeletedAt == null &&
+            (BypassTenantFilter || CurrentOrganizationId == null || d.OrganizationId == CurrentOrganizationId));
+
         modelBuilder.Entity<DeadlineExtension>().HasQueryFilter(e => e.DeletedAt == null);
-        modelBuilder.Entity<WorkflowSlaMetric>().HasQueryFilter(m => m.DeletedAt == null);
+
+        modelBuilder.Entity<WorkflowSlaMetric>().HasQueryFilter(m =>
+            m.DeletedAt == null &&
+            (BypassTenantFilter || CurrentOrganizationId == null || m.OrganizationId == CurrentOrganizationId));
 
         // Configure JSON columns for Dictionary properties
         modelBuilder.Entity<ApplicationUser>()

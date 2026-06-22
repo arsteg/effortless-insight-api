@@ -1,4 +1,5 @@
 using EffortlessInsight.Api.DTOs;
+using EffortlessInsight.Api.Filters;
 using EffortlessInsight.Api.Services.Notifications;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -219,9 +220,11 @@ public class PushTokensController : ControllerBase
 
 /// <summary>
 /// Internal API endpoints for notification sending (service-to-service)
+/// Secured with API key authentication for internal service calls.
 /// </summary>
 [ApiController]
 [Route("api/internal/v1/notifications")]
+[ServiceFilter(typeof(InternalApiKeyAuthFilter))]
 public class InternalNotificationsController : ControllerBase
 {
     private readonly INotificationEngineService _notificationEngine;
@@ -237,13 +240,14 @@ public class InternalNotificationsController : ControllerBase
 
     /// <summary>
     /// Send a notification (internal service use)
+    /// Requires X-Internal-Api-Key header
     /// </summary>
     [HttpPost("send")]
     [ProducesResponseType(typeof(SendNotificationResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> Send([FromBody] SendNotificationRequest request)
     {
-        // In production, add API key authentication for internal endpoints
         try
         {
             var result = await _notificationEngine.SendAsync(request);
@@ -262,9 +266,11 @@ public class InternalNotificationsController : ControllerBase
 
     /// <summary>
     /// Send bulk notifications (internal service use)
+    /// Requires X-Internal-Api-Key header
     /// </summary>
     [HttpPost("bulk")]
     [ProducesResponseType(typeof(BulkNotificationResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> SendBulk([FromBody] BulkNotificationRequest request)
     {
         var result = await _notificationEngine.SendBulkAsync(request);

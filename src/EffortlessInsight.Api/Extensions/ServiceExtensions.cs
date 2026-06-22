@@ -13,6 +13,7 @@ using EffortlessInsight.Api.Features.Workflows.Services;
 using EffortlessInsight.Api.Services.Collaboration;
 using EffortlessInsight.Api.Services.Billing;
 using EffortlessInsight.Api.Options;
+using EffortlessInsight.Api.Filters;
 using FluentValidation;
 using Polly;
 using Polly.Extensions.Http;
@@ -30,6 +31,9 @@ public static class ServiceExtensions
 {
     public static IServiceCollection AddApplicationServices(this IServiceCollection services, IConfiguration configuration)
     {
+        // Register tenant context for defense-in-depth isolation
+        services.AddScoped<ITenantContext, TenantContext>();
+
         // Register auth services
         services.AddScoped<IJwtService, JwtService>();
         services.AddScoped<ITwoFactorService, TwoFactorService>();
@@ -85,6 +89,9 @@ public static class ServiceExtensions
         services.AddScoped<IBillingNotificationService, BillingNotificationService>();
         services.AddScoped<IPaymentMethodService, PaymentMethodService>();
         services.AddScoped<Jobs.BillingJobs>();
+
+        // Register filters
+        services.AddScoped<InternalApiKeyAuthFilter>();
 
         return services;
     }
