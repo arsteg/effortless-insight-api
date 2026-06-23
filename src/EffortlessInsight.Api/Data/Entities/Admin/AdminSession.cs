@@ -81,6 +81,15 @@ public class AdminSession
     public DateTime? InvalidatedAt { get; set; }
 
     /// <summary>
+    /// Alias for InvalidatedAt for backward compatibility.
+    /// </summary>
+    public DateTime? RevokedAt
+    {
+        get => InvalidatedAt;
+        set => InvalidatedAt = value;
+    }
+
+    /// <summary>
     /// Reason for invalidation.
     /// </summary>
     [MaxLength(100)]

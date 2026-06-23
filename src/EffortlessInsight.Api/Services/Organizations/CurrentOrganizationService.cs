@@ -189,10 +189,6 @@ public class CurrentOrganizationService : ICurrentOrganizationService
     {
         var role = Role?.ToLowerInvariant();
 
-        // Debug logging - remove after fixing
-        System.Diagnostics.Debug.WriteLine($"HasPermission check: permission={permission}, role={role ?? "NULL"}, orgId={OrganizationId}");
-        Console.WriteLine($"HasPermission check: permission={permission}, role={role ?? "NULL"}, orgId={OrganizationId}");
-
         if (role == null) return false;
 
         // Define permission mappings based on role

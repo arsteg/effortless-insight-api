@@ -69,6 +69,11 @@ public class AdminUser
 
     public bool MustChangePassword { get; set; }
 
+    // Password Reset
+    [MaxLength(100)]
+    public string? PasswordResetToken { get; set; }
+    public DateTime? PasswordResetTokenExpiry { get; set; }
+
     // IP Whitelisting (optional, JSON array of CIDRs)
     public List<string>? IpWhitelist { get; set; }
 
@@ -84,6 +89,10 @@ public class AdminUser
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
     public DateTime? DeletedAt { get; set; }
+
+    // Soft delete helper
+    [NotMapped]
+    public bool IsDeleted => DeletedAt != null;
 
     // Navigation properties
     [InverseProperty(nameof(AdminAuditLog.AdminUser))]

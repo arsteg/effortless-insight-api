@@ -45,8 +45,9 @@ public static class ServiceExtensions
         // Register application services
         services.AddScoped<INoticeService, NoticeServiceImpl>();
         services.AddScoped<INoticeServiceExtended, NoticeServiceImpl>();
-        services.AddScoped<IOrganizationService, OrganizationService>();
-        services.AddScoped<IUserService, UserService>();
+        // Note: IOrganizationService and IUserService stub registrations removed
+        // Real org management is in OrganizationManagementService
+        // Real auth is in AuthService
         services.AddScoped<IAiServiceClient, AiServiceClientImpl>();
         services.AddScoped<IFileStorageService, S3FileStorageServiceImpl>();
         services.AddScoped<IFileStorageServiceExtended, S3FileStorageServiceImpl>();

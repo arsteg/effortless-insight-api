@@ -106,6 +106,56 @@ public class AdminAuthController : ControllerBase
     }
 
     /// <summary>
+    /// Request password reset for admin account.
+    /// Always returns success to prevent email enumeration.
+    /// </summary>
+    [HttpPost("forgot-password")]
+    [AllowAnonymous]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<IActionResult> ForgotPassword([FromBody] AdminForgotPasswordRequest request)
+    {
+        try
+        {
+            await _authService.RequestPasswordResetAsync(request.Email);
+        }
+        catch (Exception ex)
+        {
+            // Log the error but always return success to prevent email enumeration
+            _logger.LogWarning(ex, "Admin password reset requested for {Email}", request.Email);
+        }
+
+        return Ok(new ApiResponse<object>
+        {
+            Success = true,
+            Message = "If an admin account exists for that email, a password reset link has been sent."
+        });
+    }
+
+    /// <summary>
+    /// Reset password using token from email.
+    /// </summary>
+    [HttpPost("reset-password")]
+    [AllowAnonymous]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ResetPassword([FromBody] AdminResetPasswordRequest request)
+    {
+        var result = await _authService.ResetPasswordAsync(request.Token, request.NewPassword);
+
+        return result.Match<IActionResult>(
+            _ => Ok(new ApiResponse<object>
+            {
+                Success = true,
+                Message = "Password has been reset successfully."
+            }),
+            error => BadRequest(new ApiResponse<object>
+            {
+                Success = false,
+                Error = new ApiError { Code = error, Message = GetResetPasswordErrorMessage(error) }
+            }));
+    }
+
+    /// <summary>
     /// Refresh access token using refresh token.
     /// </summary>
     [HttpPost("refresh")]
@@ -424,6 +474,15 @@ public class AdminAuthController : ControllerBase
         "PASSWORD_RECENTLY_USED" => "This password was recently used",
         _ => "Failed to change password"
     };
+
+    private static string GetResetPasswordErrorMessage(string error) => error switch
+    {
+        "INVALID_TOKEN" => "Invalid or expired reset token",
+        "TOKEN_EXPIRED" => "Reset token has expired",
+        "PASSWORD_TOO_SHORT" => "Password is too short",
+        "PASSWORD_TOO_WEAK" => "Password does not meet complexity requirements",
+        _ => "Failed to reset password"
+    };
 }
 
 /// <summary>
@@ -462,4 +521,21 @@ public record AdminSessionDto
     public DateTime CreatedAt { get; init; }
     public DateTime LastActivityAt { get; init; }
     public bool IsCurrent { get; init; }
+}
+
+/// <summary>
+/// Request to reset admin password.
+/// </summary>
+public record AdminForgotPasswordRequest
+{
+    public string Email { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// Request to complete password reset.
+/// </summary>
+public record AdminResetPasswordRequest
+{
+    public string Token { get; init; } = string.Empty;
+    public string NewPassword { get; init; } = string.Empty;
 }

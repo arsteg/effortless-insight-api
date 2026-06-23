@@ -34,9 +34,6 @@ public class JwtService : IJwtService
         // Use roleOverride if provided, otherwise user.Role, default to "member" if both null
         var role = roleOverride ?? user.Role ?? "member";
 
-        // Debug logging
-        Console.WriteLine($"GenerateAccessToken: userId={user.Id}, roleOverride={roleOverride ?? "NULL"}, userRole={user.Role ?? "NULL"}, finalRole={role}, orgId={organization?.Id}");
-
         var claims = new List<Claim>
         {
             new(JwtRegisteredClaimNames.Sub, user.Id.ToString()),

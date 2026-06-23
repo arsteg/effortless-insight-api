@@ -193,6 +193,14 @@ public abstract class AdminControllerBase : ControllerBase
 /// </summary>
 public class ApiResponse<T>
 {
+    public ApiResponse() { }
+
+    public ApiResponse(bool success, T data)
+    {
+        Success = success;
+        Data = data;
+    }
+
     public bool Success { get; set; }
     public T? Data { get; set; }
     public string? Message { get; set; }

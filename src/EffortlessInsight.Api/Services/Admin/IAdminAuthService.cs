@@ -129,4 +129,15 @@ public interface IAdminAuthService
     /// Revoke a specific session.
     /// </summary>
     Task<bool> RevokeSessionAsync(Guid adminId, string sessionId);
+
+    /// <summary>
+    /// Request password reset for admin email.
+    /// Sends email with reset token if admin exists.
+    /// </summary>
+    Task RequestPasswordResetAsync(string email);
+
+    /// <summary>
+    /// Reset password using token from email.
+    /// </summary>
+    Task<AdminPasswordResult> ResetPasswordAsync(string token, string newPassword);
 }

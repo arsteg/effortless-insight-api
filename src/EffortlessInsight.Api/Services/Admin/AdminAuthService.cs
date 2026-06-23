@@ -1,3 +1,4 @@
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using EffortlessInsight.Api.Data;
@@ -18,6 +19,7 @@ public class AdminAuthService : IAdminAuthService
     private readonly IAdminAuditService _auditService;
     private readonly IAdminSessionService _sessionService;
     private readonly IAdminMfaService _mfaService;
+    private readonly IEmailService _emailService;
     private readonly IDistributedCache _cache;
     private readonly AdminAuthOptions _options;
     private readonly ILogger<AdminAuthService> _logger;
@@ -31,6 +33,7 @@ public class AdminAuthService : IAdminAuthService
         IAdminAuditService auditService,
         IAdminSessionService sessionService,
         IAdminMfaService mfaService,
+        IEmailService emailService,
         IDistributedCache cache,
         IOptions<AdminAuthOptions> options,
         ILogger<AdminAuthService> logger)
@@ -40,6 +43,7 @@ public class AdminAuthService : IAdminAuthService
         _auditService = auditService;
         _sessionService = sessionService;
         _mfaService = mfaService;
+        _emailService = emailService;
         _cache = cache;
         _options = options.Value;
         _logger = logger;
@@ -549,14 +553,65 @@ public class AdminAuthService : IAdminAuthService
 
     private static bool IsIpInCidr(string ipAddress, string cidr)
     {
-        // Simple CIDR check - in production use a proper library
-        if (!cidr.Contains('/'))
+        try
         {
-            return ipAddress == cidr;
-        }
+            // Exact match check
+            if (!cidr.Contains('/'))
+            {
+                return ipAddress == cidr;
+            }
 
-        // For complex CIDR matching, use System.Net.IPNetwork or similar
-        return false;
+            // Parse CIDR notation
+            var parts = cidr.Split('/');
+            if (parts.Length != 2 || !int.TryParse(parts[1], out var prefixLength))
+            {
+                return false;
+            }
+
+            if (!IPAddress.TryParse(parts[0], out var networkAddress) ||
+                !IPAddress.TryParse(ipAddress, out var checkAddress))
+            {
+                return false;
+            }
+
+            // Ensure both addresses are the same family
+            if (networkAddress.AddressFamily != checkAddress.AddressFamily)
+            {
+                return false;
+            }
+
+            var networkBytes = networkAddress.GetAddressBytes();
+            var checkBytes = checkAddress.GetAddressBytes();
+
+            // Calculate how many full bytes and remaining bits to check
+            int fullBytes = prefixLength / 8;
+            int remainingBits = prefixLength % 8;
+
+            // Check full bytes
+            for (int i = 0; i < fullBytes; i++)
+            {
+                if (networkBytes[i] != checkBytes[i])
+                {
+                    return false;
+                }
+            }
+
+            // Check remaining bits if any
+            if (remainingBits > 0 && fullBytes < networkBytes.Length)
+            {
+                int mask = (0xFF << (8 - remainingBits)) & 0xFF;
+                if ((networkBytes[fullBytes] & mask) != (checkBytes[fullBytes] & mask))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static AdminUserDto MapToDto(AdminUser admin) => new()
@@ -572,4 +627,143 @@ public class AdminAuthService : IAdminAuthService
         LastLoginAt = admin.LastLoginAt,
         CreatedAt = admin.CreatedAt
     };
+
+    #region Password Reset
+
+    public async Task RequestPasswordResetAsync(string email)
+    {
+        var admin = await _dbContext.AdminUsers
+            .FirstOrDefaultAsync(a => a.Email.ToLower() == email.ToLower() && !a.IsDeleted);
+
+        if (admin == null || !admin.IsActive)
+        {
+            // Don't reveal whether the email exists
+            _logger.LogInformation("Password reset requested for non-existent or inactive admin: {Email}", email);
+            return;
+        }
+
+        // Generate reset token
+        var resetToken = GenerateSecureToken();
+        var tokenHash = HashToken(resetToken);
+
+        // Store token with 1 hour expiry
+        admin.PasswordResetToken = tokenHash;
+        admin.PasswordResetTokenExpiry = DateTime.UtcNow.AddHours(1);
+        await _dbContext.SaveChangesAsync();
+
+        // Send reset email
+        try
+        {
+            await _emailService.SendTemplateAsync(
+                admin.Email,
+                "admin-password-reset",
+                new Dictionary<string, object>
+                {
+                    ["name"] = admin.Name,
+                    ["reset_link"] = $"{_options.AdminPortalUrl}/reset-password?token={resetToken}",
+                    ["expiry_hours"] = 1
+                });
+
+            _logger.LogInformation("Password reset email sent to admin: {AdminId}", admin.Id);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send password reset email to admin: {AdminId}", admin.Id);
+            throw;
+        }
+
+        await _auditService.LogAsync(
+            admin.Id,
+            AdminAuditActions.PasswordResetRequested,
+            AuditTargetTypes.AdminUser,
+            admin.Id.ToString(),
+            "Password reset requested",
+            outcome: AuditOutcomes.Success);
+    }
+
+    public async Task<AdminPasswordResult> ResetPasswordAsync(string token, string newPassword)
+    {
+        var tokenHash = HashToken(token);
+        var admin = await _dbContext.AdminUsers
+            .FirstOrDefaultAsync(a => a.PasswordResetToken == tokenHash && !a.IsDeleted);
+
+        if (admin == null)
+        {
+            return "INVALID_TOKEN";
+        }
+
+        if (admin.PasswordResetTokenExpiry == null || admin.PasswordResetTokenExpiry < DateTime.UtcNow)
+        {
+            // Clear expired token
+            admin.PasswordResetToken = null;
+            admin.PasswordResetTokenExpiry = null;
+            await _dbContext.SaveChangesAsync();
+            return "TOKEN_EXPIRED";
+        }
+
+        // Validate password strength
+        if (newPassword.Length < 16)
+        {
+            return "PASSWORD_TOO_SHORT";
+        }
+
+        // Check for complexity
+        var hasUpper = newPassword.Any(char.IsUpper);
+        var hasLower = newPassword.Any(char.IsLower);
+        var hasDigit = newPassword.Any(char.IsDigit);
+        var hasSpecial = newPassword.Any(c => !char.IsLetterOrDigit(c));
+
+        if (!hasUpper || !hasLower || !hasDigit || !hasSpecial)
+        {
+            return "PASSWORD_TOO_WEAK";
+        }
+
+        // Update password and clear reset token
+        admin.PasswordHash = HashPassword(newPassword);
+        admin.PasswordResetToken = null;
+        admin.PasswordResetTokenExpiry = null;
+        admin.PasswordChangedAt = DateTime.UtcNow;
+        admin.UpdatedAt = DateTime.UtcNow;
+
+        // Unlock account if locked
+        admin.IsLocked = false;
+        admin.LockedUntil = null;
+        admin.FailedLoginAttempts = 0;
+
+        await _dbContext.SaveChangesAsync();
+
+        // Invalidate all sessions for security
+        var sessions = await _dbContext.AdminSessions
+            .Where(s => s.AdminUserId == admin.Id && s.IsActive)
+            .ToListAsync();
+
+        foreach (var session in sessions)
+        {
+            session.IsActive = false;
+            session.RevokedAt = DateTime.UtcNow;
+        }
+        await _dbContext.SaveChangesAsync();
+
+        await _auditService.LogAsync(
+            admin.Id,
+            AdminAuditActions.PasswordChanged,
+            AuditTargetTypes.AdminUser,
+            admin.Id.ToString(),
+            "Password reset via email link",
+            outcome: AuditOutcomes.Success);
+
+        _logger.LogInformation("Password reset completed for admin: {AdminId}", admin.Id);
+
+        return true;
+    }
+
+    private static string HashToken(string token)
+    {
+        using var sha256 = SHA256.Create();
+        var bytes = Encoding.UTF8.GetBytes(token);
+        var hash = sha256.ComputeHash(bytes);
+        return Convert.ToBase64String(hash);
+    }
+
+    #endregion
 }

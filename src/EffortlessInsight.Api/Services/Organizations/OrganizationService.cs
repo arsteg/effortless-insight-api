@@ -175,7 +175,6 @@ public class OrganizationManagementService : IOrganizationManagementService
         user.Role = "owner";
         await _dbContext.SaveChangesAsync();
 
-        Console.WriteLine($"Organization created: orgId={organization.Id}, membershipId={membership.Id}, membership.Role={membership.Role}, userId={userId}");
         _logger.LogInformation("Organization {OrganizationId} created by user {UserId}", organization.Id, userId);
 
         // Audit logging (C2 fix) - outside transaction

@@ -190,7 +190,7 @@ public class StatisticsDateCalculationTests
 public class DeadlineCalculationTests
 {
     [Theory]
-    [InlineData(0, true)]   // Today
+    [InlineData(0, false)]  // Today (due today, not yet overdue)
     [InlineData(-1, true)]  // Yesterday (overdue)
     [InlineData(-10, true)] // 10 days overdue
     [InlineData(1, false)]  // Tomorrow

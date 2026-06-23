@@ -953,9 +953,6 @@ public class AuthService : IAuthService
         // Use role from membership if available
         var roleOverride = membership?.Role;
 
-        // Debug logging
-        Console.WriteLine($"CreateLoginSessionAsync: userId={user.Id}, membershipExists={membership != null}, membershipRole={membership?.Role ?? "NULL"}, orgId={organization?.Id}, roleOverride={roleOverride ?? "NULL"}");
-
         // Generate tokens
         var accessToken = _jwtService.GenerateAccessToken(user, organization, roleOverride);
         var (refreshToken, jti, expiresAt) = _jwtService.GenerateRefreshToken(rememberMe);

@@ -64,6 +64,14 @@ public interface INotificationEngineService
     /// Retry failed deliveries
     /// </summary>
     Task ProcessFailedDeliveriesAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Validates an HMAC-signed unsubscribe token and returns the user ID if valid.
+    /// Tokens are valid for 30 days.
+    /// </summary>
+    /// <param name="token">The base64-encoded signed token</param>
+    /// <returns>Tuple of (isValid, userId) where userId is null if invalid</returns>
+    (bool IsValid, Guid? UserId) ValidateUnsubscribeToken(string token);
 }
 
 /// <summary>

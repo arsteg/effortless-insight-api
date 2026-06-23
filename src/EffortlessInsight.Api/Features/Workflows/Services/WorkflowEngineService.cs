@@ -1,6 +1,8 @@
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities;
+using EffortlessInsight.Api.DTOs;
 using EffortlessInsight.Api.Features.Workflows.Dtos;
+using EffortlessInsight.Api.Services.Notifications;
 using Microsoft.EntityFrameworkCore;
 
 namespace EffortlessInsight.Api.Features.Workflows.Services;
@@ -12,14 +14,17 @@ public class WorkflowEngineService : IWorkflowEngineService
 {
     private readonly ApplicationDbContext _context;
     private readonly ILogger<WorkflowEngineService> _logger;
+    private readonly INotificationEngineService _notificationService;
     private const int MaxBulkOperationSize = 50;
 
     public WorkflowEngineService(
         ApplicationDbContext context,
-        ILogger<WorkflowEngineService> logger)
+        ILogger<WorkflowEngineService> logger,
+        INotificationEngineService notificationService)
     {
         _context = context;
         _logger = logger;
+        _notificationService = notificationService;
     }
 
     #region Workflow Instance Management
@@ -958,8 +963,8 @@ public class WorkflowEngineService : IWorkflowEngineService
 
                 _context.WorkflowHistories.Add(historyEntry);
 
-                // TODO: Execute escalation actions (notifications, etc.)
-                // This will be implemented in the notification service
+                // Execute escalation actions
+                await ExecuteEscalationActionsAsync(instance, rule, cancellationToken);
 
                 _logger.LogWarning("SLA Escalation triggered for notice {NoticeId}: {RuleName} at {Percent}%",
                     instance.NoticeId, rule.Name, instance.SlaPercentConsumed);
@@ -967,6 +972,200 @@ public class WorkflowEngineService : IWorkflowEngineService
         }
 
         await _context.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task ExecuteEscalationActionsAsync(
+        NoticeWorkflowInstance instance,
+        WorkflowEscalationRule rule,
+        CancellationToken cancellationToken)
+    {
+        foreach (var action in rule.Actions)
+        {
+            try
+            {
+                switch (action.Type.ToLowerInvariant())
+                {
+                    case "notify":
+                        await ExecuteNotifyActionAsync(instance, rule, action, cancellationToken);
+                        break;
+
+                    case "flag":
+                        await ExecuteFlagActionAsync(instance, action, cancellationToken);
+                        break;
+
+                    case "reassign":
+                        await ExecuteReassignActionAsync(instance, action, cancellationToken);
+                        break;
+
+                    default:
+                        _logger.LogWarning(
+                            "Unknown escalation action type '{Type}' for rule {RuleName}",
+                            action.Type, rule.Name);
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "Failed to execute escalation action {Type} for notice {NoticeId}",
+                    action.Type, instance.NoticeId);
+            }
+        }
+    }
+
+    private async Task ExecuteNotifyActionAsync(
+        NoticeWorkflowInstance instance,
+        WorkflowEscalationRule rule,
+        EscalationAction action,
+        CancellationToken cancellationToken)
+    {
+        var targetUserIds = new List<Guid>();
+
+        // Determine who to notify based on target
+        switch (action.Target?.ToLowerInvariant())
+        {
+            case "assignee":
+                if (instance.AssignedToId.HasValue)
+                {
+                    targetUserIds.Add(instance.AssignedToId.Value);
+                }
+                break;
+
+            case "manager":
+                // Get organization managers for this notice
+                var notice = await _context.Notices
+                    .FirstOrDefaultAsync(n => n.Id == instance.NoticeId, cancellationToken);
+                if (notice != null)
+                {
+                    var managers = await _context.OrganizationMembers
+                        .Where(m => m.OrganizationId == notice.OrganizationId &&
+                                   (m.Role == "admin" || m.Role == "manager"))
+                        .Select(m => m.UserId)
+                        .ToListAsync(cancellationToken);
+                    targetUserIds.AddRange(managers);
+                }
+                break;
+
+            case "admin":
+                // Get organization admins
+                var noticeForAdmin = await _context.Notices
+                    .FirstOrDefaultAsync(n => n.Id == instance.NoticeId, cancellationToken);
+                if (noticeForAdmin != null)
+                {
+                    var admins = await _context.OrganizationMembers
+                        .Where(m => m.OrganizationId == noticeForAdmin.OrganizationId &&
+                                   (m.Role == "admin" || m.Role == "owner"))
+                        .Select(m => m.UserId)
+                        .ToListAsync(cancellationToken);
+                    targetUserIds.AddRange(admins);
+                }
+                break;
+
+            default:
+                _logger.LogWarning("Unknown notification target '{Target}'", action.Target);
+                return;
+        }
+
+        // Send notifications to all targets
+        foreach (var userId in targetUserIds.Distinct())
+        {
+            var notificationData = new Dictionary<string, object>
+            {
+                ["noticeId"] = instance.NoticeId.ToString(),
+                ["ruleName"] = rule.Name,
+                ["triggerPercent"] = rule.TriggerPercent,
+                ["slaPercent"] = instance.SlaPercentConsumed,
+                ["slaStatus"] = instance.SlaStatus,
+                ["currentStage"] = instance.CurrentStageKey
+            };
+
+            await _notificationService.SendAsync(
+                new SendNotificationRequest(
+                    userId,
+                    action.Template ?? "workflow_escalation",
+                    notificationData
+                ),
+                cancellationToken
+            );
+
+            _logger.LogInformation(
+                "Sent escalation notification to user {UserId} for notice {NoticeId}",
+                userId, instance.NoticeId);
+        }
+    }
+
+    private async Task ExecuteFlagActionAsync(
+        NoticeWorkflowInstance instance,
+        EscalationAction action,
+        CancellationToken cancellationToken)
+    {
+        // Update notice with escalation flag
+        var notice = await _context.Notices
+            .FirstOrDefaultAsync(n => n.Id == instance.NoticeId, cancellationToken);
+
+        if (notice != null)
+        {
+            // Add escalation flag to notice metadata or tags
+            var flagValue = action.Value ?? "escalated";
+            if (!notice.Tags.Contains(flagValue))
+            {
+                notice.Tags.Add(flagValue);
+                notice.UpdatedAt = DateTime.UtcNow;
+
+                _logger.LogInformation(
+                    "Added flag '{Flag}' to notice {NoticeId}",
+                    flagValue, instance.NoticeId);
+            }
+        }
+    }
+
+    private async Task ExecuteReassignActionAsync(
+        NoticeWorkflowInstance instance,
+        EscalationAction action,
+        CancellationToken cancellationToken)
+    {
+        // Reassign to manager if current assignee hasn't resolved
+        if (action.Target?.ToLowerInvariant() == "manager")
+        {
+            var notice = await _context.Notices
+                .FirstOrDefaultAsync(n => n.Id == instance.NoticeId, cancellationToken);
+
+            if (notice != null)
+            {
+                // Find a manager in the organization
+                var manager = await _context.OrganizationMembers
+                    .Where(m => m.OrganizationId == notice.OrganizationId &&
+                               m.Role == "manager" &&
+                               m.UserId != instance.AssignedToId)
+                    .Select(m => m.UserId)
+                    .FirstOrDefaultAsync(cancellationToken);
+
+                if (manager != default)
+                {
+                    var previousAssignee = instance.AssignedToId;
+                    instance.AssignedToId = manager;
+                    instance.UpdatedAt = DateTime.UtcNow;
+
+                    _logger.LogInformation(
+                        "Reassigned notice {NoticeId} from {PreviousAssignee} to manager {NewAssignee} due to escalation",
+                        instance.NoticeId, previousAssignee, manager);
+
+                    // Notify the new assignee
+                    await _notificationService.SendAsync(
+                        new SendNotificationRequest(
+                            manager,
+                            "workflow_reassigned",
+                            new Dictionary<string, object>
+                            {
+                                ["noticeId"] = instance.NoticeId.ToString(),
+                                ["reason"] = "SLA escalation"
+                            }
+                        ),
+                        cancellationToken
+                    );
+                }
+            }
+        }
     }
 
     #endregion

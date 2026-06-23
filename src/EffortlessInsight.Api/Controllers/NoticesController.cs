@@ -211,6 +211,131 @@ public class NoticesController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Batch upload multiple notice files
+    /// </summary>
+    [HttpPost("upload/batch")]
+    [RequestSizeLimit(262_144_000)] // 250 MB total for batch
+    [ProducesResponseType(typeof(ApiResponse<BatchUploadResponse>), StatusCodes.Status202Accepted)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> BatchUpload(
+        [FromForm] BatchUploadRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var orgId = GetCurrentOrganizationId();
+            var userId = GetCurrentUserId();
+
+            if (!_currentOrg.HasPermission("notices.upload"))
+            {
+                return Forbid();
+            }
+
+            if (request.Files == null || request.Files.Count == 0)
+            {
+                return BadRequest(new ApiErrorResponse(false, "FILES_REQUIRED", "No files were uploaded"));
+            }
+
+            const int maxFiles = 20;
+            if (request.Files.Count > maxFiles)
+            {
+                return BadRequest(new ApiErrorResponse(false, "TOO_MANY_FILES",
+                    $"Maximum {maxFiles} files allowed per batch upload"));
+            }
+
+            var results = new List<BatchUploadItemResult>();
+            var successCount = 0;
+            var failureCount = 0;
+
+            foreach (var file in request.Files)
+            {
+                try
+                {
+                    if (file.Length == 0)
+                    {
+                        results.Add(new BatchUploadItemResult(
+                            FileName: file.FileName,
+                            Success: false,
+                            NoticeId: null,
+                            ErrorCode: "EMPTY_FILE",
+                            ErrorMessage: "File is empty"));
+                        failureCount++;
+                        continue;
+                    }
+
+                    using var stream = file.OpenReadStream();
+                    var result = await _noticeService.UploadAsync(
+                        stream,
+                        file.FileName,
+                        file.ContentType,
+                        orgId,
+                        userId,
+                        request.Gstin,
+                        request.Tags,
+                        cancellationToken);
+
+                    if (result.Success)
+                    {
+                        results.Add(new BatchUploadItemResult(
+                            FileName: file.FileName,
+                            Success: true,
+                            NoticeId: result.NoticeId,
+                            ErrorCode: null,
+                            ErrorMessage: null,
+                            Status: result.Status,
+                            DuplicateWarning: result.DuplicateWarning != null
+                                ? new DuplicateWarningDto(
+                                    IsPotentialDuplicate: true,
+                                    SimilarNoticeId: result.DuplicateWarning.ExistingNoticeId,
+                                    SimilarNoticeNumber: result.DuplicateWarning.ExistingNoticeNumber,
+                                    SimilarityScore: result.DuplicateWarning.SimilarityScore,
+                                    UploadedAt: result.DuplicateWarning.UploadedAt)
+                                : null));
+                        successCount++;
+                    }
+                    else
+                    {
+                        results.Add(new BatchUploadItemResult(
+                            FileName: file.FileName,
+                            Success: false,
+                            NoticeId: null,
+                            ErrorCode: result.ErrorCode,
+                            ErrorMessage: result.ErrorMessage));
+                        failureCount++;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to upload file {FileName} in batch", file.FileName);
+                    results.Add(new BatchUploadItemResult(
+                        FileName: file.FileName,
+                        Success: false,
+                        NoticeId: null,
+                        ErrorCode: "UPLOAD_FAILED",
+                        ErrorMessage: "An unexpected error occurred"));
+                    failureCount++;
+                }
+            }
+
+            var response = new BatchUploadResponse(
+                TotalFiles: request.Files.Count,
+                SuccessCount: successCount,
+                FailureCount: failureCount,
+                Results: results);
+
+            return StatusCode(StatusCodes.Status202Accepted,
+                new ApiResponse<BatchUploadResponse>(true, response));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to process batch upload");
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "BATCH_UPLOAD_FAILED", "An unexpected error occurred during batch upload"));
+        }
+    }
+
     #endregion
 
     #region Notice CRUD
@@ -1767,6 +1892,28 @@ public record UploadNoticeRequest
     public string? Gstin { get; init; }
     public List<string>? Tags { get; init; }
 }
+
+public record BatchUploadRequest
+{
+    public IFormFileCollection? Files { get; init; }
+    public string? Gstin { get; init; }
+    public List<string>? Tags { get; init; }
+}
+
+public record BatchUploadResponse(
+    int TotalFiles,
+    int SuccessCount,
+    int FailureCount,
+    List<BatchUploadItemResult> Results);
+
+public record BatchUploadItemResult(
+    string FileName,
+    bool Success,
+    Guid? NoticeId,
+    string? ErrorCode,
+    string? ErrorMessage,
+    string? Status = null,
+    DuplicateWarningDto? DuplicateWarning = null);
 
 public record PresignedUploadRequest(
     string FileName,

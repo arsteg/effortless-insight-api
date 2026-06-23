@@ -74,16 +74,17 @@ public class TestableApplicationDbContext : ApplicationDbContext
             );
         });
 
-        // Fix SubscriptionPlan.Metadata and Limits for InMemory
-        var planLimitsConverter = new ValueConverter<PlanLimits, string>(
+        // Note: SubscriptionPlan.Limits is configured as OwnsOne().ToJson() in base context.
+        // We need to configure Metadata and Features for InMemory compatibility.
+        var featureListConverter = new ValueConverter<List<string>, string>(
             v => JsonSerializer.Serialize(v, (JsonSerializerOptions?)null),
-            v => JsonSerializer.Deserialize<PlanLimits>(v, (JsonSerializerOptions?)null) ?? new PlanLimits()
+            v => JsonSerializer.Deserialize<List<string>>(v, (JsonSerializerOptions?)null) ?? new List<string>()
         );
 
         modelBuilder.Entity<SubscriptionPlan>(entity =>
         {
             entity.Property(e => e.Metadata).HasConversion(jsonConverterNullable);
-            entity.Property(e => e.Limits).HasConversion(planLimitsConverter);
+            entity.Property(e => e.Features).HasConversion(featureListConverter);
         });
 
         // Fix Coupon.Metadata for InMemory
@@ -416,6 +417,31 @@ public class TestableApplicationDbContext : ApplicationDbContext
         modelBuilder.Entity<WorkflowTemplate>(entity =>
         {
             entity.Property(e => e.ApplicableNoticeTypes).HasConversion(stringListConverter);
+        });
+
+        // Fix Admin entities for InMemory
+        modelBuilder.Entity<EffortlessInsight.Api.Data.Entities.Admin.AdminAuditLog>(entity =>
+        {
+            entity.Property(e => e.Details).HasConversion(jsonConverter);
+        });
+
+        modelBuilder.Entity<EffortlessInsight.Api.Data.Entities.Admin.SystemAlert>(entity =>
+        {
+            entity.Property(e => e.Data).HasConversion(jsonConverter);
+        });
+
+        // Converter for Dictionary<string, string>
+        var stringDictConverter = new ValueConverter<Dictionary<string, string>, string>(
+            v => JsonSerializer.Serialize(v, (JsonSerializerOptions?)null),
+            v => JsonSerializer.Deserialize<Dictionary<string, string>>(v, (JsonSerializerOptions?)null) ?? new Dictionary<string, string>()
+        );
+
+        modelBuilder.Entity<EffortlessInsight.Api.Data.Entities.Admin.PromptVersion>(entity =>
+        {
+            entity.Property(e => e.ModelConfig).HasConversion(jsonConverter);
+            entity.Property(e => e.Variables).HasConversion(stringDictConverter);
+            entity.Property(e => e.OutputSchema).HasConversion(jsonConverterNullable);
+            entity.Property(e => e.TestResults).HasConversion(jsonConverterNullable);
         });
 
         // Ignore value object types that are serialized as JSON (not separate tables)

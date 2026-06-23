@@ -566,27 +566,27 @@ public class OrganizationValidatorTests
 public class RoleHierarchyTests
 {
     [Theory]
-    [InlineData("owner", "organization:delete", true)]
-    [InlineData("admin", "organization:delete", false)]
-    [InlineData("owner", "organization:edit", true)]
-    [InlineData("admin", "organization:edit", true)]
-    [InlineData("member", "organization:edit", false)]
-    [InlineData("owner", "members:invite", true)]
-    [InlineData("admin", "members:invite", true)]
-    [InlineData("manager", "members:invite", false)]
-    [InlineData("ca", "members:view", false)]
-    [InlineData("member", "members:view", true)]
-    [InlineData("viewer", "notices:upload", false)]
-    [InlineData("member", "notices:upload", true)]
-    [InlineData("owner", "organization:billing", true)]
-    [InlineData("admin", "organization:billing", false)]
-    [InlineData("owner", "organization:transfer", true)]
-    [InlineData("admin", "organization:transfer", false)]
-    [InlineData("manager", "notices:assign", true)]
-    [InlineData("member", "notices:assign", false)]
-    [InlineData("owner", "audit:view", true)]
-    [InlineData("admin", "audit:view", true)]
-    [InlineData("member", "audit:view", false)]
+    [InlineData("owner", "organization.delete", true)]
+    [InlineData("admin", "organization.delete", false)]
+    [InlineData("owner", "organization.edit", true)]
+    [InlineData("admin", "organization.edit", true)]
+    [InlineData("member", "organization.edit", false)]
+    [InlineData("owner", "members.invite", true)]
+    [InlineData("admin", "members.invite", true)]
+    [InlineData("manager", "members.invite", false)]
+    [InlineData("ca", "members.view", false)]
+    [InlineData("member", "members.view", true)]
+    [InlineData("viewer", "notices.upload", false)]
+    [InlineData("member", "notices.upload", true)]
+    [InlineData("owner", "organization.billing", true)]
+    [InlineData("admin", "organization.billing", false)]
+    [InlineData("owner", "organization.transfer", true)]
+    [InlineData("admin", "organization.transfer", false)]
+    [InlineData("manager", "notices.assign", true)]
+    [InlineData("member", "notices.assign", false)]
+    [InlineData("owner", "audit.view", true)]
+    [InlineData("admin", "audit.view", true)]
+    [InlineData("member", "audit.view", false)]
     public void HasPermission_ReturnsCorrectResult(string role, string permission, bool expected)
     {
         // Arrange
@@ -639,7 +639,7 @@ public class RoleHierarchyTests
         var service = new CurrentOrganizationService(httpContextAccessor.Object, dbContext);
 
         // Act
-        var result = service.HasPermission("organization:view");
+        var result = service.HasPermission("organization.view");
 
         // Assert
         result.Should().BeFalse();

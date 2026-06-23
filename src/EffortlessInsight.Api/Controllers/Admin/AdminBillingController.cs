@@ -377,6 +377,7 @@ public class AdminBillingController : AdminControllerBase
     {
         var query = _dbContext.Invoices
             .Include(i => i.Organization)
+            .Include(i => i.Payments)
             .AsQueryable();
 
         // Apply status filter
@@ -428,7 +429,13 @@ public class AdminBillingController : AdminControllerBase
                 Status = i.Status,
                 DueDate = i.DueDate.ToDateTime(TimeOnly.MinValue),
                 PaidAt = i.PaidAt,
-                CreatedAt = i.CreatedAt
+                CreatedAt = i.CreatedAt,
+                // Get the successful payment ID for refund processing
+                PaymentId = i.Payments
+                    .Where(p => p.Status == "captured" || p.Status == "paid")
+                    .OrderByDescending(p => p.CreatedAt)
+                    .Select(p => p.Id)
+                    .FirstOrDefault()
             })
             .ToListAsync();
 
@@ -585,6 +592,10 @@ public record AdminInvoiceListItem
     public DateTime DueDate { get; init; }
     public DateTime? PaidAt { get; init; }
     public DateTime CreatedAt { get; init; }
+    /// <summary>
+    /// Payment ID for refund processing (from the successful payment)
+    /// </summary>
+    public Guid? PaymentId { get; init; }
 }
 
 // AdminInvoiceSummary and AdminPlanInfo are defined in AdminOrganizationsController.cs

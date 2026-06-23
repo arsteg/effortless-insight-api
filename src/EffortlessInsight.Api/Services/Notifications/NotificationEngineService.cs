@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.DTOs;
@@ -20,6 +22,7 @@ public class NotificationEngineService : INotificationEngineService
     private readonly IInAppChannelService _inAppService;
     private readonly IPushTokenService _pushTokenService;
     private readonly ILogger<NotificationEngineService> _logger;
+    private readonly IConfiguration _configuration;
 
     public NotificationEngineService(
         ApplicationDbContext dbContext,
@@ -31,7 +34,8 @@ public class NotificationEngineService : INotificationEngineService
         IWhatsAppChannelService whatsAppService,
         IInAppChannelService inAppService,
         IPushTokenService pushTokenService,
-        ILogger<NotificationEngineService> logger)
+        ILogger<NotificationEngineService> logger,
+        IConfiguration configuration)
     {
         _dbContext = dbContext;
         _preferencesService = preferencesService;
@@ -43,6 +47,7 @@ public class NotificationEngineService : INotificationEngineService
         _inAppService = inAppService;
         _pushTokenService = pushTokenService;
         _logger = logger;
+        _configuration = configuration;
     }
 
     /// <inheritdoc />
@@ -998,10 +1003,68 @@ public class NotificationEngineService : INotificationEngineService
 </html>";
     }
 
-    private static string GenerateUnsubscribeToken(Guid userId)
+    private string GenerateUnsubscribeToken(Guid userId)
     {
-        // In production, this should be a signed JWT or encrypted token
-        return Convert.ToBase64String(userId.ToByteArray());
+        // Use HMAC-SHA256 to create a signed, non-guessable token
+        var secret = _configuration["Jwt:Key"] ?? throw new InvalidOperationException("JWT key not configured");
+        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var payload = $"{userId}:{timestamp}";
+
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
+        var signature = hmac.ComputeHash(Encoding.UTF8.GetBytes(payload));
+        var signatureBase64 = Convert.ToBase64String(signature);
+
+        // Format: base64(userId:timestamp):signature
+        var tokenData = $"{Convert.ToBase64String(Encoding.UTF8.GetBytes(payload))}:{signatureBase64}";
+        return Convert.ToBase64String(Encoding.UTF8.GetBytes(tokenData));
+    }
+
+    /// <summary>
+    /// Validates an unsubscribe token and returns the user ID if valid.
+    /// Tokens are valid for 30 days.
+    /// </summary>
+    public (bool IsValid, Guid? UserId) ValidateUnsubscribeToken(string token)
+    {
+        try
+        {
+            var tokenData = Encoding.UTF8.GetString(Convert.FromBase64String(token));
+            var parts = tokenData.Split(':');
+            if (parts.Length != 2) return (false, null);
+
+            var payload = Encoding.UTF8.GetString(Convert.FromBase64String(parts[0]));
+            var providedSignature = parts[1];
+
+            var payloadParts = payload.Split(':');
+            if (payloadParts.Length != 2) return (false, null);
+
+            if (!Guid.TryParse(payloadParts[0], out var userId)) return (false, null);
+            if (!long.TryParse(payloadParts[1], out var timestamp)) return (false, null);
+
+            // Verify signature
+            var secret = _configuration["Jwt:Key"] ?? throw new InvalidOperationException("JWT key not configured");
+            using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
+            var expectedSignature = Convert.ToBase64String(hmac.ComputeHash(Encoding.UTF8.GetBytes(payload)));
+
+            if (!CryptographicOperations.FixedTimeEquals(
+                Encoding.UTF8.GetBytes(providedSignature),
+                Encoding.UTF8.GetBytes(expectedSignature)))
+            {
+                return (false, null);
+            }
+
+            // Check expiration (30 days)
+            var tokenTime = DateTimeOffset.FromUnixTimeSeconds(timestamp);
+            if (DateTimeOffset.UtcNow - tokenTime > TimeSpan.FromDays(30))
+            {
+                return (false, null);
+            }
+
+            return (true, userId);
+        }
+        catch
+        {
+            return (false, null);
+        }
     }
 
     private NotificationDto MapToDto(Notification n)

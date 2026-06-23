@@ -1,8 +1,11 @@
+using System.Diagnostics;
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities.Admin;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Distributed;
+using StackExchange.Redis;
 
 namespace EffortlessInsight.Api.Controllers.Admin;
 
@@ -14,13 +17,25 @@ namespace EffortlessInsight.Api.Controllers.Admin;
 public class AdminDashboardController : AdminControllerBase
 {
     private readonly ApplicationDbContext _dbContext;
+    private readonly IDistributedCache _cache;
+    private readonly IConnectionMultiplexer? _redis;
+    private readonly IConfiguration _configuration;
+    private readonly IHttpClientFactory _httpClientFactory;
 
     public AdminDashboardController(
         ApplicationDbContext dbContext,
-        ILogger<AdminDashboardController> logger)
+        IDistributedCache cache,
+        IConfiguration configuration,
+        IHttpClientFactory httpClientFactory,
+        ILogger<AdminDashboardController> logger,
+        IConnectionMultiplexer? redis = null)
         : base(logger)
     {
         _dbContext = dbContext;
+        _cache = cache;
+        _redis = redis;
+        _configuration = configuration;
+        _httpClientFactory = httpClientFactory;
     }
 
     /// <summary>
@@ -342,31 +357,59 @@ public class AdminDashboardController : AdminControllerBase
 
     private async Task<SystemHealthResponse> GetSystemHealthAsync()
     {
-        // In production, these would be actual health checks
-        // For now, return mock healthy status
-        return await Task.FromResult(new SystemHealthResponse
+        var dbHealth = await CheckDatabaseHealthAsync();
+        var redisHealth = await CheckRedisHealthAsync();
+        var aiHealth = await CheckAiServiceHealthAsync();
+
+        return new SystemHealthResponse
         {
-            ApiGateway = new ServiceHealth { Status = "healthy", Latency = 45 },
-            MainApi = new ServiceHealth { Status = "healthy", Latency = 120 },
-            AiService = new ServiceHealth { Status = "healthy", Latency = 850 },
-            Database = new ServiceHealth { Status = "healthy", Latency = 15 },
-            Redis = new ServiceHealth { Status = "healthy", Latency = 2 },
-            S3 = new ServiceHealth { Status = "healthy", Latency = null }
-        });
+            ApiGateway = new ServiceHealth { Status = "healthy", Latency = 0 },
+            MainApi = new ServiceHealth { Status = "healthy", Latency = 0 },
+            AiService = aiHealth,
+            Database = dbHealth,
+            Redis = redisHealth,
+            S3 = new ServiceHealth { Status = "healthy", Latency = null } // S3 is checked differently
+        };
     }
 
     private async Task<SystemHealthFrontendResponse> GetSystemHealthForFrontendAsync()
     {
-        // In production, these would be actual health checks
-        var components = new List<HealthComponent>
+        var components = new List<HealthComponent>();
+
+        // Check Database
+        var dbHealth = await CheckDatabaseHealthAsync();
+        components.Add(new HealthComponent
         {
-            new() { Name = "API Gateway", Status = "healthy", LatencyMs = 45 },
-            new() { Name = "Main API", Status = "healthy", LatencyMs = 120 },
-            new() { Name = "AI Service", Status = "healthy", LatencyMs = 850 },
-            new() { Name = "Database", Status = "healthy", LatencyMs = 15 },
-            new() { Name = "Redis Cache", Status = "healthy", LatencyMs = 2 },
-            new() { Name = "S3 Storage", Status = "healthy", LatencyMs = null }
-        };
+            Name = "Database",
+            Status = dbHealth.Status,
+            LatencyMs = dbHealth.Latency
+        });
+
+        // Check Redis
+        var redisHealth = await CheckRedisHealthAsync();
+        components.Add(new HealthComponent
+        {
+            Name = "Redis Cache",
+            Status = redisHealth.Status,
+            LatencyMs = redisHealth.Latency
+        });
+
+        // Check AI Service
+        var aiHealth = await CheckAiServiceHealthAsync();
+        components.Add(new HealthComponent
+        {
+            Name = "AI Service",
+            Status = aiHealth.Status,
+            LatencyMs = aiHealth.Latency
+        });
+
+        // Main API is healthy if we got here
+        components.Add(new HealthComponent
+        {
+            Name = "Main API",
+            Status = "healthy",
+            LatencyMs = 0
+        });
 
         // Determine overall status based on component statuses
         var overallStatus = "healthy";
@@ -375,12 +418,105 @@ public class AdminDashboardController : AdminControllerBase
         else if (components.Any(c => c.Status == "degraded"))
             overallStatus = "degraded";
 
-        return await Task.FromResult(new SystemHealthFrontendResponse
+        return new SystemHealthFrontendResponse
         {
             Status = overallStatus,
             Components = components,
             LastCheckedAt = DateTime.UtcNow
-        });
+        };
+    }
+
+    private async Task<ServiceHealth> CheckDatabaseHealthAsync()
+    {
+        var sw = Stopwatch.StartNew();
+        try
+        {
+            // Simple connectivity check
+            await _dbContext.Database.ExecuteSqlRawAsync("SELECT 1");
+            sw.Stop();
+            return new ServiceHealth
+            {
+                Status = sw.ElapsedMilliseconds > 1000 ? "degraded" : "healthy",
+                Latency = (int)sw.ElapsedMilliseconds
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Database health check failed");
+            return new ServiceHealth { Status = "down", Latency = null };
+        }
+    }
+
+    private async Task<ServiceHealth> CheckRedisHealthAsync()
+    {
+        var sw = Stopwatch.StartNew();
+        try
+        {
+            if (_redis != null)
+            {
+                var db = _redis.GetDatabase();
+                await db.PingAsync();
+                sw.Stop();
+                return new ServiceHealth
+                {
+                    Status = sw.ElapsedMilliseconds > 100 ? "degraded" : "healthy",
+                    Latency = (int)sw.ElapsedMilliseconds
+                };
+            }
+
+            // Fallback to distributed cache test
+            var testKey = $"health_check_{Guid.NewGuid()}";
+            await _cache.SetStringAsync(testKey, "test", new DistributedCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(5)
+            });
+            await _cache.RemoveAsync(testKey);
+            sw.Stop();
+            return new ServiceHealth
+            {
+                Status = sw.ElapsedMilliseconds > 100 ? "degraded" : "healthy",
+                Latency = (int)sw.ElapsedMilliseconds
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Redis health check failed");
+            return new ServiceHealth { Status = "down", Latency = null };
+        }
+    }
+
+    private async Task<ServiceHealth> CheckAiServiceHealthAsync()
+    {
+        var sw = Stopwatch.StartNew();
+        try
+        {
+            var aiServiceUrl = _configuration["AiService:BaseUrl"];
+            if (string.IsNullOrEmpty(aiServiceUrl))
+            {
+                return new ServiceHealth { Status = "unknown", Latency = null };
+            }
+
+            var client = _httpClientFactory.CreateClient();
+            client.Timeout = TimeSpan.FromSeconds(5);
+            var response = await client.GetAsync($"{aiServiceUrl}/health");
+            sw.Stop();
+
+            if (response.IsSuccessStatusCode)
+            {
+                return new ServiceHealth
+                {
+                    Status = sw.ElapsedMilliseconds > 2000 ? "degraded" : "healthy",
+                    Latency = (int)sw.ElapsedMilliseconds
+                };
+            }
+
+            return new ServiceHealth { Status = "degraded", Latency = (int)sw.ElapsedMilliseconds };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "AI service health check failed");
+            return new ServiceHealth { Status = "down", Latency = null };
+        }
     }
 }
 

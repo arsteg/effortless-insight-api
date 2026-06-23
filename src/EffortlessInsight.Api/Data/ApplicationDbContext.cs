@@ -136,25 +136,13 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
             n.DeletedAt == null &&
             (BypassTenantFilter || CurrentOrganizationId == null || n.OrganizationId == CurrentOrganizationId));
 
-        modelBuilder.Entity<Comment>().HasQueryFilter(c =>
-            c.DeletedAt == null &&
-            (BypassTenantFilter || CurrentOrganizationId == null || c.OrganizationId == CurrentOrganizationId));
-
-        modelBuilder.Entity<NoticeResponse>().HasQueryFilter(r =>
-            r.DeletedAt == null &&
-            (BypassTenantFilter || CurrentOrganizationId == null || r.OrganizationId == CurrentOrganizationId));
-
-        modelBuilder.Entity<DeadlineReminder>().HasQueryFilter(r =>
-            r.DeletedAt == null &&
-            (BypassTenantFilter || CurrentOrganizationId == null || r.OrganizationId == CurrentOrganizationId));
-
-        modelBuilder.Entity<NoticeTask>().HasQueryFilter(t =>
-            t.DeletedAt == null &&
-            (BypassTenantFilter || CurrentOrganizationId == null || t.OrganizationId == CurrentOrganizationId));
-
-        modelBuilder.Entity<Attachment>().HasQueryFilter(a =>
-            a.DeletedAt == null &&
-            (BypassTenantFilter || CurrentOrganizationId == null || a.OrganizationId == CurrentOrganizationId));
+        // Note: Comment, NoticeResponse, DeadlineReminder, NoticeTask, and Attachment
+        // are scoped through Notice navigation. Tenant filtering is applied via Notice's filter.
+        modelBuilder.Entity<Comment>().HasQueryFilter(c => c.DeletedAt == null);
+        modelBuilder.Entity<NoticeResponse>().HasQueryFilter(r => r.DeletedAt == null);
+        modelBuilder.Entity<DeadlineReminder>().HasQueryFilter(r => r.DeletedAt == null);
+        modelBuilder.Entity<NoticeTask>().HasQueryFilter(t => t.DeletedAt == null);
+        modelBuilder.Entity<Attachment>().HasQueryFilter(a => a.DeletedAt == null);
 
         // Workflow entities - tenant-scoped
         modelBuilder.Entity<WorkflowTemplate>().HasQueryFilter(w =>
@@ -165,17 +153,11 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
         modelBuilder.Entity<WorkflowAssignmentRule>().HasQueryFilter(r => r.DeletedAt == null);
         modelBuilder.Entity<WorkflowEscalationRule>().HasQueryFilter(r => r.DeletedAt == null);
 
-        modelBuilder.Entity<NoticeWorkflowInstance>().HasQueryFilter(i =>
-            i.DeletedAt == null &&
-            (BypassTenantFilter || CurrentOrganizationId == null || i.OrganizationId == CurrentOrganizationId));
-
-        modelBuilder.Entity<WorkflowHistory>().HasQueryFilter(h =>
-            h.DeletedAt == null &&
-            (BypassTenantFilter || CurrentOrganizationId == null || h.OrganizationId == CurrentOrganizationId));
-
-        modelBuilder.Entity<NoticeDeadline>().HasQueryFilter(d =>
-            d.DeletedAt == null &&
-            (BypassTenantFilter || CurrentOrganizationId == null || d.OrganizationId == CurrentOrganizationId));
+        // Note: NoticeWorkflowInstance, WorkflowHistory, and NoticeDeadline
+        // are scoped through Notice navigation. Tenant filtering is applied via Notice's filter.
+        modelBuilder.Entity<NoticeWorkflowInstance>().HasQueryFilter(i => i.DeletedAt == null);
+        modelBuilder.Entity<WorkflowHistory>().HasQueryFilter(h => h.DeletedAt == null);
+        modelBuilder.Entity<NoticeDeadline>().HasQueryFilter(d => d.DeletedAt == null);
 
         modelBuilder.Entity<DeadlineExtension>().HasQueryFilter(e => e.DeletedAt == null);
 

@@ -286,13 +286,19 @@ public class InternalNotificationsController : ControllerBase
 public class NotificationWebhooksController : ControllerBase
 {
     private readonly IDeliveryTrackingService _deliveryService;
+    private readonly INotificationEngineService _notificationEngine;
+    private readonly INotificationPreferencesService _preferencesService;
     private readonly ILogger<NotificationWebhooksController> _logger;
 
     public NotificationWebhooksController(
         IDeliveryTrackingService deliveryService,
+        INotificationEngineService notificationEngine,
+        INotificationPreferencesService preferencesService,
         ILogger<NotificationWebhooksController> logger)
     {
         _deliveryService = deliveryService;
+        _notificationEngine = notificationEngine;
+        _preferencesService = preferencesService;
         _logger = logger;
     }
 
@@ -395,26 +401,41 @@ public class NotificationWebhooksController : ControllerBase
     /// <summary>
     /// Email unsubscribe endpoint
     /// </summary>
+    [AllowAnonymous]
     [HttpGet("unsubscribe")]
     [ProducesResponseType(typeof(UnsubscribeResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(UnsubscribeResponse), StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Unsubscribe([FromQuery] UnsubscribeRequest request)
     {
         try
         {
-            // Decode the token to get email
-            // In production, this should verify a signed token
-            var emailBytes = Convert.FromBase64String(request.Token);
-            var userId = new Guid(emailBytes);
+            // Validate the signed unsubscribe token
+            var (isValid, userId) = _notificationEngine.ValidateUnsubscribeToken(request.Token);
 
-            // Get user email from database (simplified - should use proper token)
-            // For now, just return success
+            if (!isValid || !userId.HasValue)
+            {
+                _logger.LogWarning("Invalid or expired unsubscribe token attempted");
+                return BadRequest(new UnsubscribeResponse(false, "Invalid or expired unsubscribe token."));
+            }
 
-            return Ok(new UnsubscribeResponse(true, "You have been unsubscribed successfully."));
+            // Disable email notifications for this user
+            await _preferencesService.UpdatePreferencesAsync(
+                userId.Value,
+                new UpdatePreferencesRequest
+                {
+                    Channels = new UpdateChannelPreferencesDto
+                    {
+                        Email = new UpdateEmailChannelDto { Enabled = false }
+                    }
+                });
+
+            _logger.LogInformation("User {UserId} unsubscribed from email notifications", userId.Value);
+            return Ok(new UnsubscribeResponse(true, "You have been unsubscribed from email notifications successfully."));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error processing unsubscribe");
-            return BadRequest(new UnsubscribeResponse(false, "Invalid unsubscribe token."));
+            return BadRequest(new UnsubscribeResponse(false, "An error occurred while processing your request."));
         }
     }
 

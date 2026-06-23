@@ -101,6 +101,11 @@ public class AdminAuthOptions
     public bool SendLoginAlerts { get; set; } = true;
 
     /// <summary>
+    /// Admin portal base URL for email links (e.g., password reset).
+    /// </summary>
+    public string AdminPortalUrl { get; set; } = "http://localhost:3001";
+
+    /// <summary>
     /// Maximum concurrent sessions per admin.
     /// 0 = unlimited.
     /// </summary>

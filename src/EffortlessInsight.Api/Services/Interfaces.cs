@@ -16,6 +16,8 @@ public interface INoticeService
     Task TriggerAiProcessingAsync(Guid noticeId);
 }
 
+// Legacy interfaces - use IOrganizationManagementService and IAuthService instead
+[Obsolete("Use IOrganizationManagementService in Services/Organizations instead")]
 public interface IOrganizationService
 {
     Task<Organization> CreateAsync(CreateOrganizationDto dto, Guid ownerId);
@@ -27,6 +29,7 @@ public interface IOrganizationService
     Task RemoveMemberAsync(Guid organizationId, Guid userId);
 }
 
+[Obsolete("Use IAuthService in Services/Auth instead")]
 public interface IUserService
 {
     Task<ApplicationUser?> GetByIdAsync(Guid id);
@@ -64,27 +67,9 @@ public interface IEmailService
 
 // NoticeService implementation is in Services/Notices/NoticeService.cs
 
-public class OrganizationService : IOrganizationService
-{
-    public Task<Organization> CreateAsync(CreateOrganizationDto dto, Guid ownerId) => throw new NotImplementedException();
-    public Task<Organization?> GetByIdAsync(Guid id) => throw new NotImplementedException();
-    public Task<Organization> UpdateAsync(Guid id, UpdateOrganizationDto dto) => throw new NotImplementedException();
-    public Task DeleteAsync(Guid id) => throw new NotImplementedException();
-    public Task<List<ApplicationUser>> GetMembersAsync(Guid organizationId) => throw new NotImplementedException();
-    public Task AddMemberAsync(Guid organizationId, AddMemberDto dto) => throw new NotImplementedException();
-    public Task RemoveMemberAsync(Guid organizationId, Guid userId) => throw new NotImplementedException();
-}
-
-public class UserService : IUserService
-{
-    public Task<ApplicationUser?> GetByIdAsync(Guid id) => throw new NotImplementedException();
-    public Task<ApplicationUser?> GetByEmailAsync(string email) => throw new NotImplementedException();
-    public Task<ApplicationUser> UpdateAsync(Guid id, UpdateUserDto dto) => throw new NotImplementedException();
-    public Task<AuthResponse> LoginAsync(LoginDto dto) => throw new NotImplementedException();
-    public Task<AuthResponse> RegisterAsync(RegisterDto dto) => throw new NotImplementedException();
-    public Task<AuthResponse> RefreshTokenAsync(string refreshToken) => throw new NotImplementedException();
-    public Task LogoutAsync(Guid userId) => throw new NotImplementedException();
-}
+// Note: OrganizationService and UserService stub classes removed.
+// Real organization management is in Services/Organizations/OrganizationManagementService.cs
+// Real authentication is in Services/Auth/AuthService.cs
 
 // AiServiceClientImpl is defined in Services/AiServiceClient.cs
 

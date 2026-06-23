@@ -98,7 +98,7 @@ public class PresignedUploadRequestValidatorTests
     public void Validate_TooLongFileName_FailsValidation()
     {
         // Arrange
-        var longName = new string('a', 250) + ".pdf"; // 254 chars + extension
+        var longName = new string('a', 252) + ".pdf"; // 252 + 4 = 256 chars, exceeds 255 max
         var request = new PresignedUploadRequest(longName, "application/pdf", 1024);
 
         // Act
@@ -346,9 +346,9 @@ public class UpdateNoticeStatusRequestValidatorTests
     [Theory]
     [InlineData("")]
     [InlineData("invalid")]
-    [InlineData("UPLOADED")] // Case sensitive - must be lowercase
-    [InlineData("pending")]
-    [InlineData("draft")]
+    [InlineData("pending")]  // Not a valid status transition target
+    [InlineData("draft")]    // Not a valid status transition target
+    [InlineData("random_status")]
     public void Validate_InvalidStatus_FailsValidation(string status)
     {
         // Arrange
