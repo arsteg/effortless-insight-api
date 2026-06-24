@@ -76,6 +76,12 @@ public class AdminUsersController : AdminControllerBase
                 u.Organization.Plan.Code == request.Plan);
         }
 
+        // Apply organization filter
+        if (request.OrganizationId.HasValue)
+        {
+            query = query.Where(u => u.OrganizationId == request.OrganizationId.Value);
+        }
+
         // Get total count
         var totalCount = await query.CountAsync();
 
@@ -537,6 +543,7 @@ public record UserSearchRequest
     public string? Search { get; init; }
     public string? Status { get; init; }
     public string? Plan { get; init; }
+    public Guid? OrganizationId { get; init; }
     public string? SortBy { get; init; }
     public bool SortDesc { get; init; } = true;
     public int Page { get; init; } = 1;

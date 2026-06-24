@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities.Admin;
 using EffortlessInsight.Api.Options;
@@ -20,6 +21,11 @@ public class AdminSessionService : IAdminSessionService
 
     private const string SessionKeyPrefix = "admin:session:";
     private const string AdminSessionsKeyPrefix = "admin:sessions:";
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        ReferenceHandler = ReferenceHandler.IgnoreCycles
+    };
 
     public AdminSessionService(
         IDistributedCache cache,
@@ -72,7 +78,7 @@ public class AdminSessionService : IAdminSessionService
         var cached = await _cache.GetStringAsync(SessionKeyPrefix + sessionId);
         if (!string.IsNullOrEmpty(cached))
         {
-            var session = JsonSerializer.Deserialize<AdminSession>(cached);
+            var session = JsonSerializer.Deserialize<AdminSession>(cached, JsonOptions);
             if (session != null && session.ExpiresAt > DateTime.UtcNow && session.IsActive)
             {
                 return session;
@@ -229,13 +235,13 @@ public class AdminSessionService : IAdminSessionService
 
     private async Task CacheSessionAsync(AdminSession session)
     {
-        var options = new DistributedCacheEntryOptions
+        var cacheOptions = new DistributedCacheEntryOptions
         {
             AbsoluteExpiration = session.ExpiresAt
         };
 
-        var json = JsonSerializer.Serialize(session);
-        await _cache.SetStringAsync(SessionKeyPrefix + session.Id, json, options);
+        var json = JsonSerializer.Serialize(session, JsonOptions);
+        await _cache.SetStringAsync(SessionKeyPrefix + session.Id, json, cacheOptions);
     }
 
     private async Task AddToAdminSessionSetAsync(Guid adminId, string sessionId)

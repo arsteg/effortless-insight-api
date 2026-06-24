@@ -58,7 +58,8 @@ public class AdminOrganizationsController : AdminControllerBase
         {
             query = request.Status.ToLower() switch
             {
-                "active" => query.Where(o => o.DeletedAt == null),
+                "active" => query.Where(o => o.DeletedAt == null && o.SubscriptionStatus != "suspended"),
+                "suspended" => query.Where(o => o.SubscriptionStatus == "suspended"),
                 "deleted" => query.Where(o => o.DeletedAt != null),
                 "trial" => query.Where(o => o.SubscriptionStatus == "trial"),
                 _ => query
@@ -95,7 +96,7 @@ public class AdminOrganizationsController : AdminControllerBase
             {
                 Id = o.Id,
                 Name = o.Name,
-                Status = o.DeletedAt != null ? "deleted" : "active",
+                Status = o.DeletedAt != null ? "deleted" : (o.SubscriptionStatus == "suspended" ? "suspended" : "active"),
                 PlanCode = o.Plan != null ? o.Plan.Code : "free",
                 PlanName = o.Plan != null ? o.Plan.Name : "Free",
                 SubscriptionStatus = o.SubscriptionStatus,
@@ -159,7 +160,7 @@ public class AdminOrganizationsController : AdminControllerBase
         // Get active credits
         var activeCredits = await _dbContext.OrganizationCredits
             .Where(c => c.OrganizationId == orgId && c.Status == CreditStatus.Active)
-            .SumAsync(c => c.Amount - c.AmountUsed);
+            .SumAsync(c => c.RemainingAmount);
 
         // Get recent invoices
         var recentInvoices = await _dbContext.Invoices
@@ -180,7 +181,7 @@ public class AdminOrganizationsController : AdminControllerBase
         {
             Id = org.Id,
             Name = org.Name,
-            Status = org.DeletedAt != null ? "deleted" : "active",
+            Status = org.DeletedAt != null ? "deleted" : (org.SubscriptionStatus == "suspended" ? "suspended" : "active"),
             Industry = org.Industry,
             Website = org.Website,
             Plan = org.Plan != null ? new AdminPlanInfo
@@ -389,14 +390,11 @@ public class AdminOrganizationsController : AdminControllerBase
             return NotFoundResponse("Organization not found");
         }
 
-        // Convert decimal amount to paise (int)
-        var amountInPaise = (int)(request.Amount * 100);
-
         var credit = new OrganizationCredit
         {
             OrganizationId = orgId,
-            Amount = amountInPaise,
-            AmountUsed = 0,
+            Amount = request.Amount,
+            RemainingAmount = request.Amount,
             CreditType = request.Type ?? CreditTypes.Compensation,
             Reason = request.Reason,
             Status = CreditStatus.Active,
@@ -416,7 +414,6 @@ public class AdminOrganizationsController : AdminControllerBase
             new Dictionary<string, object>
             {
                 ["amount"] = request.Amount,
-                ["amount_paise"] = amountInPaise,
                 ["reason"] = request.Reason,
                 ["expires_at"] = request.ExpiresAt?.ToString("O") ?? "never",
                 ["credit_id"] = credit.Id
@@ -452,8 +449,8 @@ public class AdminOrganizationsController : AdminControllerBase
             .Select(c => new AdminCreditInfo
             {
                 Id = c.Id,
-                Amount = c.Amount / 100m, // Convert paise to rupees
-                RemainingAmount = (c.Amount - c.AmountUsed) / 100m,
+                Amount = c.Amount,
+                RemainingAmount = c.RemainingAmount,
                 Type = c.CreditType,
                 Reason = c.Reason,
                 Status = c.Status,
@@ -601,7 +598,7 @@ public record AdminUsageInfo
 {
     public int NoticeCount { get; init; }
     public double StorageUsedMb { get; init; }
-    public int ActiveCredits { get; init; }
+    public decimal ActiveCredits { get; init; }
 }
 
 public record AdminInvoiceSummary

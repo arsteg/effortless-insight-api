@@ -68,6 +68,7 @@ builder.Services.AddAdminAuthentication(builder.Configuration);
 
 // Add Database Seeders
 builder.Services.AddScoped<WorkflowTemplateSeeder>();
+builder.Services.AddScoped<AdminUserSeeder>();
 
 // Add AutoMapper
 builder.Services.AddAutoMapper(typeof(Program));
@@ -171,6 +172,10 @@ if (app.Environment.IsDevelopment())
     // Seed default workflow template
     var workflowSeeder = scope.ServiceProvider.GetRequiredService<WorkflowTemplateSeeder>();
     await workflowSeeder.SeedAsync();
+
+    // Seed initial admin user (from environment variables)
+    var adminSeeder = scope.ServiceProvider.GetRequiredService<AdminUserSeeder>();
+    await adminSeeder.SeedAsync();
 
     // Seed default notification templates
     var templateService = scope.ServiceProvider.GetRequiredService<EffortlessInsight.Api.Services.Notifications.INotificationTemplateService>();

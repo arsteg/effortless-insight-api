@@ -28,26 +28,29 @@ public class OrganizationCredit
     public AdminUser GrantedBy { get; set; } = null!;
 
     /// <summary>
-    /// Credit amount in paise (1/100 of INR)
+    /// Credit amount in rupees
     /// </summary>
-    public int Amount { get; set; }
+    [Column(TypeName = "numeric(18,2)")]
+    public decimal Amount { get; set; }
 
     /// <summary>
-    /// Amount used so far (in paise)
+    /// Remaining credit amount in rupees
     /// </summary>
-    public int AmountUsed { get; set; }
+    [Column(TypeName = "numeric(18,2)")]
+    public decimal RemainingAmount { get; set; }
 
     /// <summary>
-    /// Remaining credit (computed: Amount - AmountUsed)
+    /// Currency code (default: INR)
     /// </summary>
-    [NotMapped]
-    public int AmountRemaining => Amount - AmountUsed;
+    [MaxLength(3)]
+    public string Currency { get; set; } = "INR";
 
     /// <summary>
     /// Credit type: compensation, promotional, loyalty, adjustment
     /// </summary>
     [Required]
     [MaxLength(50)]
+    [Column("Type")]
     public string CreditType { get; set; } = "compensation";
 
     /// <summary>
@@ -56,17 +59,6 @@ public class OrganizationCredit
     [Required]
     [MaxLength(500)]
     public string Reason { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Internal notes (not visible to customer)
-    /// </summary>
-    public string? InternalNotes { get; set; }
-
-    /// <summary>
-    /// Support ticket ID if applicable
-    /// </summary>
-    [MaxLength(100)]
-    public string? TicketId { get; set; }
 
     /// <summary>
     /// Credit status: active, fully_used, expired, voided
@@ -81,31 +73,9 @@ public class OrganizationCredit
     public DateTime? ExpiresAt { get; set; }
 
     /// <summary>
-    /// When the credit was fully used
-    /// </summary>
-    public DateTime? FullyUsedAt { get; set; }
-
-    /// <summary>
-    /// If voided, admin who voided it
-    /// </summary>
-    public Guid? VoidedById { get; set; }
-
-    /// <summary>
-    /// Reason for voiding
-    /// </summary>
-    [MaxLength(500)]
-    public string? VoidReason { get; set; }
-
-    /// <summary>
-    /// When voided
-    /// </summary>
-    public DateTime? VoidedAt { get; set; }
-
-    /// <summary>
-    /// Timestamps
+    /// Timestamp
     /// </summary>
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
-    public DateTime? UpdatedAt { get; set; }
 
     /// <summary>
     /// History of credit usage
@@ -131,17 +101,18 @@ public class CreditUsageRecord
     public Guid? InvoiceId { get; set; }
 
     /// <summary>
-    /// Amount used (in paise)
+    /// Amount used
     /// </summary>
-    public int Amount { get; set; }
+    [Column(TypeName = "numeric(18,2)")]
+    public decimal Amount { get; set; }
 
     /// <summary>
     /// Description of usage
     /// </summary>
-    [MaxLength(255)]
+    [MaxLength(200)]
     public string? Description { get; set; }
 
-    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime UsedAt { get; set; } = DateTime.UtcNow;
 }
 
 /// <summary>
