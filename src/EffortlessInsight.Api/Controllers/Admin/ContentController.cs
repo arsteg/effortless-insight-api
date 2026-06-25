@@ -12,7 +12,7 @@ namespace EffortlessInsight.Api.Controllers.Admin;
 /// </summary>
 [Authorize(Policy = "AdminOnly")]
 [ApiController]
-[Route("api/admin/v1/content")]
+[Route("api/v1/admin/content")]
 public class ContentController : ControllerBase
 {
     private readonly ApplicationDbContext _context;
@@ -87,11 +87,14 @@ public class ContentController : ControllerBase
 
         return Ok(new ApiResponse<ContentListResponse>(true, new ContentListResponse
         {
-            Items = items,
-            TotalCount = totalCount,
-            Page = page,
-            PageSize = pageSize,
-            TotalPages = (int)Math.Ceiling((double)totalCount / pageSize)
+            Pages = items,
+            Pagination = new PaginationInfo
+            {
+                Page = page,
+                PageSize = pageSize,
+                Total = totalCount,
+                TotalPages = (int)Math.Ceiling((double)totalCount / pageSize)
+            }
         }));
     }
 
@@ -389,11 +392,8 @@ public class ContentController : ControllerBase
 // DTOs
 public record ContentListResponse
 {
-    public List<ContentPageDto> Items { get; init; } = [];
-    public int TotalCount { get; init; }
-    public int Page { get; init; }
-    public int PageSize { get; init; }
-    public int TotalPages { get; init; }
+    public List<ContentPageDto> Pages { get; init; } = [];
+    public PaginationInfo Pagination { get; init; } = new();
 }
 
 public record ContentPageDto

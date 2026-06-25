@@ -85,6 +85,12 @@ public class AdminUser
 
     public string? LastLoginUserAgent { get; set; }
 
+    // Notification Preferences
+    public bool NotifyCriticalAlerts { get; set; } = true;
+    public bool NotifySecurityAlerts { get; set; } = true;
+    public bool NotifyDailySummary { get; set; } = false;
+    public bool NotifyEmailEnabled { get; set; } = true;
+
     // Timestamps
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }

@@ -1,7 +1,9 @@
+using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.DTOs.Admin;
 using EffortlessInsight.Api.Services.Admin;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace EffortlessInsight.Api.Controllers.Admin;
 
@@ -15,13 +17,16 @@ namespace EffortlessInsight.Api.Controllers.Admin;
 public class AdminAuthController : ControllerBase
 {
     private readonly IAdminAuthService _authService;
+    private readonly ApplicationDbContext _dbContext;
     private readonly ILogger<AdminAuthController> _logger;
 
     public AdminAuthController(
         IAdminAuthService authService,
+        ApplicationDbContext dbContext,
         ILogger<AdminAuthController> logger)
     {
         _authService = authService;
+        _dbContext = dbContext;
         _logger = logger;
     }
 
@@ -450,6 +455,90 @@ public class AdminAuthController : ControllerBase
         });
     }
 
+    /// <summary>
+    /// Get notification preferences for current admin.
+    /// </summary>
+    [HttpGet("notification-preferences")]
+    [Authorize(AuthenticationSchemes = "AdminBearer")]
+    [ProducesResponseType(typeof(AdminNotificationPreferencesDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetNotificationPreferences()
+    {
+        var adminIdClaim = User.FindFirst(AdminJwtService.AdminIdClaim)?.Value;
+        if (!Guid.TryParse(adminIdClaim, out var adminId))
+        {
+            return Unauthorized();
+        }
+
+        var admin = await _dbContext.AdminUsers.FindAsync(adminId);
+        if (admin == null)
+        {
+            return NotFound(new ApiResponse<object>
+            {
+                Success = false,
+                Error = new ApiError { Code = "NOT_FOUND", Message = "Admin not found" }
+            });
+        }
+
+        return Ok(new ApiResponse<AdminNotificationPreferencesDto>
+        {
+            Success = true,
+            Data = new AdminNotificationPreferencesDto
+            {
+                CriticalAlerts = admin.NotifyCriticalAlerts,
+                SecurityAlerts = admin.NotifySecurityAlerts,
+                DailySummary = admin.NotifyDailySummary,
+                EmailNotifications = admin.NotifyEmailEnabled
+            }
+        });
+    }
+
+    /// <summary>
+    /// Update notification preferences for current admin.
+    /// </summary>
+    [HttpPut("notification-preferences")]
+    [Authorize(AuthenticationSchemes = "AdminBearer")]
+    [ProducesResponseType(typeof(AdminNotificationPreferencesDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> UpdateNotificationPreferences([FromBody] AdminNotificationPreferencesDto request)
+    {
+        var adminIdClaim = User.FindFirst(AdminJwtService.AdminIdClaim)?.Value;
+        if (!Guid.TryParse(adminIdClaim, out var adminId))
+        {
+            return Unauthorized();
+        }
+
+        var admin = await _dbContext.AdminUsers.FindAsync(adminId);
+        if (admin == null)
+        {
+            return NotFound(new ApiResponse<object>
+            {
+                Success = false,
+                Error = new ApiError { Code = "NOT_FOUND", Message = "Admin not found" }
+            });
+        }
+
+        admin.NotifyCriticalAlerts = request.CriticalAlerts;
+        admin.NotifySecurityAlerts = request.SecurityAlerts;
+        admin.NotifyDailySummary = request.DailySummary;
+        admin.NotifyEmailEnabled = request.EmailNotifications;
+        admin.UpdatedAt = DateTime.UtcNow;
+
+        await _dbContext.SaveChangesAsync();
+
+        _logger.LogInformation("Admin {AdminId} updated notification preferences", adminId);
+
+        return Ok(new ApiResponse<AdminNotificationPreferencesDto>
+        {
+            Success = true,
+            Data = new AdminNotificationPreferencesDto
+            {
+                CriticalAlerts = admin.NotifyCriticalAlerts,
+                SecurityAlerts = admin.NotifySecurityAlerts,
+                DailySummary = admin.NotifyDailySummary,
+                EmailNotifications = admin.NotifyEmailEnabled
+            }
+        });
+    }
+
     private static string GetMfaErrorMessage(string error) => error switch
     {
         "INVALID_MFA_SESSION" => "Invalid or expired MFA session",
@@ -538,4 +627,15 @@ public record AdminResetPasswordRequest
 {
     public string Token { get; init; } = string.Empty;
     public string NewPassword { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// Admin notification preferences DTO.
+/// </summary>
+public record AdminNotificationPreferencesDto
+{
+    public bool CriticalAlerts { get; init; } = true;
+    public bool SecurityAlerts { get; init; } = true;
+    public bool DailySummary { get; init; } = false;
+    public bool EmailNotifications { get; init; } = true;
 }

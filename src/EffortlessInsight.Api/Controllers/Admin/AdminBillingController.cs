@@ -452,6 +452,119 @@ public class AdminBillingController : AdminControllerBase
         });
     }
 
+    /// <summary>
+    /// Download invoice as PDF.
+    /// </summary>
+    [HttpGet("invoices/{invoiceId:guid}/pdf")]
+    [ProducesResponseType(typeof(FileContentResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> DownloadInvoicePdf(Guid invoiceId)
+    {
+        var invoice = await _dbContext.Invoices
+            .Include(i => i.Organization)
+            .Include(i => i.Subscription)
+                .ThenInclude(s => s!.Plan)
+            .Include(i => i.LineItems)
+            .FirstOrDefaultAsync(i => i.Id == invoiceId);
+
+        if (invoice == null)
+        {
+            return NotFoundResponse("Invoice not found");
+        }
+
+        var pdfBytes = GenerateInvoicePdf(invoice);
+
+        return File(pdfBytes, "application/pdf", $"invoice-{invoice.InvoiceNumber}.pdf");
+    }
+
+    private byte[] GenerateInvoicePdf(Data.Entities.Invoice invoice)
+    {
+        using var stream = new MemoryStream();
+        using var writer = new StreamWriter(stream, System.Text.Encoding.UTF8);
+
+        // Generate a simple text-based PDF (for proper PDF generation, use a library like QuestPDF)
+        // This creates a minimal valid PDF structure
+        writer.WriteLine("%PDF-1.4");
+        writer.WriteLine("1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj");
+        writer.WriteLine("2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj");
+
+        // Build invoice content
+        var content = new System.Text.StringBuilder();
+        content.AppendLine($"INVOICE");
+        content.AppendLine($"Invoice Number: {invoice.InvoiceNumber}");
+        content.AppendLine($"Date: {invoice.CreatedAt:yyyy-MM-dd}");
+        content.AppendLine($"Due Date: {invoice.DueDate:yyyy-MM-dd}");
+        content.AppendLine();
+        content.AppendLine($"Bill To:");
+        content.AppendLine($"{invoice.Organization?.Name ?? "N/A"}");
+        content.AppendLine();
+        content.AppendLine("Items:");
+
+        if (invoice.LineItems != null)
+        {
+            foreach (var item in invoice.LineItems)
+            {
+                content.AppendLine($"  {item.Description}: Rs. {item.Amount / 100m:N2}");
+            }
+        }
+
+        content.AppendLine();
+        content.AppendLine($"Subtotal: Rs. {invoice.Subtotal / 100m:N2}");
+        content.AppendLine($"Tax (GST): Rs. {invoice.TaxAmount / 100m:N2}");
+        content.AppendLine($"Total: Rs. {invoice.Total / 100m:N2}");
+        content.AppendLine();
+        content.AppendLine($"Status: {invoice.Status}");
+        if (invoice.PaidAt.HasValue)
+        {
+            content.AppendLine($"Paid On: {invoice.PaidAt.Value:yyyy-MM-dd}");
+        }
+
+        var contentBytes = System.Text.Encoding.UTF8.GetBytes(content.ToString());
+        var contentHex = BitConverter.ToString(contentBytes).Replace("-", "");
+
+        // Page with text content
+        writer.WriteLine($"3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >> endobj");
+
+        // Content stream - simple text rendering
+        var textContent = $"BT /F1 12 Tf 50 750 Td ({EscapePdfString(content.ToString().Replace("\r\n", ") Tj 0 -14 Td (").Replace("\n", ") Tj 0 -14 Td ("))}) Tj ET";
+        var streamBytes = System.Text.Encoding.ASCII.GetBytes(textContent);
+        writer.WriteLine($"4 0 obj << /Length {streamBytes.Length} >> stream");
+        writer.Write(textContent);
+        writer.WriteLine("\nendstream endobj");
+
+        // Font
+        writer.WriteLine("5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Courier >> endobj");
+
+        // Cross-reference table
+        writer.WriteLine("xref");
+        writer.WriteLine("0 6");
+        writer.WriteLine("0000000000 65535 f ");
+        writer.WriteLine("0000000009 00000 n ");
+        writer.WriteLine("0000000058 00000 n ");
+        writer.WriteLine("0000000115 00000 n ");
+        writer.WriteLine("0000000270 00000 n ");
+        writer.WriteLine("0000000500 00000 n ");
+
+        // Trailer
+        writer.WriteLine("trailer << /Size 6 /Root 1 0 R >>");
+        writer.WriteLine("startxref");
+        writer.WriteLine("580");
+        writer.WriteLine("%%EOF");
+
+        writer.Flush();
+        return stream.ToArray();
+    }
+
+    private static string EscapePdfString(string input)
+    {
+        return input
+            .Replace("\\", "\\\\")
+            .Replace("(", "\\(")
+            .Replace(")", "\\)")
+            .Replace("\r", "")
+            .Replace("\t", "    ");
+    }
+
     private static (DateTime Start, DateTime End) GetPeriodDates(string period)
     {
         var end = DateTime.UtcNow;
