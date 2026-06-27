@@ -208,6 +208,20 @@ public interface IWorkflowEngineService
 
     #endregion
 
+    #region Delayed Transitions
+
+    /// <summary>
+    /// Executes a delayed workflow transition scheduled by Hangfire.
+    /// </summary>
+    Task<TransitionResult> ExecuteDelayedTransitionAsync(
+        Guid noticeId,
+        string targetStageKey,
+        Guid workflowInstanceId,
+        Guid triggeredByUserId,
+        CancellationToken cancellationToken = default);
+
+    #endregion
+
     #region Templates
 
     /// <summary>

@@ -1,6 +1,8 @@
+using EffortlessInsight.Api.Services.Encryption;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace EffortlessInsight.Api.Data;
 
@@ -17,6 +19,16 @@ public class DesignTimeDbContextFactory : IDesignTimeDbContextFactory<Applicatio
             .AddJsonFile("appsettings.Development.json", optional: true)
             .AddEnvironmentVariables()
             .Build();
+
+        // Initialize field encryption service for design-time
+        // This is required for EF Core value converters to work during migrations
+        if (!FieldEncryptionServiceAccessor.IsConfigured)
+        {
+            var encryptionService = new FieldEncryptionService(
+                configuration,
+                NullLogger<FieldEncryptionService>.Instance);
+            FieldEncryptionServiceAccessor.SetInstance(encryptionService);
+        }
 
         var optionsBuilder = new DbContextOptionsBuilder<ApplicationDbContext>();
         var connectionString = configuration.GetConnectionString("DefaultConnection")!;

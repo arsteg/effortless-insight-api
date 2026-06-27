@@ -375,8 +375,22 @@ public class AdminAuthService : IAdminAuthService
             return "PASSWORD_TOO_SHORT";
         }
 
-        // TODO: Add password history check
-        // TODO: Add password complexity check
+        // Check password history (prevent reuse of last 5 passwords)
+        var passwordHistoryCheck = await CheckPasswordHistoryAsync(adminId, request.NewPassword);
+        if (!passwordHistoryCheck.IsValid)
+        {
+            return passwordHistoryCheck.Error!;
+        }
+
+        // Check password complexity
+        var complexityCheck = ValidatePasswordComplexity(request.NewPassword);
+        if (!complexityCheck.IsValid)
+        {
+            return complexityCheck.Error!;
+        }
+
+        // Save current password to history before changing
+        await SavePasswordToHistoryAsync(adminId, admin.PasswordHash);
 
         // Hash new password
         admin.PasswordHash = HashPassword(request.NewPassword);
@@ -763,6 +777,102 @@ public class AdminAuthService : IAdminAuthService
         var bytes = Encoding.UTF8.GetBytes(token);
         var hash = sha256.ComputeHash(bytes);
         return Convert.ToBase64String(hash);
+    }
+
+    #endregion
+
+    #region Password History
+
+    private const int PasswordHistoryCount = 5;
+
+    /// <summary>
+    /// Checks if the new password has been used recently.
+    /// </summary>
+    private async Task<(bool IsValid, string? Error)> CheckPasswordHistoryAsync(Guid adminId, string newPassword)
+    {
+        var recentPasswords = await _dbContext.AdminPasswordHistory
+            .Where(h => h.AdminUserId == adminId)
+            .OrderByDescending(h => h.CreatedAt)
+            .Take(PasswordHistoryCount)
+            .Select(h => h.PasswordHash)
+            .ToListAsync();
+
+        foreach (var historyHash in recentPasswords)
+        {
+            if (VerifyPassword(newPassword, historyHash))
+            {
+                return (false, "PASSWORD_RECENTLY_USED");
+            }
+        }
+
+        return (true, null);
+    }
+
+    /// <summary>
+    /// Saves the current password hash to history.
+    /// </summary>
+    private async Task SavePasswordToHistoryAsync(Guid adminId, string passwordHash)
+    {
+        var historyEntry = new Data.Entities.Admin.AdminPasswordHistory
+        {
+            AdminUserId = adminId,
+            PasswordHash = passwordHash,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        _dbContext.AdminPasswordHistory.Add(historyEntry);
+
+        // Trim old entries beyond the history count
+        var oldEntries = await _dbContext.AdminPasswordHistory
+            .Where(h => h.AdminUserId == adminId)
+            .OrderByDescending(h => h.CreatedAt)
+            .Skip(PasswordHistoryCount)
+            .ToListAsync();
+
+        if (oldEntries.Count > 0)
+        {
+            _dbContext.AdminPasswordHistory.RemoveRange(oldEntries);
+        }
+
+        await _dbContext.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// Validates password complexity requirements.
+    /// </summary>
+    private static (bool IsValid, string? Error) ValidatePasswordComplexity(string password)
+    {
+        if (password.Length < 16)
+        {
+            return (false, "PASSWORD_TOO_SHORT");
+        }
+
+        var hasUpper = password.Any(char.IsUpper);
+        var hasLower = password.Any(char.IsLower);
+        var hasDigit = password.Any(char.IsDigit);
+        var hasSpecial = password.Any(c => !char.IsLetterOrDigit(c));
+
+        if (!hasUpper)
+        {
+            return (false, "PASSWORD_NEEDS_UPPERCASE");
+        }
+
+        if (!hasLower)
+        {
+            return (false, "PASSWORD_NEEDS_LOWERCASE");
+        }
+
+        if (!hasDigit)
+        {
+            return (false, "PASSWORD_NEEDS_DIGIT");
+        }
+
+        if (!hasSpecial)
+        {
+            return (false, "PASSWORD_NEEDS_SPECIAL");
+        }
+
+        return (true, null);
     }
 
     #endregion

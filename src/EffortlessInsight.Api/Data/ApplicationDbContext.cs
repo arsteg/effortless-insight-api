@@ -57,6 +57,10 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
     public DbSet<LoginAudit> LoginAudits => Set<LoginAudit>();
     public DbSet<PasswordHistory> PasswordHistory => Set<PasswordHistory>();
 
+    // Token Management entities
+    public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
+    public DbSet<PasswordResetToken> PasswordResetTokens => Set<PasswordResetToken>();
+
     // Task & Collaboration entities
     public DbSet<TaskAssignee> TaskAssignees => Set<TaskAssignee>();
     public DbSet<TaskTemplate> TaskTemplates => Set<TaskTemplate>();
@@ -127,6 +131,7 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
     public DbSet<ContentPageVersion> ContentPageVersions => Set<ContentPageVersion>();
     public DbSet<PromptVersion> PromptVersions => Set<PromptVersion>();
     public DbSet<AdminSession> AdminSessions => Set<AdminSession>();
+    public DbSet<AdminPasswordHistory> AdminPasswordHistory => Set<AdminPasswordHistory>();
 
     // Custom Roles and Teams
     public DbSet<CustomRole> CustomRoles => Set<CustomRole>();
@@ -355,10 +360,11 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
             .Property(r => r.Metadata)
             .HasColumnType("jsonb");
 
-        // Configure vector column
+        // Configure vector column for text-embedding-ada-002 (1536 dimensions)
+        // Note: text-embedding-3-large uses 3072, but ada-002 is more cost-effective
         modelBuilder.Entity<Embedding>()
             .Property(e => e.Vector)
-            .HasColumnType("vector(3072)");
+            .HasColumnType("vector(1536)");
 
         // ============================================================================
         // Organization Member Configuration
@@ -431,10 +437,15 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
             entity.HasIndex(e => e.StateCode);
 
             // GSTIN format check constraint (applied at database level)
+            // Note: Constraint applies to decrypted value during validation
             entity.ToTable(t => t.HasCheckConstraint(
                 "CK_OrganizationGstins_Gstin_Format",
-                "\"Gstin\" ~ '^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[A-Z0-9]{1}Z[A-Z0-9]{1}$'"
+                "\"Gstin\" ~ '^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[A-Z0-9]{1}Z[A-Z0-9]{1}$' OR \"Gstin\" LIKE 'ENC:%'"
             ));
+
+            // Apply field encryption for GSTIN (DPDP Act compliance)
+            entity.Property(e => e.Gstin)
+                .HasConversion(new Services.Encryption.EncryptedStringConverter());
 
             // Relationship
             entity.HasOne(e => e.Organization)
@@ -507,6 +518,12 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
             entity.HasIndex(e => e.SubscriptionStatus)
                 .HasFilter("\"DeletedAt\" IS NULL");
             entity.HasIndex(e => e.CreatedAt);
+
+            // Apply field encryption for PAN and TAN (DPDP Act compliance)
+            entity.Property(e => e.Pan)
+                .HasConversion(new Services.Encryption.EncryptedStringConverter());
+            entity.Property(e => e.Tan)
+                .HasConversion(new Services.Encryption.EncryptedStringConverter());
         });
 
         // ============================================================================
@@ -536,6 +553,12 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
             entity.HasIndex(n => new { n.OrganizationId, n.Status, n.ResponseDeadline })
                 .HasFilter("\"DeletedAt\" IS NULL")
                 .HasDatabaseName("IX_Notices_Org_Status_Deadline");
+
+            // Full-text search index on notice number
+            // Uses PostgreSQL B-tree index for efficient search
+            entity.HasIndex(n => n.NoticeNumber)
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .HasDatabaseName("IX_Notices_Number_Search");
 
             // Relationships
             entity.HasOne(n => n.AssignedBy)

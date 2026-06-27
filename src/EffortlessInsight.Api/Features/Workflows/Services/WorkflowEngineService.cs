@@ -401,7 +401,22 @@ public class WorkflowEngineService : IWorkflowEngineService
                     _logger.LogInformation(
                         "Auto-transition delayed by {DelayMinutes} minutes for notice {NoticeId} to stage {TargetStage}",
                         rule.DelayMinutes, instance.NoticeId, rule.TargetStage);
-                    // TODO: Schedule delayed transition via Hangfire
+
+                    // Schedule delayed transition via Hangfire
+                    var transitionTime = TimeSpan.FromMinutes(rule.DelayMinutes);
+                    Hangfire.BackgroundJob.Schedule<IWorkflowEngineService>(
+                        service => service.ExecuteDelayedTransitionAsync(
+                            instance.NoticeId,
+                            rule.TargetStage,
+                            instance.Id,
+                            Guid.Empty, // System-triggered
+                            default),
+                        transitionTime);
+
+                    _logger.LogInformation(
+                        "Scheduled delayed transition for notice {NoticeId} to stage {TargetStage} in {DelayMinutes} minutes",
+                        instance.NoticeId, rule.TargetStage, rule.DelayMinutes);
+
                     return null;
                 }
 
@@ -1264,6 +1279,117 @@ public class WorkflowEngineService : IWorkflowEngineService
             CompletedStages = completedStages,
             TotalStages = totalStages,
             ProgressPercent = Math.Round(progressPercent, 1)
+        };
+    }
+
+    #endregion
+
+    #region Delayed Transitions
+
+    /// <summary>
+    /// Executes a delayed workflow transition scheduled by Hangfire.
+    /// </summary>
+    public async Task<TransitionResult> ExecuteDelayedTransitionAsync(
+        Guid noticeId,
+        string targetStageKey,
+        Guid workflowInstanceId,
+        Guid triggeredByUserId,
+        CancellationToken cancellationToken = default)
+    {
+        _logger.LogInformation(
+            "Executing delayed transition for notice {NoticeId} to stage {TargetStage}",
+            noticeId, targetStageKey);
+
+        var instance = await _context.NoticeWorkflowInstances
+            .Include(i => i.WorkflowTemplate)
+            .ThenInclude(t => t.Stages)
+            .Include(i => i.CurrentStage)
+            .Include(i => i.Notice)
+            .FirstOrDefaultAsync(i => i.Id == workflowInstanceId && i.Status == WorkflowInstanceStatuses.Active, cancellationToken);
+
+        if (instance == null)
+        {
+            _logger.LogWarning(
+                "Delayed transition skipped - workflow instance {InstanceId} no longer active for notice {NoticeId}",
+                workflowInstanceId, noticeId);
+            return new TransitionResult
+            {
+                Success = false,
+                Message = "Workflow instance no longer active",
+                Errors = ["The workflow instance may have been completed, paused, or cancelled"]
+            };
+        }
+
+        // Find target stage
+        var targetStage = instance.WorkflowTemplate.Stages.FirstOrDefault(s => s.StageKey == targetStageKey);
+        if (targetStage == null)
+        {
+            _logger.LogWarning(
+                "Delayed transition target stage {TargetStage} not found for notice {NoticeId}",
+                targetStageKey, noticeId);
+            return new TransitionResult
+            {
+                Success = false,
+                Message = "Target stage not found",
+                Errors = [$"Stage '{targetStageKey}' does not exist in the workflow template"]
+            };
+        }
+
+        // Perform the transition
+        var previousStageKey = instance.CurrentStageKey;
+        var now = DateTime.UtcNow;
+        var timeInPreviousStage = (int)(now - instance.StageEnteredAt).TotalMinutes;
+
+        instance.CurrentStageKey = targetStage.StageKey;
+        instance.CurrentStageId = targetStage.Id;
+        instance.StageEnteredAt = now;
+        instance.SlaDeadline = targetStage.SlaHours.HasValue ? now.AddHours(targetStage.SlaHours.Value) : null;
+        instance.SlaStatus = WorkflowSlaStatuses.OnTrack;
+        instance.SlaPercentConsumed = 0;
+        instance.TransitionCount++;
+        instance.TotalTimeMinutes += timeInPreviousStage;
+        instance.UpdatedAt = now;
+
+        // Check if this is an end stage
+        if (targetStage.StageType == WorkflowStageTypes.End)
+        {
+            instance.Status = WorkflowInstanceStatuses.Completed;
+            instance.CompletedAt = now;
+            instance.CompletionOutcome = "delayed_auto_completed";
+        }
+
+        // Create history entry
+        var historyEntry = new WorkflowHistory
+        {
+            WorkflowInstanceId = instance.Id,
+            NoticeId = noticeId,
+            EventType = WorkflowHistoryEventTypes.StageTransition,
+            FromStageKey = previousStageKey,
+            ToStageKey = targetStage.StageKey,
+            PerformedBySystem = "DelayedTransitionScheduler",
+            PerformedById = triggeredByUserId != Guid.Empty ? triggeredByUserId : null,
+            Description = $"Delayed auto-transition from '{previousStageKey}' to '{targetStage.StageKey}'",
+            Reason = "Scheduled delayed transition",
+            TimeInStageMinutes = timeInPreviousStage,
+            SlaStatusAtEvent = instance.SlaStatus,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+
+        _context.WorkflowHistories.Add(historyEntry);
+        await _context.SaveChangesAsync(cancellationToken);
+
+        _logger.LogInformation(
+            "Delayed transition completed for notice {NoticeId} from {FromStage} to {ToStage}",
+            noticeId, previousStageKey, targetStage.StageKey);
+
+        // Process any actions for the new stage (entry actions, auto-assign, etc.)
+        await TryAutoCreateTaskForStageAsync(instance, targetStage, triggeredByUserId, cancellationToken);
+
+        return new TransitionResult
+        {
+            Success = true,
+            Message = $"Delayed transition completed to stage '{targetStage.Name}'"
         };
     }
 

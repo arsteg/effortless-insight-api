@@ -1180,8 +1180,9 @@ public class NoticeServiceImpl : INoticeServiceExtended
             NewValues = new Dictionary<string, object> { ["assigned_to"] = assigneeId }
         });
 
-        // TODO: Send notification to assignee
-        // _backgroundJobs.Enqueue<INotificationJob>(job => job.SendAssignmentNotification(noticeId, assigneeId));
+        // Send notification to assignee via Hangfire background job
+        Hangfire.BackgroundJob.Enqueue<Jobs.NotificationJobs>(
+            job => job.SendAssignmentNotificationAsync(noticeId, assigneeId));
 
         _logger.LogInformation(
             "Notice {NoticeId} assigned to user {AssigneeId} by user {AssignedById}",

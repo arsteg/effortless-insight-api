@@ -104,6 +104,20 @@ public static class ServiceExtensions
         // Register filters
         services.AddScoped<InternalApiKeyAuthFilter>();
 
+        // Register encryption service for PII field-level encryption
+        services.AddSingleton<Services.Encryption.IFieldEncryptionService, Services.Encryption.FieldEncryptionService>();
+
+        // Register malware scanning service
+        var clamAvEnabled = configuration.GetValue<bool>("ClamAV:Enabled");
+        if (clamAvEnabled)
+        {
+            services.AddSingleton<Services.Security.IMalwareScanService, Services.Security.ClamAvScanService>();
+        }
+        else
+        {
+            services.AddSingleton<Services.Security.IMalwareScanService, Services.Security.StubMalwareScanService>();
+        }
+
         // Register export services
         services.AddScoped<Services.Export.IExportService, Services.Export.ExportService>();
 
@@ -156,13 +170,40 @@ public static class ServiceExtensions
         .AddEntityFrameworkStores<ApplicationDbContext>()
         .AddDefaultTokenProviders();
 
+        // Register BCrypt password hasher (replaces default PBKDF2)
+        // Provides memory-hard hashing resistant to GPU/ASIC attacks with work factor 12
+        services.AddScoped<IPasswordHasher<ApplicationUser>, Services.Auth.SecurePasswordHasher<ApplicationUser>>();
+
         return services;
     }
 
     public static IServiceCollection AddAuthenticationServices(this IServiceCollection services, IConfiguration configuration)
     {
         var jwtSettings = configuration.GetSection("Jwt");
-        var key = Encoding.UTF8.GetBytes(jwtSettings["Secret"] ?? throw new InvalidOperationException("JWT Secret not configured"));
+        var rsaPrivateKeyPem = jwtSettings["RsaPrivateKey"];
+        var rsaPublicKeyPem = jwtSettings["RsaPublicKey"];
+        var symmetricSecret = jwtSettings["Secret"];
+
+        // Determine signing key based on configuration
+        SecurityKey signingKey;
+        bool useAsymmetric = !string.IsNullOrEmpty(rsaPublicKeyPem);
+
+        if (useAsymmetric)
+        {
+            // Use RS256 with RSA public key for token validation
+            var rsa = System.Security.Cryptography.RSA.Create();
+            rsa.ImportFromPem(rsaPublicKeyPem!.AsSpan());
+            signingKey = new RsaSecurityKey(rsa);
+        }
+        else
+        {
+            // Fallback to HS256 with symmetric key
+            if (string.IsNullOrEmpty(symmetricSecret))
+            {
+                throw new InvalidOperationException("JWT configuration error: Either RSA keys or symmetric Secret must be configured");
+            }
+            signingKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(symmetricSecret));
+        }
 
         // Configure OAuth options
         services.Configure<OAuthOptions>(configuration.GetSection(OAuthOptions.SectionName));
@@ -185,7 +226,7 @@ public static class ServiceExtensions
                 ValidateIssuerSigningKey = true,
                 ValidIssuer = jwtSettings["Issuer"],
                 ValidAudience = jwtSettings["Audience"],
-                IssuerSigningKey = new SymmetricSecurityKey(key),
+                IssuerSigningKey = signingKey,
                 ClockSkew = TimeSpan.Zero,
                 // Map standard claim names
                 NameClaimType = "name",

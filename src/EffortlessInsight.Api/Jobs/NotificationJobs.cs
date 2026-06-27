@@ -799,6 +799,60 @@ public class NotificationJobs
         _logger.LogInformation("Sent {Count} task reminders", sentCount);
     }
 
+    /// <summary>
+    /// Send assignment notification when a notice is assigned to a user
+    /// </summary>
+    [AutomaticRetry(Attempts = 3)]
+    [Queue("default")]
+    public async Task SendAssignmentNotificationAsync(Guid noticeId, Guid assigneeId)
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var engine = scope.ServiceProvider.GetRequiredService<INotificationEngineService>();
+
+        _logger.LogInformation(
+            "Sending assignment notification for notice {NoticeId} to user {UserId}",
+            noticeId, assigneeId);
+
+        try
+        {
+            var notice = await dbContext.Notices
+                .AsNoTracking()
+                .FirstOrDefaultAsync(n => n.Id == noticeId);
+
+            if (notice == null)
+            {
+                _logger.LogWarning("Notice {NoticeId} not found for assignment notification", noticeId);
+                return;
+            }
+
+            var request = new SendNotificationRequest(
+                assigneeId,
+                NotificationType.NoticeAssigned,
+                new Dictionary<string, object>
+                {
+                    ["noticeId"] = noticeId.ToString(),
+                    ["noticeNumber"] = notice.NoticeNumber ?? "Pending",
+                    ["noticeType"] = notice.NoticeType ?? "GST Notice",
+                    ["deadline"] = notice.ResponseDeadline?.ToString("dd MMM yyyy") ?? "Not set",
+                    ["demandAmount"] = notice.TotalDemand ?? 0
+                });
+
+            await engine.SendAsync(request);
+
+            _logger.LogInformation(
+                "Assignment notification sent for notice {NoticeId} to user {UserId}",
+                noticeId, assigneeId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Failed to send assignment notification for notice {NoticeId} to user {UserId}",
+                noticeId, assigneeId);
+            throw;
+        }
+    }
+
     private static string BuildDailyDigestHtml(ApplicationUser user, List<Notification> notifications)
     {
         var criticalItems = notifications.Where(n => n.Priority == "critical").ToList();

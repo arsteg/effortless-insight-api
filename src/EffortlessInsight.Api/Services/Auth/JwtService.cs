@@ -9,7 +9,29 @@ namespace EffortlessInsight.Api.Services.Auth;
 
 public class JwtSettings
 {
+    /// <summary>
+    /// RSA private key in PEM format for RS256 signing.
+    /// For development, can fall back to symmetric key if not provided.
+    /// </summary>
+    public string? RsaPrivateKey { get; set; }
+
+    /// <summary>
+    /// RSA public key in PEM format for RS256 verification.
+    /// </summary>
+    public string? RsaPublicKey { get; set; }
+
+    /// <summary>
+    /// Fallback symmetric secret (only used if RSA keys not configured).
+    /// DEPRECATED: Use RSA keys in production.
+    /// </summary>
     public string Secret { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Whether to use RS256 (asymmetric) or HS256 (symmetric) signing.
+    /// Defaults to true if RSA keys are configured.
+    /// </summary>
+    public bool UseAsymmetricSigning { get; set; } = true;
+
     public string Issuer { get; set; } = string.Empty;
     public string Audience { get; set; } = string.Empty;
     public int AccessTokenExpiryMinutes { get; set; } = 15;
@@ -21,12 +43,46 @@ public class JwtService : IJwtService
 {
     private readonly JwtSettings _settings;
     private readonly ILogger<JwtService> _logger;
+    private readonly RsaSecurityKey? _rsaPrivateKey;
+    private readonly RsaSecurityKey? _rsaPublicKey;
+    private readonly bool _useAsymmetricSigning;
 
     public JwtService(IConfiguration configuration, ILogger<JwtService> logger)
     {
         _settings = new JwtSettings();
         configuration.GetSection("Jwt").Bind(_settings);
         _logger = logger;
+
+        // Initialize RSA keys if configured
+        if (!string.IsNullOrEmpty(_settings.RsaPrivateKey) && !string.IsNullOrEmpty(_settings.RsaPublicKey))
+        {
+            try
+            {
+                var rsaPrivate = RSA.Create();
+                rsaPrivate.ImportFromPem(_settings.RsaPrivateKey.AsSpan());
+                _rsaPrivateKey = new RsaSecurityKey(rsaPrivate);
+
+                var rsaPublic = RSA.Create();
+                rsaPublic.ImportFromPem(_settings.RsaPublicKey.AsSpan());
+                _rsaPublicKey = new RsaSecurityKey(rsaPublic);
+
+                _useAsymmetricSigning = true;
+                _logger.LogInformation("JWT configured with RS256 asymmetric signing");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to load RSA keys, falling back to symmetric signing");
+                _useAsymmetricSigning = false;
+            }
+        }
+        else
+        {
+            _useAsymmetricSigning = false;
+            if (_settings.UseAsymmetricSigning)
+            {
+                _logger.LogWarning("RS256 signing requested but RSA keys not configured. Using HS256 symmetric signing. Configure RSA keys for production.");
+            }
+        }
     }
 
     public string GenerateAccessToken(ApplicationUser user, Organization? organization, string? roleOverride = null, bool isExternal = false)
@@ -56,8 +112,18 @@ public class JwtService : IJwtService
         // Add email verified claim
         claims.Add(new Claim("email_verified", user.EmailConfirmed.ToString().ToLower()));
 
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_settings.Secret));
-        var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+        SigningCredentials credentials;
+        if (_useAsymmetricSigning && _rsaPrivateKey != null)
+        {
+            // Use RS256 asymmetric signing (recommended for production)
+            credentials = new SigningCredentials(_rsaPrivateKey, SecurityAlgorithms.RsaSha256);
+        }
+        else
+        {
+            // Fallback to HS256 symmetric signing
+            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_settings.Secret));
+            credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+        }
 
         var token = new JwtSecurityToken(
             issuer: _settings.Issuer,
@@ -90,7 +156,18 @@ public class JwtService : IJwtService
         try
         {
             var tokenHandler = new JwtSecurityTokenHandler();
-            var key = Encoding.UTF8.GetBytes(_settings.Secret);
+
+            SecurityKey signingKey;
+            if (_useAsymmetricSigning && _rsaPublicKey != null)
+            {
+                // Use RSA public key for RS256 verification
+                signingKey = _rsaPublicKey;
+            }
+            else
+            {
+                // Use symmetric key for HS256 verification
+                signingKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_settings.Secret));
+            }
 
             var validationParameters = new TokenValidationParameters
             {
@@ -100,7 +177,7 @@ public class JwtService : IJwtService
                 ValidateIssuerSigningKey = true,
                 ValidIssuer = _settings.Issuer,
                 ValidAudience = _settings.Audience,
-                IssuerSigningKey = new SymmetricSecurityKey(key),
+                IssuerSigningKey = signingKey,
                 ClockSkew = TimeSpan.Zero
             };
 

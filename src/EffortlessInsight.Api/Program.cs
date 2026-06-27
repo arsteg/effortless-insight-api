@@ -1,19 +1,49 @@
+using System.Security.Authentication;
 using System.Text.Json;
 using AspNetCoreRateLimit;
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Extensions;
 using EffortlessInsight.Api.Middleware;
 using Hangfire;
+using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Configure Serilog
+// Configure Kestrel for TLS 1.3 enforcement in production
+if (!builder.Environment.IsDevelopment())
+{
+    builder.WebHost.ConfigureKestrel(serverOptions =>
+    {
+        serverOptions.ConfigureHttpsDefaults(httpsOptions =>
+        {
+            // Enforce TLS 1.2 minimum, prefer TLS 1.3
+            httpsOptions.SslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13;
+        });
+    });
+}
+
+// Configure Sentry for error tracking
+builder.WebHost.UseSentry(options =>
+{
+    options.Dsn = builder.Configuration["Sentry:Dsn"] ?? "";
+    options.Environment = builder.Environment.EnvironmentName;
+    options.TracesSampleRate = builder.Environment.IsDevelopment() ? 1.0 : 0.1;
+    options.Debug = builder.Environment.IsDevelopment();
+    options.SendDefaultPii = false; // Don't send PII
+    options.AttachStacktrace = true;
+    options.MaxBreadcrumbs = 50;
+    options.MinimumBreadcrumbLevel = LogLevel.Information;
+    options.MinimumEventLevel = LogLevel.Error;
+});
+
+// Configure Serilog with PII masking
 Log.Logger = new LoggerConfiguration()
     .ReadFrom.Configuration(builder.Configuration)
     .Enrich.FromLogContext()
+    .Enrich.With<EffortlessInsight.Api.Middleware.PiiMaskingEnricher>() // Mask PII in logs for DPDP compliance
     .WriteTo.Console()
     .CreateLogger();
 
@@ -131,6 +161,10 @@ builder.Services.AddHealthChecks()
 
 var app = builder.Build();
 
+// Initialize field encryption service accessor for EF Core value converters
+var encryptionService = app.Services.GetRequiredService<EffortlessInsight.Api.Services.Encryption.IFieldEncryptionService>();
+EffortlessInsight.Api.Services.Encryption.FieldEncryptionServiceAccessor.SetInstance(encryptionService);
+
 // Configure the HTTP request pipeline
 if (app.Environment.IsDevelopment())
 {
@@ -141,6 +175,9 @@ if (app.Environment.IsDevelopment())
 
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseMiddleware<RequestLoggingMiddleware>();
+
+// Add security headers to all responses
+app.UseSecurityHeaders();
 
 app.UseIpRateLimiting();
 

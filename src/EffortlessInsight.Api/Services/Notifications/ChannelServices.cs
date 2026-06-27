@@ -6,6 +6,7 @@ using FirebaseAdmin.Messaging;
 using Google.Apis.Auth.OAuth2;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Options;
 using Resend;
 using Twilio;
@@ -253,20 +254,28 @@ public class TwilioSmsService : ISmsChannelService
 #region WhatsApp Channel Service (Twilio)
 
 /// <summary>
-/// Twilio WhatsApp channel service implementation
+/// Twilio WhatsApp channel service implementation with conversation tracking.
+/// Tracks the 24-hour conversation window for WhatsApp Business API compliance.
 /// </summary>
 public class TwilioWhatsAppService : IWhatsAppChannelService
 {
     private readonly TwilioOptions _options;
     private readonly ILogger<TwilioWhatsAppService> _logger;
+    private readonly IDistributedCache _cache;
     private bool _initialized;
+
+    // WhatsApp conversation window is 24 hours
+    private const string ConversationKeyPrefix = "whatsapp:conversation:";
+    private static readonly TimeSpan ConversationWindowDuration = TimeSpan.FromHours(24);
 
     public TwilioWhatsAppService(
         IOptions<TwilioOptions> options,
-        ILogger<TwilioWhatsAppService> logger)
+        ILogger<TwilioWhatsAppService> logger,
+        IDistributedCache cache)
     {
         _options = options.Value;
         _logger = logger;
+        _cache = cache;
         InitializeTwilio();
     }
 
@@ -356,11 +365,100 @@ public class TwilioWhatsAppService : IWhatsAppChannelService
     }
 
     /// <inheritdoc />
-    public Task<bool> IsConversationActiveAsync(string phone, CancellationToken cancellationToken = default)
+    public async Task<bool> IsConversationActiveAsync(string phone, CancellationToken cancellationToken = default)
     {
-        // TODO: Implement conversation tracking
-        // For now, assume template messages are always allowed
-        return Task.FromResult(true);
+        try
+        {
+            var normalizedPhone = NormalizePhoneForCache(phone);
+            var cacheKey = $"{ConversationKeyPrefix}{normalizedPhone}";
+            var lastInteraction = await _cache.GetStringAsync(cacheKey, cancellationToken);
+
+            if (string.IsNullOrEmpty(lastInteraction))
+            {
+                return false;
+            }
+
+            // Check if within 24-hour window
+            if (DateTime.TryParse(lastInteraction, out var interactionTime))
+            {
+                var isActive = DateTime.UtcNow - interactionTime < ConversationWindowDuration;
+                _logger.LogDebug(
+                    "WhatsApp conversation check for {Phone}: active={IsActive}, lastInteraction={LastInteraction}",
+                    normalizedPhone, isActive, interactionTime);
+                return isActive;
+            }
+
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to check WhatsApp conversation status for {Phone}", phone);
+            // Return true to allow template messages as fallback
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Records user interaction to start/extend the 24-hour conversation window.
+    /// Call this when receiving an incoming message from the user.
+    /// </summary>
+    public async Task RecordUserInteractionAsync(string phone, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var normalizedPhone = NormalizePhoneForCache(phone);
+            var cacheKey = $"{ConversationKeyPrefix}{normalizedPhone}";
+
+            await _cache.SetStringAsync(
+                cacheKey,
+                DateTime.UtcNow.ToString("O"),
+                new DistributedCacheEntryOptions
+                {
+                    AbsoluteExpirationRelativeToNow = ConversationWindowDuration
+                },
+                cancellationToken);
+
+            _logger.LogInformation("WhatsApp conversation window opened/extended for {Phone}", normalizedPhone);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to record WhatsApp interaction for {Phone}", phone);
+        }
+    }
+
+    /// <summary>
+    /// Gets the remaining time in the conversation window.
+    /// </summary>
+    public async Task<TimeSpan?> GetConversationTimeRemainingAsync(string phone, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var normalizedPhone = NormalizePhoneForCache(phone);
+            var cacheKey = $"{ConversationKeyPrefix}{normalizedPhone}";
+            var lastInteraction = await _cache.GetStringAsync(cacheKey, cancellationToken);
+
+            if (!string.IsNullOrEmpty(lastInteraction) && DateTime.TryParse(lastInteraction, out var interactionTime))
+            {
+                var elapsed = DateTime.UtcNow - interactionTime;
+                if (elapsed < ConversationWindowDuration)
+                {
+                    return ConversationWindowDuration - elapsed;
+                }
+            }
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to get WhatsApp conversation time remaining for {Phone}", phone);
+            return null;
+        }
+    }
+
+    private static string NormalizePhoneForCache(string phone)
+    {
+        // Extract just the digits for consistent cache keys
+        return new string(phone.Where(char.IsDigit).ToArray());
     }
 
     /// <inheritdoc />
