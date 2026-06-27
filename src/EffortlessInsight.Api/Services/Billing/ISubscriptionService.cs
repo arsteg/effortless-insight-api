@@ -77,6 +77,11 @@ public interface ISubscriptionService
     Task ProcessRenewalAsync(Guid subscriptionId);
 
     /// <summary>
+    /// Processes subscription renewal with webhook data from Razorpay.
+    /// </summary>
+    Task ProcessRenewalAsync(Guid subscriptionId, RenewalWebhookData webhookData);
+
+    /// <summary>
     /// Handles payment failure for a subscription.
     /// </summary>
     Task HandlePaymentFailureAsync(Guid subscriptionId, string failureReason);
@@ -95,4 +100,114 @@ public interface ISubscriptionService
     /// Gets subscription by Razorpay subscription ID.
     /// </summary>
     Task<BillingSubscription?> GetByRazorpayIdAsync(string razorpaySubscriptionId);
+
+    /// <summary>
+    /// Pauses a subscription.
+    /// </summary>
+    /// <param name="subscriptionId">The subscription ID.</param>
+    /// <param name="reason">The reason for pausing.</param>
+    /// <param name="resumeAt">Optional scheduled resume date.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>The paused subscription.</returns>
+    Task<BillingSubscription> PauseSubscriptionAsync(
+        Guid subscriptionId,
+        string reason,
+        DateTime? resumeAt,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Resumes a paused subscription.
+    /// </summary>
+    /// <param name="subscriptionId">The subscription ID.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>The resumed subscription.</returns>
+    Task<BillingSubscription> ResumeSubscriptionAsync(
+        Guid subscriptionId,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Manually retries the last failed payment for a subscription.
+    /// </summary>
+    /// <param name="organizationId">The organization ID.</param>
+    /// <returns>Payment retry result.</returns>
+    Task<PaymentRetryResponse> RetryPaymentAsync(Guid organizationId);
+
+    /// <summary>
+    /// Creates a refund for a subscription payment.
+    /// </summary>
+    /// <param name="subscriptionId">The subscription ID.</param>
+    /// <param name="amount">Optional partial refund amount. If null, refunds the full payment.</param>
+    /// <param name="reason">The reason for the refund.</param>
+    /// <returns>Refund details.</returns>
+    Task<RefundResponse> CreateRefundAsync(Guid subscriptionId, decimal? amount, string reason);
+}
+
+/// <summary>
+/// Response for payment retry operation.
+/// </summary>
+/// <param name="Success">Whether the payment retry was successful.</param>
+/// <param name="Message">Human-readable message about the result.</param>
+/// <param name="NewStatus">The new subscription status.</param>
+/// <param name="NextBillingDate">The next billing date if payment succeeded.</param>
+public record PaymentRetryResponse(
+    bool Success,
+    string Message,
+    string NewStatus,
+    DateTime? NextBillingDate
+);
+
+/// <summary>
+/// Response for refund operation.
+/// </summary>
+/// <param name="RefundId">The Razorpay refund ID.</param>
+/// <param name="PaymentId">The original payment ID.</param>
+/// <param name="Amount">The refund amount in the currency's standard unit.</param>
+/// <param name="Currency">The currency code.</param>
+/// <param name="Status">The refund status.</param>
+/// <param name="Reason">The reason for the refund.</param>
+/// <param name="CreatedAt">When the refund was created.</param>
+public record RefundResponse(
+    string RefundId,
+    string PaymentId,
+    decimal Amount,
+    string Currency,
+    string Status,
+    string Reason,
+    DateTime CreatedAt
+);
+
+/// <summary>
+/// Data from Razorpay webhook for subscription renewal.
+/// </summary>
+public record RenewalWebhookData
+{
+    /// <summary>
+    /// The Razorpay payment ID for this charge.
+    /// </summary>
+    public string? RazorpayPaymentId { get; init; }
+
+    /// <summary>
+    /// Amount charged in paise.
+    /// </summary>
+    public int? AmountInPaise { get; init; }
+
+    /// <summary>
+    /// Currency code (e.g., INR).
+    /// </summary>
+    public string? Currency { get; init; }
+
+    /// <summary>
+    /// Unix timestamp of when the charge occurred.
+    /// </summary>
+    public long? ChargeAt { get; init; }
+
+    /// <summary>
+    /// Unix timestamp for current period start.
+    /// </summary>
+    public long? CurrentPeriodStart { get; init; }
+
+    /// <summary>
+    /// Unix timestamp for current period end.
+    /// </summary>
+    public long? CurrentPeriodEnd { get; init; }
 }

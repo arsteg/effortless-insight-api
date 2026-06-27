@@ -23,7 +23,7 @@ public class CommentsController : ControllerBase
     }
 
     private Guid GetUserId() =>
-        Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+        Guid.Parse(User.FindFirstValue("sub")!);
 
     // ==========================================================================
     // Notice-scoped Comment Endpoints

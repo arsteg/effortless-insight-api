@@ -32,6 +32,12 @@ public record WorkflowStageDto
     public string Color { get; init; } = string.Empty;
     public string Icon { get; init; } = string.Empty;
     public List<string> AllowedTransitions { get; init; } = [];
+
+    // Parallel execution fields
+    public string? ParallelBranchId { get; init; }
+    public bool IsSynchronizationPoint { get; init; }
+    public string? JoinType { get; init; }
+    public int? MinBranchesToComplete { get; init; }
 }
 
 public record WorkflowTemplateSummaryDto
@@ -72,6 +78,9 @@ public record WorkflowInstanceDto
     public int SlaBreachCount { get; init; }
     public int TransitionCount { get; init; }
     public List<string> AvailableTransitions { get; init; } = [];
+    public bool HasParallelStages { get; init; }
+    public int ActiveBranchCount { get; init; }
+    public List<StageInstanceDto>? ActiveStageInstances { get; init; }
     public DateTime CreatedAt { get; init; }
 }
 
@@ -230,6 +239,120 @@ public record SlaStatusDto
     public bool IsBreached { get; init; }
     public bool IsAtRisk { get; init; }
     public bool IsWarning { get; init; }
+}
+
+#endregion
+
+#region Parallel Execution DTOs
+
+/// <summary>
+/// Represents an active stage instance within a workflow.
+/// </summary>
+public record StageInstanceDto
+{
+    public Guid Id { get; init; }
+    public Guid WorkflowInstanceId { get; init; }
+    public Guid StageId { get; init; }
+    public string StageKey { get; init; } = string.Empty;
+    public string StageName { get; init; } = string.Empty;
+    public string? BranchId { get; init; }
+    public string Status { get; init; } = string.Empty;
+    public DateTime EnteredAt { get; init; }
+    public DateTime? CompletedAt { get; init; }
+    public DateTime? SlaDeadline { get; init; }
+    public string SlaStatus { get; init; } = string.Empty;
+    public int SlaPercentConsumed { get; init; }
+    public Guid? AssignedToId { get; init; }
+    public string? AssignedToName { get; init; }
+    public string? AssignedRole { get; init; }
+    public string? Outcome { get; init; }
+    public int TimeSpentMinutes { get; init; }
+    public List<string> AllowedTransitions { get; init; } = [];
+}
+
+/// <summary>
+/// Request to complete a stage instance.
+/// </summary>
+public record CompleteStageInstanceRequest
+{
+    public string? Outcome { get; init; }
+    public string? TargetStageKey { get; init; }
+    public string? Reason { get; init; }
+    public Dictionary<string, object>? Metadata { get; init; }
+}
+
+/// <summary>
+/// Request to fork a workflow into parallel branches.
+/// </summary>
+public record ForkWorkflowRequest
+{
+    /// <summary>
+    /// Stage keys to fork to (parallel branches).
+    /// </summary>
+    public List<string> TargetStageKeys { get; init; } = [];
+
+    /// <summary>
+    /// Reason for forking.
+    /// </summary>
+    public string? Reason { get; init; }
+
+    /// <summary>
+    /// Optional assignments per branch.
+    /// </summary>
+    public Dictionary<string, ForkBranchAssignment>? BranchAssignments { get; init; }
+}
+
+/// <summary>
+/// Assignment info for a forked branch.
+/// </summary>
+public record ForkBranchAssignment
+{
+    public Guid? AssignToUserId { get; init; }
+    public string? AssignToRole { get; init; }
+}
+
+/// <summary>
+/// Status of parallel branches in a workflow.
+/// </summary>
+public record ParallelBranchStatusDto
+{
+    public Guid WorkflowInstanceId { get; init; }
+    public Guid NoticeId { get; init; }
+    public bool HasParallelStages { get; init; }
+    public int ActiveBranchCount { get; init; }
+    public int CompletedBranchCount { get; init; }
+    public int TotalBranchCount { get; init; }
+    public List<BranchStatusDto> Branches { get; init; } = [];
+    public SynchronizationPointDto? NextSyncPoint { get; init; }
+}
+
+/// <summary>
+/// Status of a single branch.
+/// </summary>
+public record BranchStatusDto
+{
+    public string BranchId { get; init; } = string.Empty;
+    public string CurrentStageKey { get; init; } = string.Empty;
+    public string CurrentStageName { get; init; } = string.Empty;
+    public string Status { get; init; } = string.Empty;
+    public Guid? AssignedToId { get; init; }
+    public string? AssignedToName { get; init; }
+    public DateTime? SlaDeadline { get; init; }
+    public string SlaStatus { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// Information about a synchronization point.
+/// </summary>
+public record SynchronizationPointDto
+{
+    public string StageKey { get; init; } = string.Empty;
+    public string StageName { get; init; } = string.Empty;
+    public string JoinType { get; init; } = string.Empty;
+    public int? MinBranchesToComplete { get; init; }
+    public int CompletedBranches { get; init; }
+    public int RequiredBranches { get; init; }
+    public bool IsReady { get; init; }
 }
 
 #endregion

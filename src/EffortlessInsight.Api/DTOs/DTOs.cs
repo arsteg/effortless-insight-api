@@ -1,3 +1,5 @@
+using Microsoft.AspNetCore.Http;
+
 namespace EffortlessInsight.Api.DTOs;
 
 // ============================================================================
@@ -91,6 +93,12 @@ public record TwoFactorLoginResponse(string AccessToken, string RefreshToken, st
 
 // 2FA Disable DTOs
 public record TwoFactorDisableRequest(string Password);
+
+// OAuth DTOs
+public record OAuthProviderInfo(string Name, string DisplayName, bool Enabled);
+public record OAuthProvidersResponse(List<OAuthProviderInfo> Providers);
+public record OAuthLoginUrlResponse(string LoginUrl, string Provider);
+public record OAuthCallbackRequest(string Code, string? State);
 
 // Session DTOs
 public record SessionDto(Guid Id, string? DeviceName, string Platform, string IpAddress, string? Location, DateTime LastActiveAt, DateTime CreatedAt, bool IsCurrent);
@@ -358,6 +366,28 @@ public record ChangeMemberRoleResponse(
 );
 
 // ============================================================================
+// Member Suspension DTOs
+// ============================================================================
+
+public record SuspendMemberRequest(
+    string Reason,
+    DateTime? ExpiresAt = null
+);
+
+public record MemberSuspensionResponse(
+    Guid MemberId,
+    Guid UserId,
+    string UserEmail,
+    string UserName,
+    string Status,
+    DateTime? SuspendedAt,
+    string? SuspensionReason,
+    DateTime? SuspensionExpiresAt,
+    Guid? SuspendedById,
+    string? SuspendedByName
+);
+
+// ============================================================================
 // Organization Invitation DTOs
 // ============================================================================
 
@@ -492,6 +522,102 @@ public record UpdateNoticeDto(
     List<string>? Tags
 );
 
+/// <summary>
+/// Request for creating a notice manually without file upload.
+/// </summary>
+public record CreateManualNoticeRequest
+{
+    /// <summary>
+    /// GSTIN associated with this notice (required).
+    /// </summary>
+    public required string Gstin { get; init; }
+
+    /// <summary>
+    /// Notice number from the authority.
+    /// </summary>
+    public string? NoticeNumber { get; init; }
+
+    /// <summary>
+    /// Notice type code (e.g., DRC-01, ASMT-10, REG-17).
+    /// </summary>
+    public string? NoticeType { get; init; }
+
+    /// <summary>
+    /// Notice category (assessment, demand, registration, refund, audit).
+    /// </summary>
+    public string? NoticeCategory { get; init; }
+
+    /// <summary>
+    /// Notice sub-category for detailed classification.
+    /// </summary>
+    public string? NoticeSubCategory { get; init; }
+
+    /// <summary>
+    /// Date the notice was issued.
+    /// </summary>
+    public DateOnly? IssueDate { get; init; }
+
+    /// <summary>
+    /// Deadline to respond to the notice.
+    /// </summary>
+    public DateOnly? ResponseDeadline { get; init; }
+
+    /// <summary>
+    /// Tax period start date.
+    /// </summary>
+    public DateOnly? PeriodFrom { get; init; }
+
+    /// <summary>
+    /// Tax period end date.
+    /// </summary>
+    public DateOnly? PeriodTo { get; init; }
+
+    /// <summary>
+    /// Hearing date if applicable.
+    /// </summary>
+    public DateOnly? HearingDate { get; init; }
+
+    /// <summary>
+    /// Tax amount demanded.
+    /// </summary>
+    public decimal? TaxAmount { get; init; }
+
+    /// <summary>
+    /// Penalty amount demanded.
+    /// </summary>
+    public decimal? PenaltyAmount { get; init; }
+
+    /// <summary>
+    /// Interest amount demanded.
+    /// </summary>
+    public decimal? InterestAmount { get; init; }
+
+    /// <summary>
+    /// Issuing authority name.
+    /// </summary>
+    public string? IssuingAuthority { get; init; }
+
+    /// <summary>
+    /// Subject/description of the notice.
+    /// </summary>
+    public string? Subject { get; init; }
+
+    /// <summary>
+    /// Priority level (critical, high, medium, low).
+    /// </summary>
+    public string? Priority { get; init; }
+
+    /// <summary>
+    /// Tags for categorization.
+    /// </summary>
+    public List<string>? Tags { get; init; }
+
+    /// <summary>
+    /// User ID to assign the notice to.
+    /// </summary>
+    public Guid? AssignedToId { get; init; }
+}
+
 public record NoticeDto(
     Guid Id,
     string? NoticeType,
@@ -539,6 +665,39 @@ public record NoticeDetailDto(
     string? AssignedToName,
     DateTime CreatedAt,
     DateTime? UpdatedAt
+);
+
+// Notice Relationship DTOs
+public record NoticeRelationshipDto(
+    Guid Id,
+    Guid SourceNoticeId,
+    Guid TargetNoticeId,
+    string RelationshipType,
+    string? Note,
+    NoticeRelationshipNoticeDto SourceNotice,
+    NoticeRelationshipNoticeDto TargetNotice,
+    string CreatedByName,
+    DateTime CreatedAt
+);
+
+public record NoticeRelationshipNoticeDto(
+    Guid Id,
+    string? NoticeNumber,
+    string? NoticeType,
+    string? Gstin,
+    string Status,
+    DateOnly? ResponseDeadline
+);
+
+public record CreateNoticeRelationshipRequest(
+    Guid TargetNoticeId,
+    string RelationshipType,
+    string? Note
+);
+
+public record NoticeRelationshipsResponse(
+    List<NoticeRelationshipDto> Outgoing,
+    List<NoticeRelationshipDto> Incoming
 );
 
 public record NoticeFilterDto(
@@ -665,7 +824,47 @@ public record ResponseDto(
     List<AttachmentDto>? Attachments
 );
 
-public record AttachmentDto(Guid Id, string FileName, string FileUrl, int? FileSize, string? FileType, string? DocumentType);
+public record AttachmentDto(
+    Guid Id,
+    string FileName,
+    string FileUrl,
+    int? FileSize,
+    string? FileType,
+    string? DocumentType,
+    string? Description,
+    int Version = 1,
+    bool IsCurrentVersion = true,
+    bool HasPreviousVersions = false,
+    DateTime? CreatedAt = null);
+
+public record AttachmentVersionDto
+{
+    public Guid Id { get; init; }
+    public int Version { get; init; }
+    public string FileName { get; init; } = string.Empty;
+    public int? FileSize { get; init; }
+    public string? FileType { get; init; }
+    public string? FileHash { get; init; }
+    public string? VersionNote { get; init; }
+    public bool IsCurrentVersion { get; init; }
+    public Guid UploadedById { get; init; }
+    public string? UploadedByName { get; init; }
+    public DateTime CreatedAt { get; init; }
+}
+
+public record AttachmentVersionHistoryResponse
+{
+    public Guid AttachmentId { get; init; }
+    public Guid CurrentVersionId { get; init; }
+    public int TotalVersions { get; init; }
+    public List<AttachmentVersionDto> Versions { get; init; } = [];
+}
+
+public class UploadNewVersionRequest
+{
+    public IFormFile? File { get; set; }
+    public string? VersionNote { get; set; }
+}
 
 // ============================================================================
 // Common DTOs
@@ -685,3 +884,130 @@ public record ApiErrorResponse(
     string Message,
     Dictionary<string, string[]>? Errors = null
 );
+
+// ============================================================================
+// Approval Chain DTOs
+// ============================================================================
+
+public record CreateApprovalChainRequest
+{
+    public required string Name { get; init; }
+    public string? Description { get; init; }
+    public string? TriggerEvent { get; init; }
+    public Dictionary<string, object>? TriggerConditions { get; init; }
+    public bool? IsActive { get; init; }
+    public bool? IsParallel { get; init; }
+    public int? MinApprovalsRequired { get; init; }
+    public int? DefaultTimeoutHours { get; init; }
+    public List<CreateApprovalStepRequest>? Steps { get; init; }
+}
+
+public record CreateApprovalStepRequest
+{
+    public required string Name { get; init; }
+    public string? ApproverType { get; init; }
+    public Guid? ApproverId { get; init; }
+    public string? ApproverRole { get; init; }
+    public bool? IsOptional { get; init; }
+    public Dictionary<string, object>? Conditions { get; init; }
+    public int? TimeoutHours { get; init; }
+    public Guid? EscalationUserId { get; init; }
+    public bool? AllowDelegation { get; init; }
+    public string? Instructions { get; init; }
+}
+
+public record UpdateApprovalChainRequest
+{
+    public string? Name { get; init; }
+    public string? Description { get; init; }
+    public string? TriggerEvent { get; init; }
+    public Dictionary<string, object>? TriggerConditions { get; init; }
+    public bool? IsActive { get; init; }
+    public bool? IsParallel { get; init; }
+    public int? MinApprovalsRequired { get; init; }
+    public int? DefaultTimeoutHours { get; init; }
+}
+
+public record SubmitApprovalRequest
+{
+    public required Guid ApprovalChainId { get; init; }
+    public required Guid NoticeId { get; init; }
+    public Guid? ResponseId { get; init; }
+    public string? Notes { get; init; }
+    public Dictionary<string, object>? Metadata { get; init; }
+}
+
+public record ApprovalActionRequest
+{
+    public string? Comments { get; init; }
+}
+
+public record DelegateApprovalRequest
+{
+    public required Guid DelegateToUserId { get; init; }
+    public string? Reason { get; init; }
+}
+
+public record ApprovalChainDto
+{
+    public Guid Id { get; init; }
+    public string Name { get; init; } = string.Empty;
+    public string? Description { get; init; }
+    public string? TriggerEvent { get; init; }
+    public bool IsActive { get; init; }
+    public bool IsParallel { get; init; }
+    public int? MinApprovalsRequired { get; init; }
+    public int? DefaultTimeoutHours { get; init; }
+    public List<ApprovalStepDto> Steps { get; init; } = [];
+    public DateTime CreatedAt { get; init; }
+}
+
+public record ApprovalStepDto
+{
+    public Guid Id { get; init; }
+    public int StepOrder { get; init; }
+    public string Name { get; init; } = string.Empty;
+    public string ApproverType { get; init; } = string.Empty;
+    public Guid? ApproverId { get; init; }
+    public string? ApproverName { get; init; }
+    public string? ApproverRole { get; init; }
+    public bool IsOptional { get; init; }
+    public int? TimeoutHours { get; init; }
+    public bool AllowDelegation { get; init; }
+    public string? Instructions { get; init; }
+}
+
+public record ApprovalRequestDto
+{
+    public Guid Id { get; init; }
+    public Guid ApprovalChainId { get; init; }
+    public string ApprovalChainName { get; init; } = string.Empty;
+    public Guid NoticeId { get; init; }
+    public string? NoticeNumber { get; init; }
+    public Guid? ResponseId { get; init; }
+    public Guid RequestedById { get; init; }
+    public string RequestedByName { get; init; } = string.Empty;
+    public int CurrentStep { get; init; }
+    public int TotalSteps { get; init; }
+    public string Status { get; init; } = string.Empty;
+    public DateTime? CurrentStepDeadline { get; init; }
+    public DateTime? CompletedAt { get; init; }
+    public string? RequestNotes { get; init; }
+    public List<ApprovalActionDto> Actions { get; init; } = [];
+    public DateTime CreatedAt { get; init; }
+}
+
+public record ApprovalActionDto
+{
+    public Guid Id { get; init; }
+    public int StepOrder { get; init; }
+    public string StepName { get; init; } = string.Empty;
+    public Guid ActorId { get; init; }
+    public string ActorName { get; init; } = string.Empty;
+    public string ActionType { get; init; } = string.Empty;
+    public string? Comments { get; init; }
+    public Guid? DelegatedToId { get; init; }
+    public string? DelegatedToName { get; init; }
+    public bool IsAutomatic { get; init; }
+    public DateTime CreatedAt { get; init; }
+}

@@ -9,6 +9,7 @@ using EffortlessInsight.Api.Services.Storage;
 using EffortlessInsight.Api.Jobs;
 using EffortlessInsight.Api.Services.Organizations;
 using EffortlessInsight.Api.Services.Notices;
+using EffortlessInsight.Api.Services.Workflows;
 using EffortlessInsight.Api.Features.Workflows.Services;
 using EffortlessInsight.Api.Services.Collaboration;
 using EffortlessInsight.Api.Services.Billing;
@@ -20,6 +21,7 @@ using Polly.Extensions.Http;
 using FluentValidation.AspNetCore;
 using Hangfire;
 using Hangfire.Redis.StackExchange;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.IdentityModel.Tokens;
@@ -41,6 +43,7 @@ public static class ServiceExtensions
         services.AddScoped<IOtpService, OtpService>();
         services.AddScoped<ISessionService, SessionService>();
         services.AddScoped<IAuthService, AuthService>();
+        services.AddScoped<IGeoLocationService, GeoLocationService>();
 
         // Register application services
         services.AddScoped<INoticeService, NoticeServiceImpl>();
@@ -63,9 +66,13 @@ public static class ServiceExtensions
         // Register notice services
         services.AddScoped<IFileValidationService, FileValidationService>();
         services.AddScoped<INoticeWorkflowService, NoticeWorkflowService>();
+        services.AddScoped<IZipProcessingService, ZipProcessingService>();
 
         // Register workflow engine services
         services.AddScoped<IWorkflowEngineService, WorkflowEngineService>();
+        services.AddScoped<IConditionEvaluator, ConditionEvaluator>();
+        services.AddScoped<IAssignmentEngineService, AssignmentEngineService>();
+        services.AddScoped<IApprovalService, ApprovalService>();
 
         // Register Task & Collaboration services
         services.AddScoped<ITaskService, TaskService>();
@@ -73,12 +80,15 @@ public static class ServiceExtensions
         services.AddScoped<IDocumentRequestService, DocumentRequestService>();
         services.AddScoped<IActivityService, ActivityService>();
         services.AddScoped<INotificationService, NotificationService>();
+        services.AddScoped<ITimeTrackingService, TimeTrackingService>();
 
         // Register background jobs
         services.AddScoped<Jobs.OrganizationJobs>();
         services.AddScoped<INoticeProcessingJob, Jobs.NoticeProcessingJob>();
         services.AddScoped<Jobs.WorkflowSlaMonitorJob>();
         services.AddScoped<Jobs.OverdueNotificationJob>();
+        services.AddScoped<Jobs.DataRetentionJob>();
+        services.AddScoped<Jobs.ScheduledReportJob>();
 
         // Register billing services
         services.AddScoped<IPlanService, PlanService>();
@@ -94,6 +104,14 @@ public static class ServiceExtensions
         // Register filters
         services.AddScoped<InternalApiKeyAuthFilter>();
 
+        // Register export services
+        services.AddScoped<Services.Export.IExportService, Services.Export.ExportService>();
+
+        // Register reporting services (GAP-RPT-003, GAP-RPT-006)
+        services.AddScoped<Services.Reporting.IReportBuilderService, Services.Reporting.ReportBuilderService>();
+        services.AddScoped<Services.Reporting.IReportQueryBuilder, Services.Reporting.ReportQueryBuilder>();
+        services.AddScoped<Services.Reporting.IReportExportService, Services.Reporting.ReportExportService>();
+
         return services;
     }
 
@@ -104,6 +122,10 @@ public static class ServiceExtensions
 
         // Configure Billing options
         services.Configure<BillingOptions>(configuration.GetSection(BillingOptions.SectionName));
+
+        // Configure Data Retention options
+        services.Configure<Jobs.DataRetentionOptions>(
+            configuration.GetSection(Jobs.DataRetentionOptions.SectionName));
 
         return services;
     }
@@ -142,7 +164,11 @@ public static class ServiceExtensions
         var jwtSettings = configuration.GetSection("Jwt");
         var key = Encoding.UTF8.GetBytes(jwtSettings["Secret"] ?? throw new InvalidOperationException("JWT Secret not configured"));
 
-        services.AddAuthentication(options =>
+        // Configure OAuth options
+        services.Configure<OAuthOptions>(configuration.GetSection(OAuthOptions.SectionName));
+        var oauthOptions = configuration.GetSection(OAuthOptions.SectionName).Get<OAuthOptions>() ?? new OAuthOptions();
+
+        var authBuilder = services.AddAuthentication(options =>
         {
             options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
             options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
@@ -166,6 +192,35 @@ public static class ServiceExtensions
                 RoleClaimType = "role"
             };
         });
+
+        // Add Google OAuth if configured
+        if (oauthOptions.Google.IsConfigured)
+        {
+            authBuilder.AddGoogle("Google", options =>
+            {
+                options.ClientId = oauthOptions.Google.ClientId;
+                options.ClientSecret = oauthOptions.Google.ClientSecret;
+                options.CallbackPath = "/api/auth/callback/google";
+                options.SaveTokens = true;
+                options.Scope.Add("email");
+                options.Scope.Add("profile");
+                options.ClaimActions.MapJsonKey("picture", "picture");
+            });
+        }
+
+        // Add Microsoft OAuth if configured
+        if (oauthOptions.Microsoft.IsConfigured)
+        {
+            authBuilder.AddMicrosoftAccount("Microsoft", options =>
+            {
+                options.ClientId = oauthOptions.Microsoft.ClientId;
+                options.ClientSecret = oauthOptions.Microsoft.ClientSecret;
+                options.CallbackPath = "/api/auth/callback/microsoft";
+                options.SaveTokens = true;
+                options.Scope.Add("email");
+                options.Scope.Add("profile");
+            });
+        }
 
         services.AddAuthorization(options =>
         {
@@ -289,6 +344,14 @@ public static class ServiceExtensions
         })
         .AddPolicyHandler(GetRetryPolicy(aiOptions))
         .AddPolicyHandler(GetCircuitBreakerPolicy());
+
+        // GeoLocation HTTP Client for IP geolocation lookups
+        services.AddHttpClient("GeoLocation", client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(5);
+            client.DefaultRequestHeaders.Add("Accept", "application/json");
+            client.DefaultRequestHeaders.Add("User-Agent", "EffortlessInsight-API/1.0");
+        });
 
         return services;
     }

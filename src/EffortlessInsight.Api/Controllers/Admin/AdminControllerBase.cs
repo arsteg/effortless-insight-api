@@ -31,6 +31,7 @@ public abstract class AdminControllerBase : ControllerBase
         get
         {
             var adminIdClaim = User.FindFirst(AdminJwtService.AdminIdClaim)?.Value
+                ?? User.FindFirst("sub")?.Value
                 ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
 
             if (string.IsNullOrEmpty(adminIdClaim) || !Guid.TryParse(adminIdClaim, out var adminId))

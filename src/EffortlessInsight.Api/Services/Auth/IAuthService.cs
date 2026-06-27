@@ -28,4 +28,9 @@ public interface IAuthService
     // Password History
     Task<bool> IsPasswordRecentlyUsedAsync(Guid userId, string password);
     Task AddPasswordHistoryAsync(Guid userId, string passwordHash);
+
+    // OAuth
+    Task<OAuthProvidersResponse> GetEnabledOAuthProvidersAsync();
+    Task<OAuthLoginUrlResponse> GetOAuthLoginUrlAsync(string provider, string? state);
+    Task<object> HandleOAuthCallbackAsync(string provider, string code, string? state, string ipAddress, string? userAgent);
 }

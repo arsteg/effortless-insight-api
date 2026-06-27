@@ -15,15 +15,21 @@ namespace EffortlessInsight.Api.Controllers;
 public class NoticesController : ControllerBase
 {
     private readonly INoticeServiceExtended _noticeService;
+    private readonly IZipProcessingService _zipProcessingService;
+    private readonly INoticeWorkflowService _workflowService;
     private readonly ICurrentOrganizationService _currentOrg;
     private readonly ILogger<NoticesController> _logger;
 
     public NoticesController(
         INoticeServiceExtended noticeService,
+        IZipProcessingService zipProcessingService,
+        INoticeWorkflowService workflowService,
         ICurrentOrganizationService currentOrg,
         ILogger<NoticesController> logger)
     {
         _noticeService = noticeService;
+        _zipProcessingService = zipProcessingService;
+        _workflowService = workflowService;
         _currentOrg = currentOrg;
         _logger = logger;
     }
@@ -99,6 +105,52 @@ public class NoticesController : ControllerBase
             _logger.LogError(ex, "Failed to upload notice");
             return StatusCode(StatusCodes.Status500InternalServerError,
                 new ApiErrorResponse(false, "UPLOAD_FAILED", "An unexpected error occurred during upload"));
+        }
+    }
+
+    /// <summary>
+    /// Create a notice manually without file upload
+    /// </summary>
+    [HttpPost("manual")]
+    [ProducesResponseType(typeof(ApiResponse<NoticeDto>), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> CreateManualNotice(
+        [FromBody] CreateManualNoticeRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var orgId = GetCurrentOrganizationId();
+            var userId = GetCurrentUserId();
+
+            // Check permission
+            if (!_currentOrg.HasPermission("notices.upload"))
+            {
+                return Forbid();
+            }
+
+            var notice = await _noticeService.CreateManualNoticeAsync(
+                request,
+                orgId,
+                userId,
+                cancellationToken);
+
+            // Map to DTO
+            var dto = MapToDto(notice);
+
+            return StatusCode(StatusCodes.Status201Created,
+                new ApiResponse<NoticeDto>(true, dto));
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("GSTIN"))
+        {
+            return BadRequest(new ApiErrorResponse(false, "INVALID_GSTIN", ex.Message));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to create manual notice");
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "CREATE_FAILED", "An unexpected error occurred"));
         }
     }
 
@@ -333,6 +385,91 @@ public class NoticesController : ControllerBase
             _logger.LogError(ex, "Failed to process batch upload");
             return StatusCode(StatusCodes.Status500InternalServerError,
                 new ApiErrorResponse(false, "BATCH_UPLOAD_FAILED", "An unexpected error occurred during batch upload"));
+        }
+    }
+
+    /// <summary>
+    /// Upload a ZIP file containing multiple notices
+    /// </summary>
+    [HttpPost("upload/zip")]
+    [RequestSizeLimit(524_288_000)] // 500 MB for ZIP files
+    [ProducesResponseType(typeof(ApiResponse<ZipUploadResponse>), StatusCodes.Status202Accepted)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> UploadZip(
+        [FromForm] ZipUploadRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var orgId = GetCurrentOrganizationId();
+            var userId = GetCurrentUserId();
+
+            if (!_currentOrg.HasPermission("notices.upload"))
+            {
+                return Forbid();
+            }
+
+            if (request.File == null || request.File.Length == 0)
+            {
+                return BadRequest(new ApiErrorResponse(false, "FILE_REQUIRED", "No file was uploaded"));
+            }
+
+            // Validate ZIP file
+            using var stream = request.File.OpenReadStream();
+            var validationResult = _zipProcessingService.ValidateZipFile(stream, request.File.FileName);
+
+            if (!validationResult.IsValid)
+            {
+                return BadRequest(new ApiErrorResponse(false,
+                    validationResult.ErrorCode ?? "INVALID_ZIP",
+                    validationResult.ErrorMessage ?? "Invalid ZIP file"));
+            }
+
+            // Process the ZIP file
+            stream.Position = 0;
+            var result = await _zipProcessingService.ProcessZipUploadAsync(
+                stream,
+                request.File.FileName,
+                orgId,
+                userId,
+                request.Gstin,
+                request.Tags,
+                cancellationToken);
+
+            if (!result.Success)
+            {
+                return BadRequest(new ApiErrorResponse(false,
+                    result.ErrorCode ?? "PROCESSING_FAILED",
+                    result.ErrorMessage ?? "Failed to process ZIP file"));
+            }
+
+            var response = new ZipUploadResponse(
+                ZipFileName: result.ZipFileName,
+                TotalFilesInZip: result.TotalFilesInZip,
+                ProcessedCount: result.ProcessedCount,
+                SuccessCount: result.SuccessCount,
+                FailureCount: result.FailureCount,
+                SkippedCount: result.SkippedCount,
+                Results: result.Results.Select(r => new ZipUploadItemResult(
+                    FileName: r.FileName,
+                    FullPath: r.FullPath,
+                    Success: r.Success,
+                    NoticeId: r.NoticeId,
+                    Status: r.Status,
+                    ErrorCode: r.ErrorCode,
+                    ErrorMessage: r.ErrorMessage,
+                    IsDuplicate: r.IsDuplicate
+                )).ToList());
+
+            return StatusCode(StatusCodes.Status202Accepted,
+                new ApiResponse<ZipUploadResponse>(true, response));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to process ZIP upload");
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "ZIP_UPLOAD_FAILED", "An unexpected error occurred during ZIP upload"));
         }
     }
 
@@ -597,12 +734,14 @@ public class NoticesController : ControllerBase
             var dtos = attachments.Select(a => new AttachmentDto(
                 Id: a.Id,
                 FileName: a.FileName,
+                FileUrl: a.FileUrl,
                 FileSize: a.FileSize,
                 FileType: a.FileType,
                 DocumentType: a.DocumentType,
                 Description: a.Description,
-                UploadedById: a.UploadedById,
-                UploadedByName: a.UploadedBy?.Name,
+                Version: a.Version,
+                IsCurrentVersion: a.IsCurrentVersion,
+                HasPreviousVersions: a.PreviousVersionId.HasValue,
                 CreatedAt: a.CreatedAt)).ToList();
 
             return Ok(new ApiResponse<List<AttachmentDto>>(true, dtos));
@@ -657,12 +796,14 @@ public class NoticesController : ControllerBase
             var dto = new AttachmentDto(
                 Id: attachment.Id,
                 FileName: attachment.FileName,
+                FileUrl: attachment.FileUrl,
                 FileSize: attachment.FileSize,
                 FileType: attachment.FileType,
                 DocumentType: attachment.DocumentType,
                 Description: attachment.Description,
-                UploadedById: attachment.UploadedById,
-                UploadedByName: null,
+                Version: attachment.Version,
+                IsCurrentVersion: attachment.IsCurrentVersion,
+                HasPreviousVersions: attachment.PreviousVersionId.HasValue,
                 CreatedAt: attachment.CreatedAt);
 
             return StatusCode(StatusCodes.Status201Created, new ApiResponse<AttachmentDto>(true, dto));
@@ -743,6 +884,102 @@ public class NoticesController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to get download URL for attachment {AttachmentId}", attachmentId);
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
+        }
+    }
+
+    /// <summary>
+    /// Upload a new version of an attachment
+    /// </summary>
+    [HttpPost("{noticeId:guid}/attachments/{attachmentId:guid}/versions")]
+    [ProducesResponseType(typeof(ApiResponse<AttachmentDto>), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> UploadAttachmentVersion(
+        Guid noticeId,
+        Guid attachmentId,
+        [FromForm] UploadNewVersionRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (request.File == null || request.File.Length == 0)
+            {
+                return BadRequest(new ApiErrorResponse(false, "VALIDATION_ERROR", "File is required"));
+            }
+
+            var orgId = GetCurrentOrganizationId();
+            var userId = GetCurrentUserId();
+
+            using var stream = request.File.OpenReadStream();
+            var attachment = await _noticeService.UploadNewAttachmentVersionAsync(
+                attachmentId,
+                noticeId,
+                orgId,
+                userId,
+                stream,
+                request.File.FileName,
+                request.File.ContentType,
+                request.VersionNote,
+                cancellationToken);
+
+            var dto = new AttachmentDto(
+                Id: attachment.Id,
+                FileName: attachment.FileName,
+                FileUrl: attachment.FileUrl,
+                FileSize: attachment.FileSize,
+                FileType: attachment.FileType,
+                DocumentType: attachment.DocumentType,
+                Description: attachment.Description,
+                Version: attachment.Version,
+                IsCurrentVersion: attachment.IsCurrentVersion,
+                HasPreviousVersions: attachment.PreviousVersionId.HasValue,
+                CreatedAt: attachment.CreatedAt);
+
+            return CreatedAtAction(
+                nameof(GetAttachmentVersionHistory),
+                new { noticeId, attachmentId = attachment.Id },
+                new ApiResponse<AttachmentDto>(true, dto));
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("not found"))
+        {
+            return NotFound(new ApiErrorResponse(false, "NOT_FOUND", ex.Message));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to upload new version for attachment {AttachmentId}", attachmentId);
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
+        }
+    }
+
+    /// <summary>
+    /// Get version history for an attachment
+    /// </summary>
+    [HttpGet("{noticeId:guid}/attachments/{attachmentId:guid}/versions")]
+    [ProducesResponseType(typeof(ApiResponse<AttachmentVersionHistoryResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetAttachmentVersionHistory(
+        Guid noticeId,
+        Guid attachmentId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var orgId = GetCurrentOrganizationId();
+            var result = await _noticeService.GetAttachmentVersionHistoryAsync(
+                attachmentId, noticeId, orgId, cancellationToken);
+
+            return Ok(new ApiResponse<AttachmentVersionHistoryResponse>(true, result));
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("not found"))
+        {
+            return NotFound(new ApiErrorResponse(false, "NOT_FOUND", ex.Message));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get version history for attachment {AttachmentId}", attachmentId);
             return StatusCode(StatusCodes.Status500InternalServerError,
                 new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
         }
@@ -910,12 +1147,17 @@ public class NoticesController : ControllerBase
             var orgId = GetCurrentOrganizationId();
             var userId = GetCurrentUserId();
 
-            var taskDto = new Services.Notices.CreateTaskDto(
+            var taskDto = new DTOs.CreateTaskDto(
                 Title: request.Title,
                 Description: request.Description,
-                DueDate: request.DueDate,
+                Assignees: request.AssignedToId.HasValue ? new List<Guid> { request.AssignedToId.Value } : null,
+                AssignedTeamId: null,
                 Priority: request.Priority ?? "medium",
-                AssignedToId: request.AssignedToId);
+                DueDate: request.DueDate,
+                EstimatedHours: null,
+                Labels: null,
+                ParentTaskId: null,
+                TemplateId: null);
 
             var task = await _noticeService.CreateTaskAsync(
                 noticeId, orgId, userId, taskDto, cancellationToken);
@@ -958,13 +1200,19 @@ public class NoticesController : ControllerBase
             var orgId = GetCurrentOrganizationId();
             var userId = GetCurrentUserId();
 
-            var updateDto = new Services.Notices.UpdateTaskDto(
+            var updateDto = new DTOs.UpdateTaskDto(
                 Title: request.Title,
                 Description: request.Description,
-                DueDate: request.DueDate,
+                Assignees: request.AssignedToId.HasValue ? new List<Guid> { request.AssignedToId.Value } : null,
+                AssignedTeamId: null,
+                ClearTeamAssignment: null,
                 Priority: request.Priority,
+                DueDate: request.DueDate,
+                EstimatedHours: null,
+                ActualHours: null,
+                Labels: null,
                 Status: request.Status,
-                AssignedToId: request.AssignedToId);
+                CompletionNote: null);
 
             var task = await _noticeService.UpdateTaskAsync(
                 taskId, noticeId, orgId, userId, updateDto, cancellationToken);
@@ -1543,6 +1791,165 @@ public class NoticesController : ControllerBase
 
     #endregion
 
+    #region SLA Rules
+
+    /// <summary>
+    /// Get the SLA and priority calculation rules
+    /// </summary>
+    [HttpGet("sla-rules")]
+    [ProducesResponseType(typeof(ApiResponse<SlaRulesDto>), StatusCodes.Status200OK)]
+    public IActionResult GetSlaRules()
+    {
+        var rules = _workflowService.GetSlaRules();
+        return Ok(new ApiResponse<SlaRulesDto>(true, rules));
+    }
+
+    /// <summary>
+    /// Calculate priority for given parameters with detailed breakdown
+    /// </summary>
+    [HttpPost("calculate-priority")]
+    [ProducesResponseType(typeof(ApiResponse<PriorityCalculationResult>), StatusCodes.Status200OK)]
+    public IActionResult CalculatePriority([FromBody] CalculatePriorityRequest request)
+    {
+        var result = _workflowService.CalculatePriorityWithDetails(
+            request.NoticeType,
+            request.NoticeCategory,
+            request.ResponseDeadline,
+            request.TotalDemand);
+
+        return Ok(new ApiResponse<PriorityCalculationResult>(true, result));
+    }
+
+    #endregion
+
+    #region Relationships
+
+    /// <summary>
+    /// Get all relationships for a notice
+    /// </summary>
+    [HttpGet("{noticeId:guid}/relationships")]
+    [ProducesResponseType(typeof(ApiResponse<NoticeRelationshipsResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetRelationships(Guid noticeId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (!_currentOrg.HasPermission("notices.view"))
+            {
+                return Forbid();
+            }
+
+            var orgId = GetCurrentOrganizationId();
+            var result = await _noticeService.GetRelationshipsAsync(noticeId, orgId, cancellationToken);
+
+            return Ok(new ApiResponse<NoticeRelationshipsResponse>(true, result));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "NOTICE_NOT_FOUND")
+        {
+            return NotFound(new ApiErrorResponse(false, "NOTICE_NOT_FOUND", "Notice not found"));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get notice relationships for {NoticeId}", noticeId);
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
+        }
+    }
+
+    /// <summary>
+    /// Create a relationship between two notices
+    /// </summary>
+    [HttpPost("{noticeId:guid}/relationships")]
+    [ProducesResponseType(typeof(ApiResponse<NoticeRelationshipDto>), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> CreateRelationship(
+        Guid noticeId,
+        [FromBody] CreateNoticeRelationshipRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (!_currentOrg.HasPermission("notices.edit"))
+            {
+                return Forbid();
+            }
+
+            var orgId = GetCurrentOrganizationId();
+            var userId = GetCurrentUserId();
+
+            var result = await _noticeService.CreateRelationshipAsync(
+                noticeId, orgId, userId, request, cancellationToken);
+
+            return StatusCode(StatusCodes.Status201Created,
+                new ApiResponse<NoticeRelationshipDto>(true, result));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "SOURCE_NOTICE_NOT_FOUND")
+        {
+            return NotFound(new ApiErrorResponse(false, "SOURCE_NOTICE_NOT_FOUND", "Source notice not found"));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "TARGET_NOTICE_NOT_FOUND")
+        {
+            return NotFound(new ApiErrorResponse(false, "TARGET_NOTICE_NOT_FOUND", "Target notice not found"));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "CANNOT_LINK_TO_SELF")
+        {
+            return BadRequest(new ApiErrorResponse(false, "CANNOT_LINK_TO_SELF", "Cannot create relationship to the same notice"));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "RELATIONSHIP_EXISTS")
+        {
+            return BadRequest(new ApiErrorResponse(false, "RELATIONSHIP_EXISTS", "This relationship already exists"));
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new ApiErrorResponse(false, "INVALID_RELATIONSHIP_TYPE", ex.Message));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to create notice relationship for {NoticeId}", noticeId);
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
+        }
+    }
+
+    /// <summary>
+    /// Delete a notice relationship
+    /// </summary>
+    [HttpDelete("{noticeId:guid}/relationships/{relationshipId:guid}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> DeleteRelationship(
+        Guid noticeId,
+        Guid relationshipId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (!_currentOrg.HasPermission("notices.edit"))
+            {
+                return Forbid();
+            }
+
+            var orgId = GetCurrentOrganizationId();
+
+            await _noticeService.DeleteRelationshipAsync(relationshipId, noticeId, orgId, cancellationToken);
+
+            return NoContent();
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "RELATIONSHIP_NOT_FOUND")
+        {
+            return NotFound(new ApiErrorResponse(false, "RELATIONSHIP_NOT_FOUND", "Relationship not found"));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to delete notice relationship {RelationshipId}", relationshipId);
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
+        }
+    }
+
+    #endregion
+
     #region Helpers
 
     private Guid GetCurrentUserId()
@@ -1915,6 +2322,32 @@ public record BatchUploadItemResult(
     string? Status = null,
     DuplicateWarningDto? DuplicateWarning = null);
 
+public record ZipUploadRequest
+{
+    public IFormFile? File { get; init; }
+    public string? Gstin { get; init; }
+    public string[]? Tags { get; init; }
+}
+
+public record ZipUploadResponse(
+    string ZipFileName,
+    int TotalFilesInZip,
+    int ProcessedCount,
+    int SuccessCount,
+    int FailureCount,
+    int SkippedCount,
+    List<ZipUploadItemResult> Results);
+
+public record ZipUploadItemResult(
+    string FileName,
+    string FullPath,
+    bool Success,
+    Guid? NoticeId,
+    string? Status,
+    string? ErrorCode,
+    string? ErrorMessage,
+    bool IsDuplicate);
+
 public record PresignedUploadRequest(
     string FileName,
     string ContentType,
@@ -1999,17 +2432,6 @@ public record UpdateNoticeDetailsRequest(
     string? IssuingAuthority = null,
     string? Priority = null,
     List<string>? Tags = null);
-
-public record AttachmentDto(
-    Guid Id,
-    string FileName,
-    int? FileSize,
-    string? FileType,
-    string? DocumentType,
-    string? Description,
-    Guid UploadedById,
-    string? UploadedByName,
-    DateTime CreatedAt);
 
 public record AddAttachmentRequest
 {
@@ -2113,5 +2535,11 @@ public record NoticeStatisticsDto(
     int DueThisMonth,
     decimal TotalDemandAmount,
     int TotalCount);
+
+public record CalculatePriorityRequest(
+    string? NoticeType,
+    string? NoticeCategory,
+    DateOnly? ResponseDeadline,
+    decimal? TotalDemand);
 
 #endregion

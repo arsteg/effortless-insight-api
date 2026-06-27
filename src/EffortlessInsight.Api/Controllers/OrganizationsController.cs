@@ -464,6 +464,90 @@ public class OrganizationsController : ControllerBase
     }
 
     /// <summary>
+    /// Suspend a member's access to the organization
+    /// </summary>
+    [HttpPost("{orgId:guid}/members/{memberId:guid}/suspend")]
+    [ProducesResponseType(typeof(ApiResponse<MemberSuspensionResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> SuspendMember(Guid orgId, Guid memberId, [FromBody] SuspendMemberRequest request)
+    {
+        try
+        {
+            var userId = GetCurrentUserId();
+            var result = await _organizationService.SuspendMemberAsync(orgId, memberId, request, userId);
+            return Ok(new ApiResponse<MemberSuspensionResponse>(true, result));
+        }
+        catch (UnauthorizedAccessException ex) when (ex.Message == "ADMIN_REQUIRED")
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                new ApiErrorResponse(false, "ADMIN_REQUIRED", "Admin or owner access required"));
+        }
+        catch (UnauthorizedAccessException ex) when (ex.Message == "CANNOT_SUSPEND_OWNER")
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                new ApiErrorResponse(false, "CANNOT_SUSPEND_OWNER", "Cannot suspend the organization owner"));
+        }
+        catch (UnauthorizedAccessException ex) when (ex.Message == "ADMIN_CANNOT_SUSPEND_ADMIN")
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                new ApiErrorResponse(false, "ADMIN_CANNOT_SUSPEND_ADMIN", "Admin cannot suspend another admin"));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "ALREADY_SUSPENDED")
+        {
+            return BadRequest(new ApiErrorResponse(false, "ALREADY_SUSPENDED", "Member is already suspended"));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(new ApiErrorResponse(false, "MEMBER_NOT_FOUND", "Member not found"));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to suspend member {MemberId} in organization {OrgId}", memberId, orgId);
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
+        }
+    }
+
+    /// <summary>
+    /// Unsuspend (reactivate) a member's access to the organization
+    /// </summary>
+    [HttpPost("{orgId:guid}/members/{memberId:guid}/unsuspend")]
+    [ProducesResponseType(typeof(ApiResponse<MemberSuspensionResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> UnsuspendMember(Guid orgId, Guid memberId)
+    {
+        try
+        {
+            var userId = GetCurrentUserId();
+            var result = await _organizationService.UnsuspendMemberAsync(orgId, memberId, userId);
+            return Ok(new ApiResponse<MemberSuspensionResponse>(true, result));
+        }
+        catch (UnauthorizedAccessException ex) when (ex.Message == "ADMIN_REQUIRED")
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                new ApiErrorResponse(false, "ADMIN_REQUIRED", "Admin or owner access required"));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "NOT_SUSPENDED")
+        {
+            return BadRequest(new ApiErrorResponse(false, "NOT_SUSPENDED", "Member is not suspended"));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(new ApiErrorResponse(false, "MEMBER_NOT_FOUND", "Member not found"));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to unsuspend member {MemberId} in organization {OrgId}", memberId, orgId);
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
+        }
+    }
+
+    /// <summary>
     /// Leave organization (self-removal)
     /// </summary>
     [HttpPost("{orgId:guid}/leave")]

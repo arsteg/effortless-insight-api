@@ -10,6 +10,7 @@ public record CreateTaskDto(
     string Title,
     string? Description,
     List<Guid>? Assignees,
+    Guid? AssignedTeamId,
     string? Priority,
     DateTime? DueDate,
     decimal? EstimatedHours,
@@ -22,6 +23,8 @@ public record UpdateTaskDto(
     string? Title,
     string? Description,
     List<Guid>? Assignees,
+    Guid? AssignedTeamId,
+    bool? ClearTeamAssignment,
     string? Priority,
     DateTime? DueDate,
     decimal? EstimatedHours,
@@ -43,6 +46,7 @@ public record TaskDto(
     decimal? ActualHours,
     bool IsOverdue,
     List<TaskAssigneeDto> Assignees,
+    TaskTeamDto? AssignedTeam,
     List<string>? Labels,
     Guid? ParentTaskId,
     int SubtaskCount,
@@ -67,6 +71,7 @@ public record TaskDetailDto(
     decimal? ActualHours,
     bool IsOverdue,
     List<TaskAssigneeDto> Assignees,
+    TaskTeamDto? AssignedTeam,
     List<string>? Labels,
     Guid? ParentTaskId,
     List<TaskDto>? Subtasks,
@@ -84,7 +89,17 @@ public record TaskAssigneeDto(
     string Name,
     string? Email,
     string? AvatarUrl,
-    DateTime AssignedAt
+    DateTime AssignedAt,
+    Guid? TeamId,
+    string? TeamName
+);
+
+public record TaskTeamDto(
+    Guid Id,
+    string Name,
+    string? Color,
+    string? Icon,
+    int MemberCount
 );
 
 public record TaskUserDto(
@@ -420,3 +435,129 @@ public record PaginationDto(
 );
 
 // Note: AttachmentDto is defined in Dtos.cs with additional DocumentType field
+
+// =============================================================================
+// TASK DEPENDENCY DTOs (GAP-TASK-001)
+// =============================================================================
+
+public record CreateTaskDependencyDto(
+    Guid DependsOnTaskId,
+    string? Type
+);
+
+public record TaskDependencyDto(
+    Guid Id,
+    Guid TaskId,
+    Guid DependsOnTaskId,
+    TaskSummaryInfoDto DependsOnTask,
+    string DependencyType,
+    DateTime CreatedAt
+);
+
+public record TaskSummaryInfoDto(
+    Guid Id,
+    string Title,
+    string Status,
+    string Priority,
+    DateTime? DueDate,
+    bool IsOverdue
+);
+
+public record TaskDependencyListDto(
+    List<TaskDependencyDto> Dependencies,
+    List<TaskSummaryInfoDto> BlockingTasks
+);
+
+// =============================================================================
+// TASK REMINDER DTOs (GAP-TASK-002)
+// =============================================================================
+
+public record CreateTaskReminderDto(
+    int DaysBeforeDue
+);
+
+public record TaskReminderDto(
+    Guid Id,
+    Guid TaskId,
+    int DaysBeforeDue,
+    bool IsSent,
+    DateTime? SentAt,
+    DateTime CreatedAt
+);
+
+// =============================================================================
+// TIME ENTRY DTOs (GAP-TASK-004)
+// =============================================================================
+
+public record CreateTimeEntryDto(
+    decimal Hours,
+    DateOnly Date,
+    string? Description,
+    bool IsBillable = true
+);
+
+public record UpdateTimeEntryDto(
+    decimal? Hours,
+    DateOnly? Date,
+    string? Description,
+    bool? IsBillable
+);
+
+public record TimeEntryDto(
+    Guid Id,
+    Guid TaskId,
+    TimeEntryUserDto User,
+    DateOnly Date,
+    decimal Hours,
+    string? Description,
+    bool IsBillable,
+    DateTime? StartTime,
+    DateTime? EndTime,
+    bool IsTimerRunning,
+    DateTime CreatedAt,
+    DateTime? UpdatedAt
+);
+
+public record TimeEntryUserDto(
+    Guid Id,
+    string Name,
+    string? AvatarUrl
+);
+
+public record TimeEntryListResponseDto(
+    List<TimeEntryDto> Entries,
+    decimal TotalHours,
+    decimal TotalBillableHours
+);
+
+// =============================================================================
+// TASK ATTACHMENT DTOs (GAP-TASK-006)
+// =============================================================================
+
+public record UploadTaskAttachmentDto(
+    string? Description,
+    string? DocumentType
+);
+
+public record TaskAttachmentDto(
+    Guid Id,
+    string FileName,
+    string FileUrl,
+    int? FileSize,
+    string? FileType,
+    string? DocumentType,
+    string? Description,
+    TaskAttachmentUserDto UploadedBy,
+    DateTime CreatedAt
+);
+
+public record TaskAttachmentUserDto(
+    Guid Id,
+    string Name,
+    string? AvatarUrl
+);
+
+public record TaskAttachmentListResponseDto(
+    List<TaskAttachmentDto> Attachments,
+    int TotalCount
+);

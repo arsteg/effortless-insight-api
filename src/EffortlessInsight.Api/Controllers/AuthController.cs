@@ -738,6 +738,110 @@ public class AuthController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Get enabled OAuth providers
+    /// </summary>
+    [HttpGet("oauth/providers")]
+    [ProducesResponseType(typeof(ApiResponse<OAuthProvidersResponse>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetOAuthProviders()
+    {
+        try
+        {
+            var result = await _authService.GetEnabledOAuthProvidersAsync();
+            return Ok(new ApiResponse<OAuthProvidersResponse>(true, result));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Get OAuth providers failed");
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
+        }
+    }
+
+    /// <summary>
+    /// Get OAuth login URL for a provider
+    /// </summary>
+    [HttpGet("oauth/{provider}/login")]
+    [ProducesResponseType(typeof(ApiResponse<OAuthLoginUrlResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> GetOAuthLoginUrl(string provider, [FromQuery] string? state)
+    {
+        try
+        {
+            var result = await _authService.GetOAuthLoginUrlAsync(provider, state);
+            return Ok(new ApiResponse<OAuthLoginUrlResponse>(true, result));
+        }
+        catch (InvalidOperationException ex) when (ex.Message.EndsWith("_NOT_CONFIGURED"))
+        {
+            return BadRequest(new ApiErrorResponse(false, "PROVIDER_NOT_CONFIGURED",
+                $"OAuth provider '{provider}' is not configured"));
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new ApiErrorResponse(false, "INVALID_PROVIDER", ex.Message));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Get OAuth login URL failed for provider: {Provider}", provider);
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
+        }
+    }
+
+    /// <summary>
+    /// Handle OAuth callback
+    /// </summary>
+    [HttpPost("oauth/{provider}/callback")]
+    [ProducesResponseType(typeof(ApiResponse<LoginResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<TwoFactorRequiredResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> HandleOAuthCallback(string provider, [FromBody] OAuthCallbackRequest request)
+    {
+        try
+        {
+            var ipAddress = GetClientIpAddress();
+            var userAgent = Request.Headers.UserAgent.ToString();
+
+            var result = await _authService.HandleOAuthCallbackAsync(provider, request.Code, request.State, ipAddress, userAgent);
+
+            if (result is TwoFactorRequiredResponse twoFactorResponse)
+            {
+                return Ok(new ApiResponse<TwoFactorRequiredResponse>(true, twoFactorResponse));
+            }
+
+            return Ok(new ApiResponse<LoginResponse>(true, (LoginResponse)result));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "INVALID_OAUTH_STATE")
+        {
+            return BadRequest(new ApiErrorResponse(false, "INVALID_STATE", "Invalid or expired OAuth state"));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "FAILED_TO_GET_USER_INFO")
+        {
+            return BadRequest(new ApiErrorResponse(false, "OAUTH_FAILED", "Failed to retrieve user information from provider"));
+        }
+        catch (InvalidOperationException ex) when (ex.Message.StartsWith("REGISTRATION_FAILED"))
+        {
+            return BadRequest(new ApiErrorResponse(false, "REGISTRATION_FAILED",
+                ex.Message.Replace("REGISTRATION_FAILED: ", "")));
+        }
+        catch (UnauthorizedAccessException ex) when (ex.Message == "ACCOUNT_DISABLED")
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                new ApiErrorResponse(false, "ACCOUNT_DISABLED", "Account has been disabled"));
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new ApiErrorResponse(false, "INVALID_PROVIDER", ex.Message));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "OAuth callback failed for provider: {Provider}", provider);
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
+        }
+    }
+
     #region Private Methods
 
     private string GetClientIpAddress()

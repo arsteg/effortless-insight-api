@@ -1,4 +1,6 @@
+using System.Text.Json;
 using EffortlessInsight.Api.Data;
+using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.DTOs;
 using Microsoft.EntityFrameworkCore;
 
@@ -52,6 +54,7 @@ public class SessionService : ISessionService
     public async Task RevokeSessionAsync(Guid userId, Guid sessionId, string currentJti)
     {
         var session = await _dbContext.UserSessions
+            .Include(s => s.User)
             .FirstOrDefaultAsync(s => s.Id == sessionId && s.UserId == userId && s.RevokedAt == null);
 
         if (session == null)
@@ -68,6 +71,19 @@ public class SessionService : ISessionService
         session.RevokedAt = DateTime.UtcNow;
         session.RevokedReason = "user_revoked";
 
+        // Audit log
+        var audit = new LoginAudit
+        {
+            UserId = userId,
+            EmailAttempted = session.User?.Email,
+            EventType = AuthEventTypes.SessionRevoked,
+            Success = true,
+            IpAddress = session.IpAddress,
+            Metadata = JsonSerializer.Serialize(new { SessionId = sessionId, DeviceName = session.DeviceName }),
+            CreatedAt = DateTime.UtcNow
+        };
+        _dbContext.LoginAudits.Add(audit);
+
         await _dbContext.SaveChangesAsync();
 
         _logger.LogInformation("Session {SessionId} revoked for user {UserId}", sessionId, userId);
@@ -79,10 +95,28 @@ public class SessionService : ISessionService
             .Where(s => s.UserId == userId && s.RevokedAt == null && s.RefreshTokenJti != currentJti)
             .ToListAsync();
 
+        var user = await _dbContext.Users.FindAsync(userId);
+
         foreach (var session in sessions)
         {
             session.RevokedAt = DateTime.UtcNow;
             session.RevokedReason = "user_revoked_all";
+        }
+
+        // Audit log
+        if (sessions.Count > 0)
+        {
+            var audit = new LoginAudit
+            {
+                UserId = userId,
+                EmailAttempted = user?.Email,
+                EventType = AuthEventTypes.AllSessionsRevoked,
+                Success = true,
+                IpAddress = "system",
+                Metadata = JsonSerializer.Serialize(new { RevokedCount = sessions.Count }),
+                CreatedAt = DateTime.UtcNow
+            };
+            _dbContext.LoginAudits.Add(audit);
         }
 
         await _dbContext.SaveChangesAsync();

@@ -41,6 +41,7 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
     public DbSet<OrganizationInvitation> OrganizationInvitations => Set<OrganizationInvitation>();
     public DbSet<GstinStateCode> GstinStateCodes => Set<GstinStateCode>();
     public DbSet<Notice> Notices => Set<Notice>();
+    public DbSet<NoticeRelationship> NoticeRelationships => Set<NoticeRelationship>();
     public DbSet<NoticeAiReport> NoticeAiReports => Set<NoticeAiReport>();
     public DbSet<Comment> Comments => Set<Comment>();
     public DbSet<NoticeTask> Tasks => Set<NoticeTask>();
@@ -68,6 +69,11 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
     public DbSet<FileFolder> FileFolders => Set<FileFolder>();
     public DbSet<ActivityLog> ActivityLogs => Set<ActivityLog>();
 
+    // Task Dependencies, Reminders, and Time Tracking
+    public DbSet<TaskDependency> TaskDependencies => Set<TaskDependency>();
+    public DbSet<TaskReminder> TaskReminders => Set<TaskReminder>();
+    public DbSet<TimeEntry> TimeEntries => Set<TimeEntry>();
+
     // Workflow Engine entities
     public DbSet<WorkflowTemplate> WorkflowTemplates => Set<WorkflowTemplate>();
     public DbSet<WorkflowStage> WorkflowStages => Set<WorkflowStage>();
@@ -75,9 +81,16 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
     public DbSet<WorkflowEscalationRule> WorkflowEscalationRules => Set<WorkflowEscalationRule>();
     public DbSet<NoticeWorkflowInstance> NoticeWorkflowInstances => Set<NoticeWorkflowInstance>();
     public DbSet<WorkflowHistory> WorkflowHistories => Set<WorkflowHistory>();
+    public DbSet<WorkflowStageInstance> WorkflowStageInstances => Set<WorkflowStageInstance>();
     public DbSet<NoticeDeadline> NoticeDeadlines => Set<NoticeDeadline>();
     public DbSet<DeadlineExtension> DeadlineExtensions => Set<DeadlineExtension>();
     public DbSet<WorkflowSlaMetric> WorkflowSlaMetrics => Set<WorkflowSlaMetric>();
+
+    // Approval Chain entities
+    public DbSet<ApprovalChain> ApprovalChains => Set<ApprovalChain>();
+    public DbSet<ApprovalStep> ApprovalSteps => Set<ApprovalStep>();
+    public DbSet<ApprovalRequest> ApprovalRequests => Set<ApprovalRequest>();
+    public DbSet<ApprovalAction> ApprovalActions => Set<ApprovalAction>();
 
     // Notification Service entities
     public DbSet<Notification> Notifications => Set<Notification>();
@@ -87,6 +100,8 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
     public DbSet<NotificationTemplate> NotificationTemplates => Set<NotificationTemplate>();
     public DbSet<ScheduledNotification> ScheduledNotifications => Set<ScheduledNotification>();
     public DbSet<EmailUnsubscribe> EmailUnsubscribes => Set<EmailUnsubscribe>();
+    public DbSet<ChannelUnsubscribe> ChannelUnsubscribes => Set<ChannelUnsubscribe>();
+    public DbSet<NotificationDeadLetter> NotificationDeadLetters => Set<NotificationDeadLetter>();
 
     // Billing Service entities
     public DbSet<SubscriptionPlan> SubscriptionPlans => Set<SubscriptionPlan>();
@@ -112,6 +127,14 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
     public DbSet<ContentPageVersion> ContentPageVersions => Set<ContentPageVersion>();
     public DbSet<PromptVersion> PromptVersions => Set<PromptVersion>();
     public DbSet<AdminSession> AdminSessions => Set<AdminSession>();
+
+    // Custom Roles and Teams
+    public DbSet<CustomRole> CustomRoles => Set<CustomRole>();
+    public DbSet<Team> Teams => Set<Team>();
+    public DbSet<TeamMember> TeamMembers => Set<TeamMember>();
+
+    // Data Export entities
+    public DbSet<DataExport> DataExports => Set<DataExport>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -160,10 +183,24 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
         modelBuilder.Entity<NoticeDeadline>().HasQueryFilter(d => d.DeletedAt == null);
 
         modelBuilder.Entity<DeadlineExtension>().HasQueryFilter(e => e.DeletedAt == null);
+        modelBuilder.Entity<WorkflowStageInstance>().HasQueryFilter(si => si.DeletedAt == null);
 
         modelBuilder.Entity<WorkflowSlaMetric>().HasQueryFilter(m =>
             m.DeletedAt == null &&
             (BypassTenantFilter || CurrentOrganizationId == null || m.OrganizationId == CurrentOrganizationId));
+
+        // Approval Chain entities
+        modelBuilder.Entity<ApprovalChain>().HasQueryFilter(c =>
+            c.DeletedAt == null &&
+            (BypassTenantFilter || CurrentOrganizationId == null || c.OrganizationId == CurrentOrganizationId));
+        modelBuilder.Entity<ApprovalStep>().HasQueryFilter(s => s.DeletedAt == null);
+        modelBuilder.Entity<ApprovalRequest>().HasQueryFilter(r => r.DeletedAt == null);
+        modelBuilder.Entity<ApprovalAction>().HasQueryFilter(a => a.DeletedAt == null);
+
+        // Task Dependencies, Reminders, and Time Entries
+        modelBuilder.Entity<TaskDependency>().HasQueryFilter(d => d.DeletedAt == null);
+        modelBuilder.Entity<TaskReminder>().HasQueryFilter(r => r.DeletedAt == null);
+        modelBuilder.Entity<TimeEntry>().HasQueryFilter(e => e.DeletedAt == null);
 
         // Configure JSON columns for Dictionary properties
         modelBuilder.Entity<ApplicationUser>()
@@ -293,6 +330,10 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
             .Property(e => e.Metadata)
             .HasColumnType("jsonb");
 
+        modelBuilder.Entity<WorkflowStageInstance>()
+            .Property(si => si.Metadata)
+            .HasColumnType("jsonb");
+
         modelBuilder.Entity<WorkflowSlaMetric>()
             .Property(m => m.AssigneeBreakdown)
             .HasColumnType("jsonb");
@@ -301,6 +342,17 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
             .HasColumnType("jsonb");
         modelBuilder.Entity<WorkflowSlaMetric>()
             .Property(m => m.PriorityBreakdown)
+            .HasColumnType("jsonb");
+
+        // Approval Chain JSON columns
+        modelBuilder.Entity<ApprovalChain>()
+            .Property(c => c.TriggerConditions)
+            .HasColumnType("jsonb");
+        modelBuilder.Entity<ApprovalStep>()
+            .Property(s => s.Conditions)
+            .HasColumnType("jsonb");
+        modelBuilder.Entity<ApprovalRequest>()
+            .Property(r => r.Metadata)
             .HasColumnType("jsonb");
 
         // Configure vector column
@@ -499,6 +551,55 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
             entity.HasOne(n => n.GstinNavigation)
                 .WithMany()
                 .HasForeignKey(n => n.GstinId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ============================================================================
+        // Notice Relationship Configuration
+        // ============================================================================
+        modelBuilder.Entity<NoticeRelationship>(entity =>
+        {
+            entity.HasIndex(r => r.SourceNoticeId);
+            entity.HasIndex(r => r.TargetNoticeId);
+            entity.HasIndex(r => new { r.SourceNoticeId, r.TargetNoticeId, r.RelationshipType })
+                .IsUnique()
+                .HasDatabaseName("IX_NoticeRelationships_Unique");
+
+            entity.HasOne(r => r.SourceNotice)
+                .WithMany(n => n.OutgoingRelationships)
+                .HasForeignKey(r => r.SourceNoticeId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(r => r.TargetNotice)
+                .WithMany(n => n.IncomingRelationships)
+                .HasForeignKey(r => r.TargetNoticeId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(r => r.CreatedBy)
+                .WithMany()
+                .HasForeignKey(r => r.CreatedById)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // ============================================================================
+        // Attachment Configuration (Versioning)
+        // ============================================================================
+        modelBuilder.Entity<Attachment>(entity =>
+        {
+            entity.HasIndex(a => a.NoticeId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(a => a.ResponseId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(a => new { a.NoticeId, a.IsCurrentVersion })
+                .HasFilter("\"DeletedAt\" IS NULL AND \"IsCurrentVersion\" = true")
+                .HasDatabaseName("IX_Attachments_NoticeId_Current");
+            entity.HasIndex(a => a.OriginalAttachmentId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+
+            // Self-referencing relationship for version history
+            entity.HasOne(a => a.PreviousVersion)
+                .WithMany()
+                .HasForeignKey(a => a.PreviousVersionId)
                 .OnDelete(DeleteBehavior.SetNull);
         });
 
@@ -743,6 +844,42 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
         });
 
         // ============================================================================
+        // Workflow Stage Instance Configuration (Parallel Execution Support)
+        // ============================================================================
+        modelBuilder.Entity<WorkflowStageInstance>(entity =>
+        {
+            entity.HasIndex(e => e.WorkflowInstanceId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.StageId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.Status)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.BranchId)
+                .HasFilter("\"DeletedAt\" IS NULL AND \"BranchId\" IS NOT NULL");
+            entity.HasIndex(e => new { e.WorkflowInstanceId, e.Status })
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .HasDatabaseName("IX_WorkflowStageInstances_Instance_Status");
+            entity.HasIndex(e => new { e.WorkflowInstanceId, e.BranchId, e.Status })
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .HasDatabaseName("IX_WorkflowStageInstances_Instance_Branch_Status");
+
+            entity.HasOne(e => e.WorkflowInstance)
+                .WithMany(i => i.StageInstances)
+                .HasForeignKey(e => e.WorkflowInstanceId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.Stage)
+                .WithMany()
+                .HasForeignKey(e => e.StageId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.AssignedTo)
+                .WithMany()
+                .HasForeignKey(e => e.AssignedToId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ============================================================================
         // Workflow History Configuration
         // ============================================================================
         modelBuilder.Entity<WorkflowHistory>(entity =>
@@ -889,6 +1026,13 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
             entity.HasOne(e => e.AssignedBy)
                 .WithMany()
                 .HasForeignKey(e => e.AssignedById)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            // Optional team reference for team-based assignment tracking
+            entity.HasOne(e => e.Team)
+                .WithMany()
+                .HasForeignKey(e => e.TeamId)
+                .HasPrincipalKey(t => t.Id)
                 .OnDelete(DeleteBehavior.SetNull);
         });
 
@@ -1185,6 +1329,61 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
         });
 
         // ============================================================================
+        // Task Dependency Configuration (GAP-TASK-001)
+        // ============================================================================
+        modelBuilder.Entity<TaskDependency>(entity =>
+        {
+            entity.HasIndex(e => e.TaskId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.DependsOnTaskId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => new { e.TaskId, e.DependsOnTaskId })
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .IsUnique()
+                .HasDatabaseName("IX_TaskDependencies_Task_DependsOn_Unique");
+            entity.HasIndex(e => e.DependencyType)
+                .HasFilter("\"DeletedAt\" IS NULL");
+
+            // This task depends on the other task
+            entity.HasOne(e => e.Task)
+                .WithMany(t => t.DependsOn)
+                .HasForeignKey(e => e.TaskId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            // The other task blocks this task
+            entity.HasOne(e => e.DependsOnTask)
+                .WithMany(t => t.Dependencies)
+                .HasForeignKey(e => e.DependsOnTaskId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // ============================================================================
+        // Task Reminder Configuration (GAP-TASK-002)
+        // ============================================================================
+        modelBuilder.Entity<TaskReminder>(entity =>
+        {
+            entity.HasIndex(e => e.TaskId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => new { e.IsSent, e.DaysBeforeDue })
+                .HasFilter("\"DeletedAt\" IS NULL AND \"IsSent\" = false")
+                .HasDatabaseName("IX_TaskReminders_Pending");
+            entity.HasIndex(e => new { e.TaskId, e.DaysBeforeDue })
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .IsUnique()
+                .HasDatabaseName("IX_TaskReminders_Task_Days_Unique");
+
+            entity.HasOne(e => e.Task)
+                .WithMany(t => t.Reminders)
+                .HasForeignKey(e => e.TaskId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.CreatedBy)
+                .WithMany()
+                .HasForeignKey(e => e.CreatedById)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ============================================================================
         // Update NoticeTask Configuration for Subtasks and Templates
         // ============================================================================
         modelBuilder.Entity<NoticeTask>(entity =>
@@ -1210,6 +1409,16 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
                 .WithMany()
                 .HasForeignKey(e => e.TemplateId)
                 .OnDelete(DeleteBehavior.SetNull);
+
+            // Team assignment for tasks
+            entity.HasOne(e => e.AssignedTeam)
+                .WithMany()
+                .HasForeignKey(e => e.AssignedTeamId)
+                .HasPrincipalKey(t => t.Id)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasIndex(e => e.AssignedTeamId)
+                .HasFilter("\"DeletedAt\" IS NULL");
         });
 
         // ============================================================================
@@ -1933,6 +2142,260 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
             entity.HasOne(e => e.AdminUser)
                 .WithMany(u => u.Sessions)
                 .HasForeignKey(e => e.AdminUserId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ============================================================================
+        // Approval Chain Configuration
+        // ============================================================================
+        modelBuilder.Entity<ApprovalChain>(entity =>
+        {
+            entity.HasIndex(e => e.OrganizationId);
+            entity.HasIndex(e => new { e.OrganizationId, e.IsActive })
+                .HasDatabaseName("IX_ApprovalChains_Org_Active");
+            entity.HasIndex(e => e.TriggerEvent);
+
+            entity.HasOne(e => e.Organization)
+                .WithMany()
+                .HasForeignKey(e => e.OrganizationId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ApprovalStep>(entity =>
+        {
+            entity.HasIndex(e => e.ApprovalChainId);
+            entity.HasIndex(e => new { e.ApprovalChainId, e.StepOrder })
+                .IsUnique()
+                .HasDatabaseName("IX_ApprovalSteps_Chain_Order");
+
+            entity.HasOne(e => e.ApprovalChain)
+                .WithMany(c => c.Steps)
+                .HasForeignKey(e => e.ApprovalChainId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.Approver)
+                .WithMany()
+                .HasForeignKey(e => e.ApproverId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(e => e.EscalationUser)
+                .WithMany()
+                .HasForeignKey(e => e.EscalationUserId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<ApprovalRequest>(entity =>
+        {
+            entity.HasIndex(e => e.ApprovalChainId);
+            entity.HasIndex(e => e.NoticeId);
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => new { e.NoticeId, e.Status })
+                .HasDatabaseName("IX_ApprovalRequests_Notice_Status");
+            entity.HasIndex(e => e.CurrentStepDeadline)
+                .HasFilter("\"Status\" = 'pending'")
+                .HasDatabaseName("IX_ApprovalRequests_Deadline_Pending");
+
+            entity.HasOne(e => e.ApprovalChain)
+                .WithMany(c => c.Requests)
+                .HasForeignKey(e => e.ApprovalChainId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.Notice)
+                .WithMany()
+                .HasForeignKey(e => e.NoticeId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.Response)
+                .WithMany()
+                .HasForeignKey(e => e.ResponseId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(e => e.RequestedBy)
+                .WithMany()
+                .HasForeignKey(e => e.RequestedById)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<ApprovalAction>(entity =>
+        {
+            entity.HasIndex(e => e.ApprovalRequestId);
+            entity.HasIndex(e => e.ActorId);
+            entity.HasIndex(e => new { e.ApprovalRequestId, e.CreatedAt })
+                .HasDatabaseName("IX_ApprovalActions_Request_Created");
+
+            entity.HasOne(e => e.ApprovalRequest)
+                .WithMany(r => r.Actions)
+                .HasForeignKey(e => e.ApprovalRequestId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.ApprovalStep)
+                .WithMany()
+                .HasForeignKey(e => e.ApprovalStepId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.Actor)
+                .WithMany()
+                .HasForeignKey(e => e.ActorId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.DelegatedTo)
+                .WithMany()
+                .HasForeignKey(e => e.DelegatedToId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ============================================================================
+        // Custom Role Configuration
+        // ============================================================================
+        modelBuilder.Entity<CustomRole>(entity =>
+        {
+            entity.HasQueryFilter(e => e.DeletedAt == null);
+
+            // Unique role name per organization
+            entity.HasIndex(e => new { e.OrganizationId, e.NameNormalized })
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .IsUnique()
+                .HasDatabaseName("IX_CustomRoles_Org_Name_Unique");
+
+            entity.HasIndex(e => e.OrganizationId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.IsSystem)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.IsActive)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => new { e.OrganizationId, e.DisplayOrder })
+                .HasFilter("\"DeletedAt\" IS NULL AND \"IsActive\" = true")
+                .HasDatabaseName("IX_CustomRoles_Org_DisplayOrder");
+
+            // JSON column for permissions
+            entity.Property(e => e.Permissions)
+                .HasColumnType("jsonb");
+
+            entity.HasOne(e => e.Organization)
+                .WithMany(o => o.CustomRoles)
+                .HasForeignKey(e => e.OrganizationId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Update OrganizationMember to include CustomRole relationship
+        modelBuilder.Entity<OrganizationMember>(entity =>
+        {
+            entity.HasOne(e => e.CustomRole)
+                .WithMany(r => r.Members)
+                .HasForeignKey(e => e.CustomRoleId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ============================================================================
+        // Team Configuration
+        // ============================================================================
+        modelBuilder.Entity<Team>(entity =>
+        {
+            entity.HasQueryFilter(e => e.DeletedAt == null);
+
+            // Unique team name per organization (within same parent)
+            entity.HasIndex(e => new { e.OrganizationId, e.NameNormalized, e.ParentTeamId })
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .IsUnique()
+                .HasDatabaseName("IX_Teams_Org_Name_Parent_Unique");
+
+            entity.HasIndex(e => e.OrganizationId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.ParentTeamId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.LeaderId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.IsActive)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.HierarchyPath)
+                .HasFilter("\"DeletedAt\" IS NULL");
+
+            // JSON column for settings
+            entity.Property(e => e.Settings)
+                .HasColumnType("jsonb");
+
+            entity.HasOne(e => e.Organization)
+                .WithMany(o => o.Teams)
+                .HasForeignKey(e => e.OrganizationId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.ParentTeam)
+                .WithMany(t => t.SubTeams)
+                .HasForeignKey(e => e.ParentTeamId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.Leader)
+                .WithMany()
+                .HasForeignKey(e => e.LeaderId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ============================================================================
+        // Team Member Configuration
+        // ============================================================================
+        modelBuilder.Entity<TeamMember>(entity =>
+        {
+            entity.HasQueryFilter(e => e.DeletedAt == null);
+
+            // Unique user per team
+            entity.HasIndex(e => new { e.TeamId, e.UserId })
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .IsUnique()
+                .HasDatabaseName("IX_TeamMembers_Team_User_Unique");
+
+            // Only one primary team per user
+            entity.HasIndex(e => new { e.UserId, e.IsPrimary })
+                .HasFilter("\"DeletedAt\" IS NULL AND \"IsPrimary\" = true")
+                .IsUnique()
+                .HasDatabaseName("IX_TeamMembers_User_Primary_Unique");
+
+            entity.HasIndex(e => e.TeamId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.UserId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.Role)
+                .HasFilter("\"DeletedAt\" IS NULL");
+
+            entity.HasOne(e => e.Team)
+                .WithMany(t => t.Members)
+                .HasForeignKey(e => e.TeamId)
+                .HasPrincipalKey(t => t.Id)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ============================================================================
+        // Data Export Configuration
+        // ============================================================================
+        modelBuilder.Entity<DataExport>(entity =>
+        {
+            entity.HasQueryFilter(e => e.DeletedAt == null);
+
+            entity.HasIndex(e => e.OrganizationId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.RequestedById)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.Status)
+                .HasFilter("\"DeletedAt\" IS NULL");
+
+            // JSON columns for dictionary properties
+            entity.Property(e => e.Options)
+                .HasColumnType("jsonb");
+            entity.Property(e => e.Summary)
+                .HasColumnType("jsonb");
+
+            entity.HasOne(e => e.Organization)
+                .WithMany()
+                .HasForeignKey(e => e.OrganizationId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.RequestedBy)
+                .WithMany()
+                .HasForeignKey(e => e.RequestedById)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 

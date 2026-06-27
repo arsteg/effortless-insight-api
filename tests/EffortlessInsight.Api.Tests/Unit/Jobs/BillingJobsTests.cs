@@ -20,6 +20,7 @@ public class BillingJobsTests : IDisposable
     private readonly IUsageService _usageService;
     private readonly IBillingNotificationService _billingNotificationService;
     private readonly IRazorpayService _razorpayService;
+    private readonly IInvoiceService _invoiceService;
     private readonly ILogger<BillingJobs> _logger;
     private readonly BillingJobs _sut;
 
@@ -30,6 +31,7 @@ public class BillingJobsTests : IDisposable
         _usageService = Substitute.For<IUsageService>();
         _billingNotificationService = Substitute.For<IBillingNotificationService>();
         _razorpayService = Substitute.For<IRazorpayService>();
+        _invoiceService = Substitute.For<IInvoiceService>();
         _logger = Substitute.For<ILogger<BillingJobs>>();
 
         _sut = new BillingJobs(
@@ -38,6 +40,7 @@ public class BillingJobsTests : IDisposable
             _usageService,
             _billingNotificationService,
             _razorpayService,
+            _invoiceService,
             _logger);
     }
 
@@ -445,7 +448,7 @@ public class BillingJobsTests : IDisposable
     #region RetryFailedWebhookEventsAsync Tests
 
     [Fact]
-    public async Task RetryFailedWebhookEventsAsync_ShouldRequeueFailedEvents()
+    public async Task RetryFailedWebhookEventsAsync_ShouldRetryFailedEvents()
     {
         // Arrange
         var failedEvent = new WebhookEvent
@@ -453,7 +456,7 @@ public class BillingJobsTests : IDisposable
             Id = Guid.NewGuid(),
             EventId = "evt_failed",
             EventType = "payment.failed",
-            Payload = "{}",
+            Payload = "{}", // Invalid payload (no event type) - will fail processing
             Status = WebhookEventStatus.Failed,
             AttemptCount = 2,
             CreatedAt = DateTime.UtcNow.AddHours(-1)
@@ -464,10 +467,11 @@ public class BillingJobsTests : IDisposable
         // Act
         await _sut.RetryFailedWebhookEventsAsync();
 
-        // Assert
+        // Assert - Event should be retried (attempt count increased) and remain failed due to invalid payload
         var updatedEvent = await _dbContext.WebhookEvents.FindAsync(failedEvent.Id);
-        updatedEvent!.Status.Should().Be(WebhookEventStatus.Pending);
+        updatedEvent!.Status.Should().Be(WebhookEventStatus.Failed);
         updatedEvent.AttemptCount.Should().Be(3);
+        updatedEvent.ErrorMessage.Should().NotBeNullOrEmpty();
     }
 
     [Fact]

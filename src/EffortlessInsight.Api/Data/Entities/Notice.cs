@@ -44,6 +44,24 @@ public class Notice : BaseEntity
     [MaxLength(100)]
     public string? NoticeSubCategory { get; set; } // itc_mismatch, turnover_mismatch, etc.
 
+    /// <summary>
+    /// Department code for the notice.
+    /// </summary>
+    [MaxLength(50)]
+    public string? DepartmentCode { get; set; }
+
+    /// <summary>
+    /// GST section reference.
+    /// </summary>
+    [MaxLength(50)]
+    public string? Section { get; set; }
+
+    /// <summary>
+    /// Brief summary of the notice.
+    /// </summary>
+    [MaxLength(1000)]
+    public string? Summary { get; set; }
+
     // ============================================================================
     // GSTIN
     // ============================================================================
@@ -65,6 +83,11 @@ public class Notice : BaseEntity
     public DateOnly? ExtendedDeadline { get; set; }
 
     public DateOnly? HearingDate { get; set; }
+
+    /// <summary>
+    /// Due date for responding to the notice.
+    /// </summary>
+    public DateTime? DueDate { get; set; }
 
     // ============================================================================
     // Financial Amounts
@@ -184,6 +207,16 @@ public class Notice : BaseEntity
 
     public Dictionary<string, object>? Metadata { get; set; }
 
+    /// <summary>
+    /// Indicates whether this notice was created manually without file upload.
+    /// </summary>
+    public bool IsManualEntry { get; set; }
+
+    /// <summary>
+    /// Notes or description for manual entries.
+    /// </summary>
+    public string? Notes { get; set; }
+
     // ============================================================================
     // Soft Delete
     // ============================================================================
@@ -193,6 +226,12 @@ public class Notice : BaseEntity
 
     [MaxLength(500)]
     public string? DeletionReason { get; set; }
+
+    /// <summary>
+    /// Soft delete flag.
+    /// </summary>
+    [NotMapped]
+    public bool IsDeleted => DeletedAt != null;
 
     // ============================================================================
     // Navigation Properties
@@ -208,6 +247,18 @@ public class Notice : BaseEntity
     public ICollection<NoticeFile> Files { get; set; } = [];
     public ICollection<FileFolder> Folders { get; set; } = [];
     public ICollection<ActivityLog> ActivityLogs { get; set; } = [];
+
+    /// <summary>
+    /// Relationships where this notice is the source.
+    /// </summary>
+    [InverseProperty(nameof(NoticeRelationship.SourceNotice))]
+    public ICollection<NoticeRelationship> OutgoingRelationships { get; set; } = [];
+
+    /// <summary>
+    /// Relationships where this notice is the target.
+    /// </summary>
+    [InverseProperty(nameof(NoticeRelationship.TargetNotice))]
+    public ICollection<NoticeRelationship> IncomingRelationships { get; set; } = [];
 }
 
 /// <summary>

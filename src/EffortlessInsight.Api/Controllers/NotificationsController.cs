@@ -104,7 +104,7 @@ public class NotificationsController : ControllerBase
     }
 
     private Guid GetCurrentUserId() =>
-        Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+        Guid.Parse(User.FindFirstValue("sub")!);
 }
 
 /// <summary>
@@ -160,7 +160,7 @@ public class NotificationPreferencesController : ControllerBase
     }
 
     private Guid GetCurrentUserId() =>
-        Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+        Guid.Parse(User.FindFirstValue("sub")!);
 }
 
 /// <summary>
@@ -215,7 +215,7 @@ public class PushTokensController : ControllerBase
     }
 
     private Guid GetCurrentUserId() =>
-        Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+        Guid.Parse(User.FindFirstValue("sub")!);
 }
 
 /// <summary>
@@ -405,7 +405,7 @@ public class NotificationWebhooksController : ControllerBase
     [HttpGet("unsubscribe")]
     [ProducesResponseType(typeof(UnsubscribeResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(UnsubscribeResponse), StatusCodes.Status400BadRequest)]
-    public async Task<IActionResult> Unsubscribe([FromQuery] UnsubscribeRequest request)
+    public async Task<IActionResult> Unsubscribe([FromQuery] DTOs.UnsubscribeRequest request)
     {
         try
         {

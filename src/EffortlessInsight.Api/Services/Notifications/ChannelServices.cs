@@ -934,13 +934,16 @@ public class PushTokenService : IPushTokenService
 public class NotificationHub : Hub
 {
     private readonly IConnectionManager _connectionManager;
+    private readonly INotificationEngineService _notificationService;
     private readonly ILogger<NotificationHub> _logger;
 
     public NotificationHub(
         IConnectionManager connectionManager,
+        INotificationEngineService notificationService,
         ILogger<NotificationHub> logger)
     {
         _connectionManager = connectionManager;
+        _notificationService = notificationService;
         _logger = logger;
     }
 
@@ -980,14 +983,24 @@ public class NotificationHub : Hub
         if (!userId.HasValue || !Guid.TryParse(notificationId, out var nId))
             return;
 
-        // This would typically call the notification service
-        // For now, just broadcast acknowledgment
-        await Clients.User(userId.Value.ToString()).SendAsync("notificationRead", notificationId);
+        try
+        {
+            var result = await _notificationService.MarkAsReadAsync(nId, userId.Value);
+            if (result.Read)
+            {
+                await Clients.User(userId.Value.ToString()).SendAsync("notificationRead", notificationId);
+                _logger.LogDebug("Notification {NotificationId} marked as read for user {UserId}", nId, userId.Value);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to mark notification {NotificationId} as read for user {UserId}", nId, userId.Value);
+        }
     }
 
     private Guid? GetUserId()
     {
-        var claim = Context.User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier);
+        var claim = Context.User?.FindFirst("sub");
         return Guid.TryParse(claim?.Value, out var id) ? id : null;
     }
 

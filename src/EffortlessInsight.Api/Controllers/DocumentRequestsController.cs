@@ -27,7 +27,7 @@ public class DocumentRequestsController : ControllerBase
     }
 
     private Guid GetUserId() =>
-        Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+        Guid.Parse(User.FindFirstValue("sub")!);
 
     // ==========================================================================
     // Notice-scoped Document Request Endpoints

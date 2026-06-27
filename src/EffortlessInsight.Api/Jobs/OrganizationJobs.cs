@@ -54,6 +54,48 @@ public class OrganizationJobs
     }
 
     /// <summary>
+    /// Automatically unsuspend members whose suspension has expired.
+    /// Should be scheduled to run hourly.
+    /// </summary>
+    public async Task UnsuspendExpiredMembersAsync()
+    {
+        try
+        {
+            var now = DateTime.UtcNow;
+
+            var expiredSuspensions = await _dbContext.OrganizationMembers
+                .Where(m => m.Status == "suspended" &&
+                            m.SuspensionExpiresAt != null &&
+                            m.SuspensionExpiresAt <= now)
+                .ToListAsync();
+
+            if (expiredSuspensions.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var member in expiredSuspensions)
+            {
+                member.Status = "active";
+                member.SuspendedAt = null;
+                member.SuspendedById = null;
+                member.SuspensionReason = null;
+                member.SuspensionExpiresAt = null;
+                member.UpdatedAt = now;
+            }
+
+            await _dbContext.SaveChangesAsync();
+
+            _logger.LogInformation("Automatically unsuspended {Count} members with expired suspensions", expiredSuspensions.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to unsuspend expired members");
+            throw;
+        }
+    }
+
+    /// <summary>
     /// Expire CA access that has passed its expiration date.
     /// Should be scheduled to run hourly.
     /// </summary>

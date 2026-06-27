@@ -1,5 +1,7 @@
+using System.Text.Json;
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities.Billing;
+using EffortlessInsight.Api.DTOs;
 using EffortlessInsight.Api.Services.Billing;
 using Microsoft.EntityFrameworkCore;
 
@@ -10,11 +12,14 @@ namespace EffortlessInsight.Api.Jobs;
 /// </summary>
 public class BillingJobs
 {
+    private const int MaxWebhookRetries = 5;
+
     private readonly ApplicationDbContext _dbContext;
     private readonly ISubscriptionService _subscriptionService;
     private readonly IUsageService _usageService;
     private readonly IBillingNotificationService _billingNotificationService;
     private readonly IRazorpayService _razorpayService;
+    private readonly IInvoiceService _invoiceService;
     private readonly ILogger<BillingJobs> _logger;
 
     public BillingJobs(
@@ -23,6 +28,7 @@ public class BillingJobs
         IUsageService usageService,
         IBillingNotificationService billingNotificationService,
         IRazorpayService razorpayService,
+        IInvoiceService invoiceService,
         ILogger<BillingJobs> logger)
     {
         _dbContext = dbContext;
@@ -30,6 +36,7 @@ public class BillingJobs
         _usageService = usageService;
         _billingNotificationService = billingNotificationService;
         _razorpayService = razorpayService;
+        _invoiceService = invoiceService;
         _logger = logger;
     }
 
@@ -65,12 +72,15 @@ public class BillingJobs
 
     /// <summary>
     /// Process subscription renewals - runs daily at 6 AM.
+    /// Skips paused subscriptions - they will be handled when resumed.
     /// </summary>
     public async Task ProcessSubscriptionRenewalsAsync()
     {
         _logger.LogInformation("Processing subscription renewals...");
 
         var now = DateTime.UtcNow;
+
+        // Skip paused subscriptions - they should not be renewed while paused
         var subscriptionsToRenew = await _dbContext.BillingSubscriptions
             .Where(s => s.Status == SubscriptionStatus.Active &&
                        s.CurrentPeriodEnd <= now &&
@@ -354,20 +364,300 @@ public class BillingJobs
 
         var failedEvents = await _dbContext.WebhookEvents
             .Where(e => e.Status == WebhookEventStatus.Failed &&
-                       e.AttemptCount < 5)
+                       e.AttemptCount < MaxWebhookRetries)
             .OrderBy(e => e.CreatedAt)
             .Take(10)
             .ToListAsync();
 
+        var processedCount = 0;
+        var failedCount = 0;
+        var deadLetterCount = 0;
+
         foreach (var webhookEvent in failedEvents)
         {
-            // Re-queue for processing
-            webhookEvent.Status = WebhookEventStatus.Pending;
             webhookEvent.AttemptCount++;
+            webhookEvent.LastAttemptAt = DateTime.UtcNow;
+            webhookEvent.Status = WebhookEventStatus.Processing;
+            webhookEvent.ProcessingStartedAt = DateTime.UtcNow;
+
+            try
+            {
+                // Deserialize the payload
+                var payload = JsonSerializer.Deserialize<RazorpayWebhookPayload>(
+                    webhookEvent.Payload,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                if (payload?.Event == null)
+                {
+                    webhookEvent.Status = WebhookEventStatus.Failed;
+                    webhookEvent.ErrorMessage = "Invalid payload: missing event type";
+                    failedCount++;
+                    continue;
+                }
+
+                // Process based on event type
+                await ProcessWebhookEventAsync(payload, webhookEvent);
+
+                webhookEvent.Status = WebhookEventStatus.Processed;
+                webhookEvent.ProcessedAt = DateTime.UtcNow;
+                webhookEvent.ErrorMessage = null;
+                processedCount++;
+
+                _logger.LogInformation(
+                    "Webhook event {EventId} processed successfully on retry attempt {Attempt}",
+                    webhookEvent.EventId, webhookEvent.AttemptCount);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "Failed to process webhook event {EventId} on attempt {Attempt}",
+                    webhookEvent.EventId, webhookEvent.AttemptCount);
+
+                webhookEvent.ErrorMessage = ex.Message;
+
+                // Move to dead letter after max retries
+                if (webhookEvent.AttemptCount >= MaxWebhookRetries)
+                {
+                    webhookEvent.Status = WebhookEventStatus.DeadLetter;
+                    deadLetterCount++;
+
+                    _logger.LogWarning(
+                        "Webhook event {EventId} moved to dead letter after {MaxRetries} attempts",
+                        webhookEvent.EventId, MaxWebhookRetries);
+                }
+                else
+                {
+                    webhookEvent.Status = WebhookEventStatus.Failed;
+                    failedCount++;
+                }
+            }
         }
 
         await _dbContext.SaveChangesAsync();
-        _logger.LogInformation("Re-queued {Count} failed webhook events", failedEvents.Count);
+
+        _logger.LogInformation(
+            "Processed {Total} webhook retries: {Processed} succeeded, {Failed} failed, {DeadLetter} moved to dead letter",
+            failedEvents.Count, processedCount, failedCount, deadLetterCount);
+    }
+
+    /// <summary>
+    /// Process a webhook event based on its type.
+    /// </summary>
+    private async Task ProcessWebhookEventAsync(RazorpayWebhookPayload payload, WebhookEvent webhookEvent)
+    {
+        switch (payload.Event)
+        {
+            case "payment.captured":
+                await HandlePaymentCapturedAsync(payload);
+                break;
+
+            case "payment.failed":
+                await HandlePaymentFailedAsync(payload);
+                break;
+
+            case "subscription.activated":
+                await HandleSubscriptionActivatedAsync(payload);
+                break;
+
+            case "subscription.charged":
+                await HandleSubscriptionChargedAsync(payload);
+                break;
+
+            case "subscription.cancelled":
+                await HandleSubscriptionCancelledAsync(payload);
+                break;
+
+            case "subscription.halted":
+                await HandleSubscriptionHaltedAsync(payload);
+                break;
+
+            case "refund.created":
+                await HandleRefundCreatedAsync(payload);
+                break;
+
+            default:
+                _logger.LogInformation("Unhandled Razorpay event: {Event}", payload.Event);
+                webhookEvent.Status = WebhookEventStatus.Skipped;
+                break;
+        }
+    }
+
+    private async Task HandlePaymentCapturedAsync(RazorpayWebhookPayload payload)
+    {
+        var paymentEntity = payload.Payload?.Payment?.Entity;
+        if (paymentEntity == null) return;
+
+        var paymentId = paymentEntity.Id;
+        var orderId = paymentEntity.OrderId;
+
+        _logger.LogInformation(
+            "Processing payment.captured: {PaymentId}, Order: {OrderId}",
+            paymentId, orderId);
+
+        var payment = await _dbContext.Payments
+            .FirstOrDefaultAsync(p => p.RazorpayOrderId == orderId);
+
+        if (payment != null)
+        {
+            payment.Status = PaymentStatus.Captured;
+            payment.RazorpayPaymentId = paymentId;
+            payment.CapturedAt = DateTime.UtcNow;
+            payment.PaymentMethod = paymentEntity.Method ?? "unknown";
+
+            if (payment.InvoiceId.HasValue)
+            {
+                await _invoiceService.MarkAsPaidAsync(payment.InvoiceId.Value, paymentId!);
+            }
+
+            await _dbContext.SaveChangesAsync();
+        }
+    }
+
+    private async Task HandlePaymentFailedAsync(RazorpayWebhookPayload payload)
+    {
+        var paymentEntity = payload.Payload?.Payment?.Entity;
+        if (paymentEntity == null) return;
+
+        var orderId = paymentEntity.OrderId;
+        var errorDescription = paymentEntity.ErrorDescription;
+
+        _logger.LogWarning(
+            "Processing payment.failed for order {OrderId}: {Error}",
+            orderId, errorDescription);
+
+        var payment = await _dbContext.Payments
+            .Include(p => p.Subscription)
+            .FirstOrDefaultAsync(p => p.RazorpayOrderId == orderId);
+
+        if (payment != null)
+        {
+            payment.Status = PaymentStatus.Failed;
+            payment.FailureCode = paymentEntity.ErrorCode;
+            payment.FailureReason = errorDescription;
+
+            if (payment.SubscriptionId.HasValue)
+            {
+                await _subscriptionService.HandlePaymentFailureAsync(
+                    payment.SubscriptionId.Value,
+                    errorDescription ?? "Payment failed");
+            }
+
+            await _dbContext.SaveChangesAsync();
+        }
+    }
+
+    private async Task HandleSubscriptionActivatedAsync(RazorpayWebhookPayload payload)
+    {
+        var subscriptionEntity = payload.Payload?.Subscription?.Entity;
+        if (subscriptionEntity == null) return;
+
+        var razorpaySubId = subscriptionEntity.Id;
+
+        _logger.LogInformation("Processing subscription.activated: {SubscriptionId}", razorpaySubId);
+
+        var subscription = await _subscriptionService.GetByRazorpayIdAsync(razorpaySubId!);
+        if (subscription != null)
+        {
+            subscription.Status = SubscriptionStatus.Active;
+            await _dbContext.SaveChangesAsync();
+        }
+    }
+
+    private async Task HandleSubscriptionChargedAsync(RazorpayWebhookPayload payload)
+    {
+        var subscriptionEntity = payload.Payload?.Subscription?.Entity;
+        if (subscriptionEntity == null) return;
+
+        var razorpaySubId = subscriptionEntity.Id;
+        var paymentEntity = payload.Payload?.Payment?.Entity;
+
+        _logger.LogInformation(
+            "Processing subscription.charged: {SubscriptionId}",
+            razorpaySubId);
+
+        var subscription = await _subscriptionService.GetByRazorpayIdAsync(razorpaySubId!);
+        if (subscription != null)
+        {
+            var webhookData = new RenewalWebhookData
+            {
+                RazorpayPaymentId = paymentEntity?.Id,
+                AmountInPaise = subscriptionEntity.Amount ?? paymentEntity?.Amount,
+                Currency = subscriptionEntity.Currency ?? paymentEntity?.Currency ?? "INR",
+                ChargeAt = subscriptionEntity.ChargeAt ?? paymentEntity?.CreatedAt,
+                CurrentPeriodStart = subscriptionEntity.StartAt,
+                CurrentPeriodEnd = subscriptionEntity.EndAt
+            };
+
+            await _subscriptionService.ProcessRenewalAsync(subscription.Id, webhookData);
+        }
+    }
+
+    private async Task HandleSubscriptionCancelledAsync(RazorpayWebhookPayload payload)
+    {
+        var subscriptionEntity = payload.Payload?.Subscription?.Entity;
+        if (subscriptionEntity == null) return;
+
+        var razorpaySubId = subscriptionEntity.Id;
+
+        _logger.LogInformation("Processing subscription.cancelled: {SubscriptionId}", razorpaySubId);
+
+        var subscription = await _subscriptionService.GetByRazorpayIdAsync(razorpaySubId!);
+        if (subscription != null)
+        {
+            subscription.Status = SubscriptionStatus.Cancelled;
+            subscription.EndedAt = DateTime.UtcNow;
+
+            var org = await _dbContext.Organizations.FindAsync(subscription.OrganizationId);
+            if (org != null)
+            {
+                org.SubscriptionStatus = "cancelled";
+            }
+
+            await _dbContext.SaveChangesAsync();
+        }
+    }
+
+    private async Task HandleSubscriptionHaltedAsync(RazorpayWebhookPayload payload)
+    {
+        var subscriptionEntity = payload.Payload?.Subscription?.Entity;
+        if (subscriptionEntity == null) return;
+
+        var razorpaySubId = subscriptionEntity.Id;
+
+        _logger.LogWarning("Processing subscription.halted: {SubscriptionId}", razorpaySubId);
+
+        var subscription = await _subscriptionService.GetByRazorpayIdAsync(razorpaySubId!);
+        if (subscription != null)
+        {
+            subscription.Status = SubscriptionStatus.PastDue;
+            await _dbContext.SaveChangesAsync();
+        }
+    }
+
+    private async Task HandleRefundCreatedAsync(RazorpayWebhookPayload payload)
+    {
+        var refundEntity = payload.Payload?.Refund?.Entity;
+        if (refundEntity == null) return;
+
+        var refundId = refundEntity.Id;
+        var paymentId = refundEntity.OrderId;
+
+        _logger.LogInformation("Processing refund.created: {RefundId}", refundId);
+
+        var payment = await _dbContext.Payments
+            .FirstOrDefaultAsync(p => p.RazorpayPaymentId == paymentId);
+
+        if (payment != null)
+        {
+            payment.RefundId = refundId;
+            payment.RefundAmount = refundEntity.Amount;
+            payment.RefundedAt = DateTime.UtcNow;
+            payment.Status = payment.RefundAmount >= payment.Amount
+                ? PaymentStatus.Refunded
+                : PaymentStatus.PartialRefund;
+
+            await _dbContext.SaveChangesAsync();
+        }
     }
 
     /// <summary>
@@ -519,6 +809,44 @@ public class BillingJobs
         }
 
         _logger.LogInformation("Sent {Count} renewal reminders", notificationsSent);
+    }
+
+    /// <summary>
+    /// Process scheduled subscription resumes - runs daily.
+    /// Automatically resumes paused subscriptions when their scheduled resume date arrives.
+    /// </summary>
+    public async Task ProcessScheduledResumesAsync()
+    {
+        _logger.LogInformation("Processing scheduled subscription resumes...");
+
+        var now = DateTime.UtcNow;
+        var subscriptionsToResume = await _dbContext.BillingSubscriptions
+            .Where(s => s.Status == SubscriptionStatus.Paused &&
+                       s.ScheduledResumeAt.HasValue &&
+                       s.ScheduledResumeAt.Value <= now)
+            .ToListAsync();
+
+        var resumedCount = 0;
+
+        foreach (var subscription in subscriptionsToResume)
+        {
+            try
+            {
+                await _subscriptionService.ResumeSubscriptionAsync(subscription.Id);
+                resumedCount++;
+                _logger.LogInformation(
+                    "Automatically resumed subscription {SubscriptionId} at scheduled time",
+                    subscription.Id);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "Failed to resume subscription {SubscriptionId}",
+                    subscription.Id);
+            }
+        }
+
+        _logger.LogInformation("Processed {Count} scheduled subscription resumes", resumedCount);
     }
 
     /// <summary>

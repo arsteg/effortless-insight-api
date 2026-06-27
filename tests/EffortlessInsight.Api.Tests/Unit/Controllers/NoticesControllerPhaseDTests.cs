@@ -19,6 +19,8 @@ namespace EffortlessInsight.Api.Tests.Unit.Controllers;
 public class NoticesControllerPhaseDTests
 {
     private readonly Mock<INoticeServiceExtended> _noticeService;
+    private readonly Mock<IZipProcessingService> _zipProcessingService;
+    private readonly Mock<INoticeWorkflowService> _workflowService;
     private readonly Mock<ICurrentOrganizationService> _currentOrg;
     private readonly Mock<ILogger<NoticesController>> _logger;
     private readonly NoticesController _controller;
@@ -30,6 +32,8 @@ public class NoticesControllerPhaseDTests
     public NoticesControllerPhaseDTests()
     {
         _noticeService = new Mock<INoticeServiceExtended>();
+        _zipProcessingService = new Mock<IZipProcessingService>();
+        _workflowService = new Mock<INoticeWorkflowService>();
         _currentOrg = new Mock<ICurrentOrganizationService>();
         _logger = new Mock<ILogger<NoticesController>>();
 
@@ -39,6 +43,8 @@ public class NoticesControllerPhaseDTests
 
         _controller = new NoticesController(
             _noticeService.Object,
+            _zipProcessingService.Object,
+            _workflowService.Object,
             _currentOrg.Object,
             _logger.Object);
 

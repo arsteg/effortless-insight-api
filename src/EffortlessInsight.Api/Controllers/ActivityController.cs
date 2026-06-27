@@ -27,7 +27,7 @@ public class ActivityController : ControllerBase
     }
 
     private Guid GetUserId() =>
-        Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+        Guid.Parse(User.FindFirstValue("sub")!);
 
     /// <summary>
     /// Get activity feed for a notice

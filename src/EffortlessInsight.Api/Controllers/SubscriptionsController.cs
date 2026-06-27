@@ -234,9 +234,94 @@ public class SubscriptionsController : ControllerBase
         return Ok(new ApiResponse<ValidateCouponResponse>(true, result));
     }
 
+    /// <summary>
+    /// Create a refund for a subscription payment.
+    /// </summary>
+    /// <remarks>
+    /// Creates a partial or full refund for the most recent payment on the specified subscription.
+    /// If amount is not specified, the full payment amount will be refunded.
+    /// </remarks>
+    /// <param name="subscriptionId">The subscription ID to refund.</param>
+    /// <param name="request">The refund request details.</param>
+    /// <returns>Refund details including the refund ID and status.</returns>
+    [HttpPost("{subscriptionId}/refund")]
+    [ProducesResponseType(typeof(ApiResponse<RefundResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> CreateRefund(
+        [FromRoute] Guid subscriptionId,
+        [FromBody] CreateRefundRequest request)
+    {
+        try
+        {
+            var orgId = _currentOrganization.OrganizationId;
+            if (orgId == null)
+            {
+                return BadRequest(new ApiErrorResponse(false, "NO_ORG", "No organization selected"));
+            }
+
+            // Verify the subscription belongs to the current organization
+            var subscription = await _subscriptionService.GetSubscriptionEntityAsync(orgId.Value);
+            if (subscription == null || subscription.Id != subscriptionId)
+            {
+                return NotFound(new ApiErrorResponse(false, "NOT_FOUND", "Subscription not found"));
+            }
+
+            var result = await _subscriptionService.CreateRefundAsync(
+                subscriptionId,
+                request.Amount,
+                request.Reason);
+
+            _logger.LogInformation(
+                "Refund {RefundId} created for subscription {SubscriptionId}. Amount: {Amount}",
+                result.RefundId, subscriptionId, result.Amount);
+
+            return Ok(new ApiResponse<RefundResponse>(true, result));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new ApiErrorResponse(false, "REFUND_FAILED", ex.Message));
+        }
+    }
+
+    /// <summary>
+    /// Manually retry the last failed payment for the current subscription.
+    /// </summary>
+    /// <remarks>
+    /// This endpoint allows users to manually retry a failed payment when their subscription
+    /// is in 'past_due' status. A valid default payment method must be on file.
+    /// </remarks>
+    /// <returns>Payment retry result with the new subscription status.</returns>
+    [HttpPost("current/retry-payment")]
+    [ProducesResponseType(typeof(ApiResponse<PaymentRetryResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> RetryPayment()
+    {
+        try
+        {
+            var orgId = _currentOrganization.OrganizationId;
+            if (orgId == null)
+            {
+                return BadRequest(new ApiErrorResponse(false, "NO_ORG", "No organization selected"));
+            }
+
+            var result = await _subscriptionService.RetryPaymentAsync(orgId.Value);
+
+            _logger.LogInformation(
+                "Payment retry for organization {OrganizationId}: Success={Success}",
+                orgId.Value, result.Success);
+
+            return Ok(new ApiResponse<PaymentRetryResponse>(true, result));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new ApiErrorResponse(false, "RETRY_FAILED", ex.Message));
+        }
+    }
+
     private Guid GetCurrentUserId()
     {
-        var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        var userIdClaim = User.FindFirstValue("sub");
         return Guid.Parse(userIdClaim!);
     }
 }

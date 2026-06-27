@@ -102,8 +102,28 @@ public class NoticeWorkflowInstance : BaseEntity
     /// </summary>
     public Dictionary<string, object>? Metadata { get; set; }
 
+    /// <summary>
+    /// Version of the workflow template used when this instance was created.
+    /// </summary>
+    public int TemplateVersionUsed { get; set; }
+
+    /// <summary>
+    /// Whether this workflow instance has parallel stages active.
+    /// </summary>
+    public bool HasParallelStages { get; set; }
+
+    /// <summary>
+    /// Number of currently active parallel branches.
+    /// </summary>
+    public int ActiveBranchCount { get; set; }
+
     // Navigation properties
     public ICollection<WorkflowHistory> History { get; set; } = [];
+
+    /// <summary>
+    /// Active stage instances (supports parallel execution).
+    /// </summary>
+    public ICollection<WorkflowStageInstance> StageInstances { get; set; } = [];
 }
 
 /// <summary>

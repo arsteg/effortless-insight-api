@@ -1,5 +1,6 @@
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Services;
+using EffortlessInsight.Api.Tests.Helpers;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -22,11 +23,26 @@ public class TestWebApplicationFactory : WebApplicationFactory<Program>
 
         builder.ConfigureServices(services =>
         {
-            // Remove the existing DbContext registration
-            var dbContextDescriptor = services.SingleOrDefault(
-                d => d.ServiceType == typeof(DbContextOptions<ApplicationDbContext>));
-            if (dbContextDescriptor != null)
-                services.Remove(dbContextDescriptor);
+            // Remove ALL existing DbContext and EF Core registrations to avoid provider conflicts
+            // This includes Npgsql, pooling, and any related services
+            var descriptorsToRemove = services.Where(d =>
+                d.ServiceType == typeof(DbContextOptions<ApplicationDbContext>) ||
+                d.ServiceType == typeof(DbContextOptions) ||
+                d.ServiceType == typeof(ApplicationDbContext) ||
+                d.ServiceType.FullName?.Contains("Npgsql") == true ||
+                d.ServiceType.FullName?.Contains("EntityFrameworkCore.PostgreSQL") == true ||
+                d.ServiceType.FullName?.Contains("IDbContextPool") == true ||
+                d.ServiceType.FullName?.Contains("IDbContextFactory") == true ||
+                (d.ImplementationType?.FullName?.Contains("Npgsql") == true) ||
+                (d.ImplementationType?.FullName?.Contains("PostgreSQL") == true)
+            ).ToList();
+
+            foreach (var descriptor in descriptorsToRemove)
+                services.Remove(descriptor);
+
+            // Also explicitly remove using RemoveAll for better coverage
+            services.RemoveAll<DbContextOptions<ApplicationDbContext>>();
+            services.RemoveAll<ApplicationDbContext>();
 
             // Remove Redis connection
             var redisDescriptor = services.SingleOrDefault(
@@ -40,10 +56,15 @@ public class TestWebApplicationFactory : WebApplicationFactory<Program>
             foreach (var descriptor in hangfireDescriptors)
                 services.Remove(descriptor);
 
-            // Add in-memory database for testing
-            services.AddDbContext<ApplicationDbContext>(options =>
+            // Add in-memory database using TestableApplicationDbContext which has JSON converters
+            // Use a unique database name for test isolation
+            var dbName = $"IntegrationTestDb_{Guid.NewGuid()}";
+            services.AddScoped<ApplicationDbContext>(sp =>
             {
-                options.UseInMemoryDatabase($"TestDb_{Guid.NewGuid()}");
+                var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+                    .UseInMemoryDatabase(dbName)
+                    .Options;
+                return new TestableApplicationDbContext(options);
             });
 
             // Replace distributed cache with in-memory implementation

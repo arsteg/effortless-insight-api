@@ -263,13 +263,33 @@ public class WebhooksController : ControllerBase
         if (subscriptionEntity == null) return;
 
         var razorpaySubId = subscriptionEntity.Id;
+        var paymentEntity = payload.Payload?.Payment?.Entity;
 
-        _logger.LogInformation("Subscription charged: {SubscriptionId}", razorpaySubId);
+        _logger.LogInformation(
+            "Subscription charged: {SubscriptionId}, Amount: {Amount}",
+            razorpaySubId, subscriptionEntity.Amount);
 
         var subscription = await _subscriptionService.GetByRazorpayIdAsync(razorpaySubId!);
         if (subscription != null)
         {
-            await _subscriptionService.ProcessRenewalAsync(subscription.Id);
+            // Build renewal webhook data from the payload
+            var webhookData = new RenewalWebhookData
+            {
+                RazorpayPaymentId = paymentEntity?.Id,
+                AmountInPaise = subscriptionEntity.Amount ?? paymentEntity?.Amount,
+                Currency = subscriptionEntity.Currency ?? paymentEntity?.Currency ?? "INR",
+                ChargeAt = subscriptionEntity.ChargeAt ?? paymentEntity?.CreatedAt,
+                CurrentPeriodStart = subscriptionEntity.StartAt,
+                CurrentPeriodEnd = subscriptionEntity.EndAt
+            };
+
+            await _subscriptionService.ProcessRenewalAsync(subscription.Id, webhookData);
+        }
+        else
+        {
+            _logger.LogWarning(
+                "No local subscription found for Razorpay subscription {RazorpaySubscriptionId}",
+                razorpaySubId);
         }
     }
 

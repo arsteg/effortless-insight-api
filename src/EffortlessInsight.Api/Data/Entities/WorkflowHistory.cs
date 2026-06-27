@@ -35,6 +35,24 @@ public class WorkflowHistory : BaseEntity
     public string? ToStageKey { get; set; }
 
     /// <summary>
+    /// Name of the stage transitioned from.
+    /// </summary>
+    [MaxLength(100)]
+    public string? FromStage { get; set; }
+
+    /// <summary>
+    /// Name of the stage transitioned to.
+    /// </summary>
+    [MaxLength(100)]
+    public string? ToStage { get; set; }
+
+    /// <summary>
+    /// Comment or notes about the transition.
+    /// </summary>
+    [MaxLength(1000)]
+    public string? Comment { get; set; }
+
+    /// <summary>
     /// User who triggered this event.
     /// </summary>
     public Guid? PerformedById { get; set; }
@@ -112,6 +130,9 @@ public static class WorkflowHistoryEventTypes
     public const string CommentAdded = "comment_added";
     public const string AttachmentAdded = "attachment_added";
     public const string DeadlineExtended = "deadline_extended";
+    public const string DeadlineExtensionRequested = "deadline_extension_requested";
+    public const string DeadlineExtensionApproved = "deadline_extension_approved";
+    public const string DeadlineExtensionRejected = "deadline_extension_rejected";
     public const string WorkflowPaused = "workflow_paused";
     public const string WorkflowResumed = "workflow_resumed";
     public const string WorkflowCompleted = "workflow_completed";
@@ -124,7 +145,8 @@ public static class WorkflowHistoryEventTypes
     [
         WorkflowStarted, StageTransition, Assignment, Reassignment,
         SlaWarning, SlaBreach, Escalation, CommentAdded, AttachmentAdded,
-        DeadlineExtended, WorkflowPaused, WorkflowResumed, WorkflowCompleted,
+        DeadlineExtended, DeadlineExtensionRequested, DeadlineExtensionApproved,
+        DeadlineExtensionRejected, WorkflowPaused, WorkflowResumed, WorkflowCompleted,
         WorkflowCancelled, ActionExecuted, AiAnalysis, NotificationSent
     ];
 

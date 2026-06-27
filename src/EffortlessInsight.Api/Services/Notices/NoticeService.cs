@@ -96,6 +96,15 @@ public interface INoticeServiceExtended : INoticeService
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Creates a notice manually without file upload.
+    /// </summary>
+    Task<Notice> CreateManualNoticeAsync(
+        CreateManualNoticeRequest request,
+        Guid organizationId,
+        Guid userId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Gets a notice by ID with organization validation.
     /// </summary>
     Task<Notice?> GetByIdAsync(Guid noticeId, Guid organizationId, CancellationToken cancellationToken = default);
@@ -216,6 +225,29 @@ public interface INoticeServiceExtended : INoticeService
     /// Gets download URL for an attachment.
     /// </summary>
     Task<PresignedDownloadResult> GetAttachmentDownloadUrlAsync(
+        Guid attachmentId,
+        Guid noticeId,
+        Guid organizationId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Uploads a new version of an existing attachment.
+    /// </summary>
+    Task<Attachment> UploadNewAttachmentVersionAsync(
+        Guid attachmentId,
+        Guid noticeId,
+        Guid organizationId,
+        Guid userId,
+        Stream fileStream,
+        string fileName,
+        string? contentType,
+        string? versionNote,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Gets version history for an attachment.
+    /// </summary>
+    Task<AttachmentVersionHistoryResponse> GetAttachmentVersionHistoryAsync(
         Guid attachmentId,
         Guid noticeId,
         Guid organizationId,
@@ -402,6 +434,37 @@ public interface INoticeServiceExtended : INoticeService
         CancellationToken cancellationToken = default);
 
     #endregion
+
+    #region Relationships
+
+    /// <summary>
+    /// Gets all relationships for a notice.
+    /// </summary>
+    Task<NoticeRelationshipsResponse> GetRelationshipsAsync(
+        Guid noticeId,
+        Guid organizationId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Creates a relationship between two notices.
+    /// </summary>
+    Task<NoticeRelationshipDto> CreateRelationshipAsync(
+        Guid sourceNoticeId,
+        Guid organizationId,
+        Guid userId,
+        CreateNoticeRelationshipRequest request,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Deletes a notice relationship.
+    /// </summary>
+    Task DeleteRelationshipAsync(
+        Guid relationshipId,
+        Guid noticeId,
+        Guid organizationId,
+        CancellationToken cancellationToken = default);
+
+    #endregion
 }
 
 /// <summary>
@@ -444,26 +507,6 @@ public record UpdateNoticeDetailsDto(
     string? Priority = null,
     List<string>? Tags = null);
 
-/// <summary>
-/// DTO for creating a task.
-/// </summary>
-public record CreateTaskDto(
-    string Title,
-    string? Description = null,
-    DateTime? DueDate = null,
-    string Priority = "medium",
-    Guid? AssignedToId = null);
-
-/// <summary>
-/// DTO for updating a task.
-/// </summary>
-public record UpdateTaskDto(
-    string? Title = null,
-    string? Description = null,
-    DateTime? DueDate = null,
-    string? Priority = null,
-    string? Status = null,
-    Guid? AssignedToId = null);
 
 /// <summary>
 /// Implementation of the notice service.
@@ -760,6 +803,100 @@ public class NoticeServiceImpl : INoticeServiceExtended
     }
 
     /// <inheritdoc />
+    public async Task<Notice> CreateManualNoticeAsync(
+        CreateManualNoticeRequest request,
+        Guid organizationId,
+        Guid userId,
+        CancellationToken cancellationToken = default)
+    {
+        // Validate GSTIN
+        var orgGstin = await _db.OrganizationGstins
+            .FirstOrDefaultAsync(g =>
+                g.OrganizationId == organizationId &&
+                g.Gstin == request.Gstin.ToUpperInvariant() &&
+                g.DeletedAt == null,
+                cancellationToken);
+
+        if (orgGstin == null)
+        {
+            throw new InvalidOperationException($"GSTIN {request.Gstin} not found in organization");
+        }
+
+        // Calculate priority if not provided
+        var priority = request.Priority ?? _workflowService.CalculatePriority(
+            request.NoticeType,
+            request.NoticeCategory,
+            request.ResponseDeadline,
+            (request.TaxAmount ?? 0) + (request.PenaltyAmount ?? 0) + (request.InterestAmount ?? 0));
+
+        // Create notice record
+        var noticeId = Guid.NewGuid();
+        var notice = new Notice
+        {
+            Id = noticeId,
+            OrganizationId = organizationId,
+            UploadedById = userId,
+            Gstin = request.Gstin.ToUpperInvariant(),
+            GstinId = orgGstin.Id,
+            NoticeNumber = request.NoticeNumber,
+            NoticeType = request.NoticeType,
+            NoticeCategory = request.NoticeCategory,
+            NoticeSubCategory = request.NoticeSubCategory,
+            IssueDate = request.IssueDate,
+            ResponseDeadline = request.ResponseDeadline,
+            HearingDate = request.HearingDate,
+            PeriodFrom = request.PeriodFrom,
+            PeriodTo = request.PeriodTo,
+            TaxAmount = request.TaxAmount,
+            PenaltyAmount = request.PenaltyAmount,
+            InterestAmount = request.InterestAmount,
+            IssuingAuthority = request.IssuingAuthority,
+            Notes = request.Subject,
+            Priority = priority,
+            Tags = request.Tags,
+            AssignedToId = request.AssignedToId,
+            AssignedById = request.AssignedToId.HasValue ? userId : null,
+            AssignedAt = request.AssignedToId.HasValue ? DateTime.UtcNow : null,
+            // Manual entry - placeholder file values
+            FileName = $"manual_entry_{noticeId:N}.txt",
+            FileUrl = $"manual://{noticeId}",
+            FileSize = 0,
+            // Manual entry - no AI processing needed
+            Status = NoticeStatus.Analyzed,
+            ProcessingStatus = NoticeProcessingStatus.Completed,
+            IsManualEntry = true,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+
+        _db.Notices.Add(notice);
+        await _db.SaveChangesAsync(cancellationToken);
+
+        // Audit log
+        await _auditService.LogAsync(new AuditLogEntry
+        {
+            Action = "notice.created_manual",
+            EntityType = "Notice",
+            EntityId = notice.Id,
+            UserId = userId,
+            OrganizationId = organizationId,
+            NewValues = new Dictionary<string, object>
+            {
+                ["gstin"] = notice.Gstin ?? "",
+                ["notice_number"] = notice.NoticeNumber ?? "",
+                ["notice_type"] = notice.NoticeType ?? "",
+                ["is_manual_entry"] = true
+            }
+        });
+
+        _logger.LogInformation(
+            "Manual notice created: {NoticeId} for org {OrganizationId} by user {UserId}",
+            notice.Id, organizationId, userId);
+
+        return notice;
+    }
+
+    /// <inheritdoc />
     public async Task<DuplicateCheckResult> CheckDuplicateAsync(
         string fileHash,
         Guid organizationId,
@@ -851,16 +988,32 @@ public class NoticeServiceImpl : INoticeServiceExtended
             query = query.Where(n => n.ResponseDeadline <= filter.DeadlineTo.Value);
         }
 
-        // Full-text search
+        // Full-text search with WebSearchToTsQuery for advanced query syntax
+        // Supports: "exact phrase", -excluded, OR operator, prefix:*
         if (!string.IsNullOrEmpty(filter.Search))
         {
             var searchTerm = filter.Search.Trim();
+
+            // Build comprehensive search vector from multiple fields
+            // Weighted: A (highest) = notice identifiers, B = metadata, C = content, D = tags
             query = query.Where(n =>
                 EF.Functions.ToTsVector("english",
+                    // Primary identifiers (high relevance)
                     (n.NoticeNumber ?? "") + " " +
                     (n.Gstin ?? "") + " " +
-                    (n.OcrText ?? ""))
-                .Matches(EF.Functions.PlainToTsQuery("english", searchTerm)));
+                    // Notice metadata
+                    (n.NoticeType ?? "") + " " +
+                    (n.NoticeCategory ?? "") + " " +
+                    (n.NoticeSubCategory ?? "") + " " +
+                    (n.IssuingAuthority ?? "") + " " +
+                    (n.IssuingOfficer ?? "") + " " +
+                    (n.Jurisdiction ?? "") + " " +
+                    // Content
+                    (n.OcrText ?? "") + " " +
+                    (n.Notes ?? "") + " " +
+                    // Tags (joined as space-separated)
+                    (n.Tags != null ? string.Join(" ", n.Tags) : ""))
+                .Matches(EF.Functions.WebSearchToTsQuery("english", searchTerm)));
         }
 
         // Get total count before pagination
@@ -1504,6 +1657,140 @@ public class NoticeServiceImpl : INoticeServiceExtended
             cancellationToken);
     }
 
+    /// <inheritdoc />
+    public async Task<Attachment> UploadNewAttachmentVersionAsync(
+        Guid attachmentId,
+        Guid noticeId,
+        Guid organizationId,
+        Guid userId,
+        Stream fileStream,
+        string fileName,
+        string? contentType,
+        string? versionNote,
+        CancellationToken cancellationToken = default)
+    {
+        // Get existing attachment
+        var existingAttachment = await _db.Attachments
+            .Include(a => a.Notice)
+            .FirstOrDefaultAsync(a =>
+                a.Id == attachmentId &&
+                a.NoticeId == noticeId &&
+                a.Notice!.OrganizationId == organizationId &&
+                a.IsCurrentVersion &&
+                a.DeletedAt == null,
+                cancellationToken)
+            ?? throw new InvalidOperationException("Attachment not found or is not the current version");
+
+        // Determine original attachment ID (for grouping versions)
+        var originalAttachmentId = existingAttachment.OriginalAttachmentId ?? existingAttachment.Id;
+
+        // Upload new file
+        using var memoryStream = new MemoryStream();
+        await fileStream.CopyToAsync(memoryStream, cancellationToken);
+        var fileBytes = memoryStream.ToArray();
+
+        var storagePath = $"attachments/{organizationId}/{noticeId}/{Guid.NewGuid()}/{fileName}";
+        var fileUrl = await _storageService.UploadAsync(
+            new MemoryStream(fileBytes),
+            storagePath,
+            contentType ?? "application/octet-stream");
+
+        // Compute file hash
+        var fileHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(fileBytes)).ToLowerInvariant();
+
+        // Mark existing attachment as not current
+        existingAttachment.IsCurrentVersion = false;
+        existingAttachment.UpdatedAt = DateTime.UtcNow;
+
+        // Create new version
+        var newVersion = new Attachment
+        {
+            Id = Guid.NewGuid(),
+            NoticeId = noticeId,
+            ResponseId = existingAttachment.ResponseId,
+            TaskId = existingAttachment.TaskId,
+            UploadedById = userId,
+            FileName = fileName,
+            FileUrl = fileUrl,
+            FileSize = fileBytes.Length,
+            FileType = contentType ?? existingAttachment.FileType,
+            DocumentType = existingAttachment.DocumentType,
+            Description = existingAttachment.Description,
+            FileHash = fileHash,
+            Version = existingAttachment.Version + 1,
+            PreviousVersionId = existingAttachment.Id,
+            IsCurrentVersion = true,
+            VersionNote = versionNote,
+            OriginalAttachmentId = originalAttachmentId,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+
+        _db.Attachments.Add(newVersion);
+        await _db.SaveChangesAsync(cancellationToken);
+
+        _logger.LogInformation(
+            "Created version {Version} of attachment {OriginalId} for notice {NoticeId} by user {UserId}",
+            newVersion.Version, originalAttachmentId, noticeId, userId);
+
+        return newVersion;
+    }
+
+    /// <inheritdoc />
+    public async Task<AttachmentVersionHistoryResponse> GetAttachmentVersionHistoryAsync(
+        Guid attachmentId,
+        Guid noticeId,
+        Guid organizationId,
+        CancellationToken cancellationToken = default)
+    {
+        // First get the attachment to determine the original attachment ID
+        var attachment = await _db.Attachments
+            .Include(a => a.Notice)
+            .FirstOrDefaultAsync(a =>
+                a.Id == attachmentId &&
+                a.NoticeId == noticeId &&
+                a.Notice!.OrganizationId == organizationId &&
+                a.DeletedAt == null,
+                cancellationToken)
+            ?? throw new InvalidOperationException("Attachment not found");
+
+        // Get the original attachment ID (root of version chain)
+        var originalId = attachment.OriginalAttachmentId ?? attachment.Id;
+
+        // Get all versions (original + all that reference it)
+        var allVersions = await _db.Attachments
+            .Include(a => a.UploadedBy)
+            .Where(a =>
+                a.NoticeId == noticeId &&
+                a.DeletedAt == null &&
+                (a.Id == originalId || a.OriginalAttachmentId == originalId))
+            .OrderByDescending(a => a.Version)
+            .ToListAsync(cancellationToken);
+
+        var currentVersion = allVersions.FirstOrDefault(v => v.IsCurrentVersion);
+
+        return new AttachmentVersionHistoryResponse
+        {
+            AttachmentId = originalId,
+            CurrentVersionId = currentVersion?.Id ?? attachmentId,
+            TotalVersions = allVersions.Count,
+            Versions = allVersions.Select(v => new AttachmentVersionDto
+            {
+                Id = v.Id,
+                Version = v.Version,
+                FileName = v.FileName,
+                FileSize = v.FileSize,
+                FileType = v.FileType,
+                FileHash = v.FileHash,
+                VersionNote = v.VersionNote,
+                IsCurrentVersion = v.IsCurrentVersion,
+                UploadedById = v.UploadedById,
+                UploadedByName = v.UploadedBy?.Name,
+                CreatedAt = v.CreatedAt
+            }).ToList()
+        };
+    }
+
     #endregion
 
     #region Comments
@@ -1676,12 +1963,15 @@ public class NoticeServiceImpl : INoticeServiceExtended
             throw new InvalidOperationException("Notice not found");
         }
 
+        // Get first assignee from the list (legacy single-assignee support)
+        var assigneeId = taskDto.Assignees?.FirstOrDefault();
+
         // Validate assignee if provided
-        if (taskDto.AssignedToId.HasValue)
+        if (assigneeId.HasValue)
         {
             var isMember = await _db.OrganizationMembers.AnyAsync(m =>
                 m.OrganizationId == organizationId &&
-                m.UserId == taskDto.AssignedToId &&
+                m.UserId == assigneeId.Value &&
                 m.Status == "active" &&
                 m.DeletedAt == null,
                 cancellationToken);
@@ -1697,7 +1987,7 @@ public class NoticeServiceImpl : INoticeServiceExtended
             Id = Guid.NewGuid(),
             NoticeId = noticeId,
             CreatedById = userId,
-            AssignedToId = taskDto.AssignedToId,
+            AssignedToId = assigneeId,
             Title = taskDto.Title,
             Description = taskDto.Description,
             DueDate = taskDto.DueDate,
@@ -1781,12 +2071,14 @@ public class NoticeServiceImpl : INoticeServiceExtended
             }
         }
 
-        if (update.AssignedToId.HasValue)
+        // Get first assignee from the list (legacy single-assignee support)
+        var newAssigneeId = update.Assignees?.FirstOrDefault();
+        if (newAssigneeId.HasValue)
         {
             // Validate assignee
             var isMember = await _db.OrganizationMembers.AnyAsync(m =>
                 m.OrganizationId == organizationId &&
-                m.UserId == update.AssignedToId &&
+                m.UserId == newAssigneeId.Value &&
                 m.Status == "active" &&
                 m.DeletedAt == null,
                 cancellationToken);
@@ -1796,7 +2088,7 @@ public class NoticeServiceImpl : INoticeServiceExtended
                 throw new InvalidOperationException("Assignee is not an active member of this organization");
             }
 
-            task.AssignedToId = update.AssignedToId;
+            task.AssignedToId = newAssigneeId;
         }
 
         task.UpdatedAt = DateTime.UtcNow;
@@ -2337,6 +2629,173 @@ public class NoticeServiceImpl : INoticeServiceExtended
             dueThisMonth,
             totalDemand,
             totalCount);
+    }
+
+    #endregion
+
+    #region Relationships
+
+    public async Task<NoticeRelationshipsResponse> GetRelationshipsAsync(
+        Guid noticeId,
+        Guid organizationId,
+        CancellationToken cancellationToken = default)
+    {
+        var notice = await _db.Notices
+            .FirstOrDefaultAsync(n => n.Id == noticeId && n.OrganizationId == organizationId, cancellationToken);
+
+        if (notice == null)
+        {
+            throw new InvalidOperationException("NOTICE_NOT_FOUND");
+        }
+
+        var outgoing = await _db.NoticeRelationships
+            .Include(r => r.SourceNotice)
+            .Include(r => r.TargetNotice)
+            .Include(r => r.CreatedBy)
+            .Where(r => r.SourceNoticeId == noticeId)
+            .Select(r => MapToRelationshipDto(r))
+            .ToListAsync(cancellationToken);
+
+        var incoming = await _db.NoticeRelationships
+            .Include(r => r.SourceNotice)
+            .Include(r => r.TargetNotice)
+            .Include(r => r.CreatedBy)
+            .Where(r => r.TargetNoticeId == noticeId)
+            .Select(r => MapToRelationshipDto(r))
+            .ToListAsync(cancellationToken);
+
+        return new NoticeRelationshipsResponse(outgoing, incoming);
+    }
+
+    public async Task<NoticeRelationshipDto> CreateRelationshipAsync(
+        Guid sourceNoticeId,
+        Guid organizationId,
+        Guid userId,
+        CreateNoticeRelationshipRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        // Validate relationship type
+        if (!NoticeRelationshipType.IsValid(request.RelationshipType))
+        {
+            throw new ArgumentException($"Invalid relationship type: {request.RelationshipType}");
+        }
+
+        // Verify source notice exists and belongs to org
+        var sourceNotice = await _db.Notices
+            .FirstOrDefaultAsync(n => n.Id == sourceNoticeId && n.OrganizationId == organizationId, cancellationToken);
+
+        if (sourceNotice == null)
+        {
+            throw new InvalidOperationException("SOURCE_NOTICE_NOT_FOUND");
+        }
+
+        // Verify target notice exists and belongs to same org
+        var targetNotice = await _db.Notices
+            .FirstOrDefaultAsync(n => n.Id == request.TargetNoticeId && n.OrganizationId == organizationId, cancellationToken);
+
+        if (targetNotice == null)
+        {
+            throw new InvalidOperationException("TARGET_NOTICE_NOT_FOUND");
+        }
+
+        // Cannot link to self
+        if (sourceNoticeId == request.TargetNoticeId)
+        {
+            throw new InvalidOperationException("CANNOT_LINK_TO_SELF");
+        }
+
+        // Check for existing relationship of same type
+        var existingRelationship = await _db.NoticeRelationships
+            .FirstOrDefaultAsync(r =>
+                r.SourceNoticeId == sourceNoticeId &&
+                r.TargetNoticeId == request.TargetNoticeId &&
+                r.RelationshipType == request.RelationshipType,
+                cancellationToken);
+
+        if (existingRelationship != null)
+        {
+            throw new InvalidOperationException("RELATIONSHIP_EXISTS");
+        }
+
+        var relationship = new NoticeRelationship
+        {
+            SourceNoticeId = sourceNoticeId,
+            TargetNoticeId = request.TargetNoticeId,
+            RelationshipType = request.RelationshipType,
+            Note = request.Note,
+            CreatedById = userId,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        _db.NoticeRelationships.Add(relationship);
+        await _db.SaveChangesAsync(cancellationToken);
+
+        // Reload with navigation properties
+        await _db.Entry(relationship).Reference(r => r.SourceNotice).LoadAsync(cancellationToken);
+        await _db.Entry(relationship).Reference(r => r.TargetNotice).LoadAsync(cancellationToken);
+        await _db.Entry(relationship).Reference(r => r.CreatedBy).LoadAsync(cancellationToken);
+
+        _logger.LogInformation(
+            "Created notice relationship: {SourceId} -> {TargetId} ({Type})",
+            sourceNoticeId, request.TargetNoticeId, request.RelationshipType);
+
+        return MapToRelationshipDto(relationship);
+    }
+
+    public async Task DeleteRelationshipAsync(
+        Guid relationshipId,
+        Guid noticeId,
+        Guid organizationId,
+        CancellationToken cancellationToken = default)
+    {
+        var relationship = await _db.NoticeRelationships
+            .Include(r => r.SourceNotice)
+            .FirstOrDefaultAsync(r =>
+                r.Id == relationshipId &&
+                (r.SourceNoticeId == noticeId || r.TargetNoticeId == noticeId),
+                cancellationToken);
+
+        if (relationship == null)
+        {
+            throw new InvalidOperationException("RELATIONSHIP_NOT_FOUND");
+        }
+
+        // Verify the notice belongs to the organization
+        if (relationship.SourceNotice.OrganizationId != organizationId)
+        {
+            throw new InvalidOperationException("RELATIONSHIP_NOT_FOUND");
+        }
+
+        _db.NoticeRelationships.Remove(relationship);
+        await _db.SaveChangesAsync(cancellationToken);
+
+        _logger.LogInformation("Deleted notice relationship: {RelationshipId}", relationshipId);
+    }
+
+    private static NoticeRelationshipDto MapToRelationshipDto(NoticeRelationship r)
+    {
+        return new NoticeRelationshipDto(
+            r.Id,
+            r.SourceNoticeId,
+            r.TargetNoticeId,
+            r.RelationshipType,
+            r.Note,
+            new NoticeRelationshipNoticeDto(
+                r.SourceNotice.Id,
+                r.SourceNotice.NoticeNumber,
+                r.SourceNotice.NoticeType,
+                r.SourceNotice.Gstin,
+                r.SourceNotice.Status,
+                r.SourceNotice.ResponseDeadline),
+            new NoticeRelationshipNoticeDto(
+                r.TargetNotice.Id,
+                r.TargetNotice.NoticeNumber,
+                r.TargetNotice.NoticeType,
+                r.TargetNotice.Gstin,
+                r.TargetNotice.Status,
+                r.TargetNotice.ResponseDeadline),
+            r.CreatedBy?.Name ?? "Unknown",
+            r.CreatedAt);
     }
 
     #endregion

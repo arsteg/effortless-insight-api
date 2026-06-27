@@ -1,5 +1,6 @@
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities.Admin;
+using EffortlessInsight.Api.Data.Entities.Billing;
 using EffortlessInsight.Api.Services.Admin;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -477,7 +478,7 @@ public class AdminBillingController : AdminControllerBase
         return File(pdfBytes, "application/pdf", $"invoice-{invoice.InvoiceNumber}.pdf");
     }
 
-    private byte[] GenerateInvoicePdf(Data.Entities.Invoice invoice)
+    private byte[] GenerateInvoicePdf(Invoice invoice)
     {
         using var stream = new MemoryStream();
         using var writer = new StreamWriter(stream, System.Text.Encoding.UTF8);

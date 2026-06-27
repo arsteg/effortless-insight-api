@@ -33,7 +33,7 @@ public class WorkflowController : ControllerBase
 
     private Guid GetUserId()
     {
-        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        var userIdClaim = User.FindFirst("sub")?.Value;
         if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
         {
             throw new UnauthorizedAccessException("User ID not found in claims");
@@ -475,6 +475,111 @@ public class WorkflowController : ControllerBase
         }
 
         return Ok(slaStatus);
+    }
+
+    #endregion
+
+    #region Parallel Execution Endpoints
+
+    /// <summary>
+    /// Gets active stage instances for a workflow (supports parallel execution).
+    /// </summary>
+    [HttpGet("notices/{noticeId:guid}/stage-instances")]
+    [ProducesResponseType(typeof(List<StageInstanceDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<List<StageInstanceDto>>> GetActiveStageInstances(
+        Guid noticeId,
+        CancellationToken cancellationToken)
+    {
+        if (!await VerifyNoticeAccessAsync(noticeId, cancellationToken))
+        {
+            return Forbid();
+        }
+
+        var instances = await _workflowService.GetActiveStageInstancesAsync(noticeId, cancellationToken);
+        return Ok(instances);
+    }
+
+    /// <summary>
+    /// Completes a specific stage instance in a parallel workflow.
+    /// </summary>
+    [HttpPost("notices/{noticeId:guid}/stage-instances/{stageInstanceId:guid}/complete")]
+    [ProducesResponseType(typeof(TransitionResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<TransitionResult>> CompleteStageInstance(
+        Guid noticeId,
+        Guid stageInstanceId,
+        [FromBody] CompleteStageInstanceRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!await VerifyNoticeAccessAsync(noticeId, cancellationToken))
+        {
+            return Forbid();
+        }
+
+        var result = await _workflowService.CompleteStageInstanceAsync(
+            noticeId, stageInstanceId, request, GetUserId(), cancellationToken);
+
+        if (!result.Success)
+        {
+            return BadRequest(result);
+        }
+
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Forks the workflow into parallel branches.
+    /// </summary>
+    [HttpPost("notices/{noticeId:guid}/fork")]
+    [ProducesResponseType(typeof(TransitionResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<TransitionResult>> ForkWorkflow(
+        Guid noticeId,
+        [FromBody] ForkWorkflowRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!await VerifyNoticeAccessAsync(noticeId, cancellationToken))
+        {
+            return Forbid();
+        }
+
+        var result = await _workflowService.ForkWorkflowAsync(noticeId, request, GetUserId(), cancellationToken);
+
+        if (!result.Success)
+        {
+            return BadRequest(result);
+        }
+
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Gets parallel branch status for a workflow.
+    /// </summary>
+    [HttpGet("notices/{noticeId:guid}/parallel-status")]
+    [ProducesResponseType(typeof(ParallelBranchStatusDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<ParallelBranchStatusDto>> GetParallelBranchStatus(
+        Guid noticeId,
+        CancellationToken cancellationToken)
+    {
+        if (!await VerifyNoticeAccessAsync(noticeId, cancellationToken))
+        {
+            return Forbid();
+        }
+
+        var status = await _workflowService.GetParallelBranchStatusAsync(noticeId, cancellationToken);
+
+        if (status == null)
+        {
+            return NotFound(new { message = "No parallel workflow found for this notice" });
+        }
+
+        return Ok(status);
     }
 
     #endregion

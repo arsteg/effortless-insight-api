@@ -177,4 +177,14 @@ public class Organization : BaseEntity
 
     public ICollection<Notice> Notices { get; set; } = [];
     public ICollection<Subscription> Subscriptions { get; set; } = [];
+
+    /// <summary>
+    /// Custom roles defined for this organization
+    /// </summary>
+    public ICollection<CustomRole> CustomRoles { get; set; } = [];
+
+    /// <summary>
+    /// Teams/departments in this organization
+    /// </summary>
+    public ICollection<Team> Teams { get; set; } = [];
 }

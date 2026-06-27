@@ -27,7 +27,7 @@ public class TasksController : ControllerBase
     }
 
     private Guid GetUserId() =>
-        Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+        Guid.Parse(User.FindFirstValue("sub")!);
 
     // ==========================================================================
     // Notice-scoped Task Endpoints
@@ -219,4 +219,282 @@ public class TasksController : ControllerBase
             return NotFound(new { error = ex.Message });
         }
     }
+
+    // ==========================================================================
+    // Task Dependency Endpoints (GAP-TASK-001)
+    // ==========================================================================
+
+    /// <summary>
+    /// Get all dependencies for a task
+    /// </summary>
+    [HttpGet("tasks/{taskId:guid}/dependencies")]
+    [ProducesResponseType(typeof(List<TaskDependencyDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetTaskDependencies(Guid taskId)
+    {
+        try
+        {
+            var dependencies = await _taskService.GetDependenciesAsync(taskId, GetUserId());
+            return Ok(dependencies);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Add a dependency to a task
+    /// </summary>
+    [HttpPost("tasks/{taskId:guid}/dependencies")]
+    [ProducesResponseType(typeof(TaskDependencyDto), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> AddTaskDependency(Guid taskId, [FromBody] CreateTaskDependencyDto dto)
+    {
+        try
+        {
+            var type = dto.Type ?? "blocks";
+            var dependency = await _taskService.AddDependencyAsync(taskId, dto.DependsOnTaskId, type, GetUserId());
+            return CreatedAtAction(nameof(GetTaskDependencies), new { taskId }, dependency);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { error = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Remove a dependency from a task
+    /// </summary>
+    [HttpDelete("tasks/{taskId:guid}/dependencies/{dependsOnId:guid}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> RemoveTaskDependency(Guid taskId, Guid dependsOnId)
+    {
+        try
+        {
+            await _taskService.RemoveDependencyAsync(taskId, dependsOnId, GetUserId());
+            return NoContent();
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Get tasks that are blocking this task from starting
+    /// </summary>
+    [HttpGet("tasks/{taskId:guid}/blocking")]
+    [ProducesResponseType(typeof(List<TaskSummaryInfoDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetBlockingTasks(Guid taskId)
+    {
+        try
+        {
+            var blockingTasks = await _taskService.GetBlockingTasksAsync(taskId, GetUserId());
+            return Ok(blockingTasks);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { error = ex.Message });
+        }
+    }
+
+    // ==========================================================================
+    // Task Reminder Endpoints (GAP-TASK-002)
+    // ==========================================================================
+
+    /// <summary>
+    /// Get all reminders for a task
+    /// </summary>
+    [HttpGet("tasks/{taskId:guid}/reminders")]
+    [ProducesResponseType(typeof(List<TaskReminderDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetTaskReminders(Guid taskId)
+    {
+        try
+        {
+            var reminders = await _taskService.GetRemindersAsync(taskId, GetUserId());
+            return Ok(reminders);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Create a reminder for a task
+    /// </summary>
+    [HttpPost("tasks/{taskId:guid}/reminders")]
+    [ProducesResponseType(typeof(TaskReminderDto), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> CreateTaskReminder(Guid taskId, [FromBody] CreateTaskReminderDto dto)
+    {
+        try
+        {
+            var reminder = await _taskService.CreateReminderAsync(taskId, dto, GetUserId());
+            return CreatedAtAction(nameof(GetTaskReminders), new { taskId }, reminder);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { error = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Delete a task reminder
+    /// </summary>
+    [HttpDelete("tasks/{taskId:guid}/reminders/{reminderId:guid}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> DeleteTaskReminder(Guid taskId, Guid reminderId)
+    {
+        try
+        {
+            await _taskService.DeleteReminderAsync(taskId, reminderId, GetUserId());
+            return NoContent();
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { error = ex.Message });
+        }
+    }
+
+    // ==========================================================================
+    // Task Attachment Endpoints (GAP-TASK-004)
+    // ==========================================================================
+
+    /// <summary>
+    /// Get all attachments for a task
+    /// </summary>
+    [HttpGet("tasks/{taskId:guid}/attachments")]
+    [ProducesResponseType(typeof(List<TaskAttachmentDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetTaskAttachments(Guid taskId)
+    {
+        try
+        {
+            var attachments = await _taskService.GetAttachmentsAsync(taskId, GetUserId());
+            return Ok(attachments);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Upload an attachment to a task
+    /// </summary>
+    [HttpPost("tasks/{taskId:guid}/attachments")]
+    [ProducesResponseType(typeof(TaskAttachmentDto), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [RequestSizeLimit(52_428_800)] // 50MB
+    public async Task<IActionResult> UploadTaskAttachment(
+        Guid taskId,
+        IFormFile file)
+    {
+        if (file == null || file.Length == 0)
+        {
+            return BadRequest(new { error = "No file provided" });
+        }
+
+        try
+        {
+            using var stream = file.OpenReadStream();
+            var attachment = await _taskService.AddAttachmentAsync(
+                taskId,
+                stream,
+                file.FileName,
+                file.ContentType,
+                GetUserId());
+
+            _logger.LogInformation(
+                "User {UserId} uploaded attachment to task {TaskId}: {FileName}",
+                GetUserId(), taskId, file.FileName);
+
+            return CreatedAtAction(
+                nameof(GetTaskAttachments),
+                new { taskId },
+                attachment);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { error = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return NotFound(new { error = "Task not found" });
+        }
+    }
+
+    /// <summary>
+    /// Get download URL for a task attachment
+    /// </summary>
+    [HttpGet("tasks/{taskId:guid}/attachments/{attachmentId:guid}/download")]
+    [ProducesResponseType(typeof(AttachmentDownloadResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetAttachmentDownloadUrl(Guid taskId, Guid attachmentId)
+    {
+        try
+        {
+            var downloadUrl = await _taskService.GetAttachmentDownloadUrlAsync(
+                taskId, attachmentId, GetUserId());
+
+            return Ok(new AttachmentDownloadResponse(downloadUrl, DateTime.UtcNow.AddMinutes(15)));
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Delete a task attachment
+    /// </summary>
+    [HttpDelete("tasks/{taskId:guid}/attachments/{attachmentId:guid}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> DeleteTaskAttachment(Guid taskId, Guid attachmentId)
+    {
+        try
+        {
+            await _taskService.DeleteAttachmentAsync(taskId, attachmentId, GetUserId());
+
+            _logger.LogInformation(
+                "User {UserId} deleted attachment {AttachmentId} from task {TaskId}",
+                GetUserId(), attachmentId, taskId);
+
+            return NoContent();
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { error = ex.Message });
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = ex.Message });
+        }
+    }
 }
+
+// Supporting DTOs
+public record AttachmentDownloadResponse(string DownloadUrl, DateTime ExpiresAt);

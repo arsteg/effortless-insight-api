@@ -26,6 +26,7 @@ public class AuthServiceRegistrationTests
     private readonly Mock<ILogger<AuthService>> _mockLogger;
     private readonly Mock<ITwoFactorService> _mockTwoFactorService;
     private readonly Mock<IOtpService> _mockOtpService;
+    private readonly Mock<IGeoLocationService> _mockGeoLocationService;
     private readonly IConfiguration _configuration;
 
     public AuthServiceRegistrationTests()
@@ -37,6 +38,7 @@ public class AuthServiceRegistrationTests
         _mockLogger = new Mock<ILogger<AuthService>>();
         _mockTwoFactorService = new Mock<ITwoFactorService>();
         _mockOtpService = new Mock<IOtpService>();
+        _mockGeoLocationService = new Mock<IGeoLocationService>();
 
         var inMemorySettings = new Dictionary<string, string?>
         {
@@ -84,7 +86,8 @@ public class AuthServiceRegistrationTests
             _mockLogger.Object,
             _configuration,
             _mockTwoFactorService.Object,
-            _mockOtpService.Object
+            _mockOtpService.Object,
+            _mockGeoLocationService.Object
         );
     }
 }
@@ -98,6 +101,7 @@ public class AuthServiceLoginTests
     private readonly Mock<ILogger<AuthService>> _mockLogger;
     private readonly Mock<ITwoFactorService> _mockTwoFactorService;
     private readonly Mock<IOtpService> _mockOtpService;
+    private readonly Mock<IGeoLocationService> _mockGeoLocationService;
     private readonly IConfiguration _configuration;
 
     public AuthServiceLoginTests()
@@ -109,6 +113,7 @@ public class AuthServiceLoginTests
         _mockLogger = new Mock<ILogger<AuthService>>();
         _mockTwoFactorService = new Mock<ITwoFactorService>();
         _mockOtpService = new Mock<IOtpService>();
+        _mockGeoLocationService = new Mock<IGeoLocationService>();
 
         var inMemorySettings = new Dictionary<string, string?>
         {
@@ -267,7 +272,8 @@ public class AuthServiceLoginTests
             _mockLogger.Object,
             _configuration,
             _mockTwoFactorService.Object,
-            _mockOtpService.Object
+            _mockOtpService.Object,
+            _mockGeoLocationService.Object
         );
     }
 }
@@ -281,6 +287,7 @@ public class AuthServiceEmailVerificationTests
     private readonly Mock<ILogger<AuthService>> _mockLogger;
     private readonly Mock<ITwoFactorService> _mockTwoFactorService;
     private readonly Mock<IOtpService> _mockOtpService;
+    private readonly Mock<IGeoLocationService> _mockGeoLocationService;
     private readonly IConfiguration _configuration;
 
     public AuthServiceEmailVerificationTests()
@@ -292,6 +299,7 @@ public class AuthServiceEmailVerificationTests
         _mockLogger = new Mock<ILogger<AuthService>>();
         _mockTwoFactorService = new Mock<ITwoFactorService>();
         _mockOtpService = new Mock<IOtpService>();
+        _mockGeoLocationService = new Mock<IGeoLocationService>();
 
         var inMemorySettings = new Dictionary<string, string?>
         {
@@ -402,7 +410,8 @@ public class AuthServiceEmailVerificationTests
             _mockLogger.Object,
             _configuration,
             _mockTwoFactorService.Object,
-            _mockOtpService.Object
+            _mockOtpService.Object,
+            _mockGeoLocationService.Object
         );
     }
 }
@@ -416,6 +425,7 @@ public class AuthServicePasswordTests
     private readonly Mock<ILogger<AuthService>> _mockLogger;
     private readonly Mock<ITwoFactorService> _mockTwoFactorService;
     private readonly Mock<IOtpService> _mockOtpService;
+    private readonly Mock<IGeoLocationService> _mockGeoLocationService;
     private readonly IConfiguration _configuration;
 
     public AuthServicePasswordTests()
@@ -427,6 +437,7 @@ public class AuthServicePasswordTests
         _mockLogger = new Mock<ILogger<AuthService>>();
         _mockTwoFactorService = new Mock<ITwoFactorService>();
         _mockOtpService = new Mock<IOtpService>();
+        _mockGeoLocationService = new Mock<IGeoLocationService>();
 
         var inMemorySettings = new Dictionary<string, string?>
         {
@@ -551,7 +562,8 @@ public class AuthServicePasswordTests
             _mockLogger.Object,
             _configuration,
             _mockTwoFactorService.Object,
-            _mockOtpService.Object
+            _mockOtpService.Object,
+            _mockGeoLocationService.Object
         );
     }
 }

@@ -56,6 +56,19 @@ public class TaskService : ITaskService
                 .FirstOrDefaultAsync(t => t.Id == dto.TemplateId.Value && t.IsActive);
         }
 
+        // Validate team assignment if specified
+        Team? assignedTeam = null;
+        if (dto.AssignedTeamId.HasValue)
+        {
+            assignedTeam = await _context.Set<Team>()
+                .Include(t => t.Members)
+                .FirstOrDefaultAsync(t => t.Id == dto.AssignedTeamId.Value &&
+                                          t.OrganizationId == notice.OrganizationId &&
+                                          t.IsActive);
+            if (assignedTeam == null)
+                throw new InvalidOperationException("Team not found or not active");
+        }
+
         var task = new NoticeTask
         {
             NoticeId = noticeId,
@@ -68,15 +81,30 @@ public class TaskService : ITaskService
             EstimatedHours = dto.EstimatedHours ?? template?.DefaultEstimatedHours,
             Labels = dto.Labels ?? template?.DefaultLabels,
             TemplateId = dto.TemplateId,
+            AssignedTeamId = dto.AssignedTeamId,
             CreatedById = userId
         };
 
         _context.Tasks.Add(task);
 
-        // Handle assignees
-        var assigneeIds = dto.Assignees ?? new List<Guid> { userId };
-        if (assigneeIds.Count > 5)
-            throw new InvalidOperationException("Maximum 5 assignees allowed per task");
+        // Handle assignees - combine explicit assignees with team members
+        var assigneeIds = dto.Assignees?.ToList() ?? new List<Guid>();
+
+        // If team is assigned, add team members as assignees
+        if (assignedTeam != null)
+        {
+            var teamMemberIds = assignedTeam.Members.Select(m => m.UserId).ToList();
+            assigneeIds = assigneeIds.Union(teamMemberIds).ToList();
+        }
+
+        // Default to creator if no assignees
+        if (assigneeIds.Count == 0)
+        {
+            assigneeIds.Add(userId);
+        }
+
+        if (assigneeIds.Count > 20)
+            throw new InvalidOperationException("Maximum 20 assignees allowed per task (including team members)");
 
         foreach (var assigneeId in assigneeIds.Distinct())
         {
@@ -84,10 +112,16 @@ public class TaskService : ITaskService
             if (!userExists)
                 throw new InvalidOperationException($"User {assigneeId} not found");
 
+            // Determine if this assignment came from a team
+            Guid? teamIdForAssignee = assignedTeam?.Members.Any(m => m.UserId == assigneeId) == true
+                ? assignedTeam.Id
+                : null;
+
             _context.TaskAssignees.Add(new TaskAssignee
             {
                 TaskId = task.Id,
                 UserId = assigneeId,
+                TeamId = teamIdForAssignee,
                 AssignedAt = DateTime.UtcNow,
                 AssignedById = userId
             });
@@ -149,6 +183,8 @@ public class TaskService : ITaskService
 
         var task = await _context.Tasks
             .Include(t => t.Assignees).ThenInclude(a => a.User)
+            .Include(t => t.Assignees).ThenInclude(a => a.Team)
+            .Include(t => t.AssignedTeam).ThenInclude(team => team!.Members)
             .Include(t => t.CreatedBy)
             .Include(t => t.CompletedBy)
             .Include(t => t.Subtasks).ThenInclude(s => s.Assignees).ThenInclude(a => a.User)
@@ -182,6 +218,8 @@ public class TaskService : ITaskService
 
         var query = _context.Tasks
             .Include(t => t.Assignees).ThenInclude(a => a.User)
+            .Include(t => t.Assignees).ThenInclude(a => a.Team)
+            .Include(t => t.AssignedTeam).ThenInclude(team => team!.Members)
             .Include(t => t.CreatedBy)
             .Include(t => t.CompletedBy)
             .Where(t => t.NoticeId == noticeId);
@@ -238,6 +276,8 @@ public class TaskService : ITaskService
         var task = await _context.Tasks
             .Include(t => t.Notice)
             .Include(t => t.Assignees).ThenInclude(a => a.User)
+            .Include(t => t.Assignees).ThenInclude(a => a.Team)
+            .Include(t => t.AssignedTeam)
             .FirstOrDefaultAsync(t => t.Id == taskId)
             ?? throw new KeyNotFoundException("Task not found");
 
@@ -284,7 +324,7 @@ public class TaskService : ITaskService
         // Handle status transition
         if (dto.Status != null && dto.Status != task.Status)
         {
-            ValidateStatusTransition(task.Status, dto.Status);
+            await ValidateStatusTransitionWithDependenciesAsync(task, dto.Status);
             task.Status = dto.Status;
             changes["status"] = new { from = oldStatus, to = dto.Status };
 
@@ -303,16 +343,44 @@ public class TaskService : ITaskService
             }
         }
 
+        // Handle team assignment changes
+        Team? newAssignedTeam = null;
+        if (dto.ClearTeamAssignment == true)
+        {
+            task.AssignedTeamId = null;
+            changes["teamCleared"] = true;
+        }
+        else if (dto.AssignedTeamId.HasValue)
+        {
+            newAssignedTeam = await _context.Set<Team>()
+                .Include(t => t.Members)
+                .FirstOrDefaultAsync(t => t.Id == dto.AssignedTeamId.Value &&
+                                          t.OrganizationId == task.Notice.OrganizationId &&
+                                          t.IsActive);
+            if (newAssignedTeam == null)
+                throw new InvalidOperationException("Team not found or not active");
+
+            task.AssignedTeamId = dto.AssignedTeamId;
+            changes["assignedTeam"] = new { id = newAssignedTeam.Id, name = newAssignedTeam.Name };
+        }
+
         // Handle assignee changes
-        if (dto.Assignees != null)
+        if (dto.Assignees != null || newAssignedTeam != null)
         {
             var currentAssigneeIds = task.Assignees.Select(a => a.UserId).ToHashSet();
-            var newAssigneeIds = dto.Assignees.Distinct().ToList();
+            var newAssigneeIds = dto.Assignees?.Distinct().ToList() ?? new List<Guid>();
 
-            if (newAssigneeIds.Count > 5)
-                throw new InvalidOperationException("Maximum 5 assignees allowed per task");
+            // If team is assigned, add team members
+            if (newAssignedTeam != null)
+            {
+                var teamMemberIds = newAssignedTeam.Members.Select(m => m.UserId).ToList();
+                newAssigneeIds = newAssigneeIds.Union(teamMemberIds).ToList();
+            }
 
-            // Remove old assignees
+            if (newAssigneeIds.Count > 20)
+                throw new InvalidOperationException("Maximum 20 assignees allowed per task (including team members)");
+
+            // Remove old assignees not in new list
             var toRemove = task.Assignees.Where(a => !newAssigneeIds.Contains(a.UserId)).ToList();
             foreach (var assignee in toRemove)
             {
@@ -327,10 +395,16 @@ public class TaskService : ITaskService
                 if (!userExists)
                     throw new InvalidOperationException($"User {assigneeId} not found");
 
+                // Determine if this assignment came from a team
+                Guid? teamIdForAssignee = newAssignedTeam?.Members.Any(m => m.UserId == assigneeId) == true
+                    ? newAssignedTeam.Id
+                    : null;
+
                 _context.TaskAssignees.Add(new TaskAssignee
                 {
                     TaskId = task.Id,
                     UserId = assigneeId,
+                    TeamId = teamIdForAssignee,
                     AssignedAt = DateTime.UtcNow,
                     AssignedById = userId
                 });
@@ -444,7 +518,8 @@ public class TaskService : ITaskService
         int pageSize = 20)
     {
         var query = _context.Tasks
-            .Include(t => t.Assignees)
+            .Include(t => t.Assignees).ThenInclude(a => a.Team)
+            .Include(t => t.AssignedTeam)
             .Include(t => t.Notice).ThenInclude(n => n.Organization)
             .Where(t => t.Assignees.Any(a => a.UserId == userId));
 
@@ -657,8 +732,17 @@ public class TaskService : ITaskService
                 Name: a.User?.Name ?? "Unknown",
                 Email: a.User?.Email,
                 AvatarUrl: a.User?.AvatarUrl,
-                AssignedAt: a.AssignedAt
+                AssignedAt: a.AssignedAt,
+                TeamId: a.TeamId,
+                TeamName: a.Team?.Name
             )).ToList(),
+            AssignedTeam: task.AssignedTeam != null ? new TaskTeamDto(
+                Id: task.AssignedTeam.Id,
+                Name: task.AssignedTeam.Name,
+                Color: task.AssignedTeam.Color,
+                Icon: task.AssignedTeam.Icon,
+                MemberCount: task.AssignedTeam.Members?.Count ?? 0
+            ) : null,
             Labels: task.Labels,
             ParentTaskId: task.ParentTaskId,
             SubtaskCount: subtasks.Count,
@@ -698,8 +782,17 @@ public class TaskService : ITaskService
                 Name: a.User?.Name ?? "Unknown",
                 Email: a.User?.Email,
                 AvatarUrl: a.User?.AvatarUrl,
-                AssignedAt: a.AssignedAt
+                AssignedAt: a.AssignedAt,
+                TeamId: a.TeamId,
+                TeamName: a.Team?.Name
             )).ToList(),
+            AssignedTeam: task.AssignedTeam != null ? new TaskTeamDto(
+                Id: task.AssignedTeam.Id,
+                Name: task.AssignedTeam.Name,
+                Color: task.AssignedTeam.Color,
+                Icon: task.AssignedTeam.Icon,
+                MemberCount: task.AssignedTeam.Members?.Count ?? 0
+            ) : null,
             Labels: task.Labels,
             ParentTaskId: task.ParentTaskId,
             Subtasks: task.Subtasks?.Select(s => MapToDto(s)).ToList(),
@@ -723,7 +816,8 @@ public class TaskService : ITaskService
                 FileUrl: a.FileUrl,
                 FileSize: a.FileSize,
                 FileType: a.FileType,
-                DocumentType: a.DocumentType
+                DocumentType: a.DocumentType,
+                Description: a.Description
             )).ToList()
         );
     }
@@ -744,5 +838,459 @@ public class TaskService : ITaskService
             IsActive: template.IsActive,
             CreatedAt: template.CreatedAt
         );
+    }
+
+    // =============================================================================
+    // GAP-TASK-001: Task Dependencies
+    // =============================================================================
+
+    public async Task<TaskDependencyDto> AddDependencyAsync(Guid taskId, Guid dependsOnTaskId, string type, Guid userId)
+    {
+        if (taskId == dependsOnTaskId)
+            throw new InvalidOperationException("A task cannot depend on itself");
+
+        if (!TaskDependencyType.IsValid(type))
+            throw new InvalidOperationException($"Invalid dependency type: {type}. Valid types are: {string.Join(", ", TaskDependencyType.All)}");
+
+        var task = await _context.Tasks
+            .Include(t => t.Notice)
+            .FirstOrDefaultAsync(t => t.Id == taskId)
+            ?? throw new KeyNotFoundException("Task not found");
+
+        var dependsOnTask = await _context.Tasks
+            .Include(t => t.Notice)
+            .FirstOrDefaultAsync(t => t.Id == dependsOnTaskId)
+            ?? throw new KeyNotFoundException("Dependency task not found");
+
+        // Both tasks must belong to the same notice
+        if (task.NoticeId != dependsOnTask.NoticeId)
+            throw new InvalidOperationException("Tasks must belong to the same notice");
+
+        // Check for existing dependency
+        var existingDependency = await _context.TaskDependencies
+            .AnyAsync(d => d.TaskId == taskId && d.DependsOnTaskId == dependsOnTaskId);
+
+        if (existingDependency)
+            throw new InvalidOperationException("This dependency already exists");
+
+        // Check for circular dependency
+        if (await WouldCreateCircularDependency(taskId, dependsOnTaskId))
+            throw new InvalidOperationException("This dependency would create a circular dependency");
+
+        var dependency = new TaskDependency
+        {
+            TaskId = taskId,
+            DependsOnTaskId = dependsOnTaskId,
+            DependencyType = type
+        };
+
+        _context.TaskDependencies.Add(dependency);
+        await _context.SaveChangesAsync();
+
+        // Log activity
+        await _activityService.LogActivityAsync(
+            task.Notice.OrganizationId,
+            task.NoticeId,
+            "task_dependency_added",
+            userId,
+            new Dictionary<string, object>
+            {
+                ["taskId"] = taskId,
+                ["taskTitle"] = task.Title,
+                ["dependsOnTaskId"] = dependsOnTaskId,
+                ["dependsOnTaskTitle"] = dependsOnTask.Title,
+                ["dependencyType"] = type
+            },
+            $"added dependency: \"{task.Title}\" depends on \"{dependsOnTask.Title}\""
+        );
+
+        return MapToDependencyDto(dependency, dependsOnTask);
+    }
+
+    public async Task RemoveDependencyAsync(Guid taskId, Guid dependsOnTaskId, Guid userId)
+    {
+        var dependency = await _context.TaskDependencies
+            .Include(d => d.Task).ThenInclude(t => t.Notice)
+            .Include(d => d.DependsOnTask)
+            .FirstOrDefaultAsync(d => d.TaskId == taskId && d.DependsOnTaskId == dependsOnTaskId)
+            ?? throw new KeyNotFoundException("Dependency not found");
+
+        dependency.DeletedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+
+        // Log activity
+        await _activityService.LogActivityAsync(
+            dependency.Task.Notice.OrganizationId,
+            dependency.Task.NoticeId,
+            "task_dependency_removed",
+            userId,
+            new Dictionary<string, object>
+            {
+                ["taskId"] = taskId,
+                ["taskTitle"] = dependency.Task.Title,
+                ["dependsOnTaskId"] = dependsOnTaskId,
+                ["dependsOnTaskTitle"] = dependency.DependsOnTask.Title
+            },
+            $"removed dependency: \"{dependency.Task.Title}\" no longer depends on \"{dependency.DependsOnTask.Title}\""
+        );
+    }
+
+    public async Task<List<TaskDependencyDto>> GetDependenciesAsync(Guid taskId, Guid userId)
+    {
+        if (!await CanUserAccessTaskAsync(taskId, userId))
+            throw new KeyNotFoundException("Task not found");
+
+        var dependencies = await _context.TaskDependencies
+            .Include(d => d.DependsOnTask)
+            .Where(d => d.TaskId == taskId)
+            .OrderBy(d => d.CreatedAt)
+            .ToListAsync();
+
+        return dependencies.Select(d => MapToDependencyDto(d, d.DependsOnTask)).ToList();
+    }
+
+    public async Task<List<TaskSummaryInfoDto>> GetBlockingTasksAsync(Guid taskId, Guid userId)
+    {
+        if (!await CanUserAccessTaskAsync(taskId, userId))
+            throw new KeyNotFoundException("Task not found");
+
+        // Get all "blocks" type dependencies where the dependent task is not done
+        var blockingTasks = await _context.TaskDependencies
+            .Include(d => d.DependsOnTask)
+            .Where(d => d.TaskId == taskId)
+            .Where(d => d.DependencyType == TaskDependencyType.Blocks)
+            .Where(d => d.DependsOnTask.Status != TaskStatusValues.Done &&
+                       d.DependsOnTask.Status != TaskStatusValues.Archived &&
+                       d.DependsOnTask.Status != TaskStatusValues.Cancelled)
+            .Select(d => d.DependsOnTask)
+            .ToListAsync();
+
+        return blockingTasks.Select(t => new TaskSummaryInfoDto(
+            Id: t.Id,
+            Title: t.Title,
+            Status: t.Status,
+            Priority: t.Priority,
+            DueDate: t.DueDate,
+            IsOverdue: IsOverdue(t)
+        )).ToList();
+    }
+
+    private async Task<bool> WouldCreateCircularDependency(Guid taskId, Guid dependsOnTaskId)
+    {
+        // Check if dependsOnTask (or any of its transitive dependencies) depends on taskId
+        var visited = new HashSet<Guid>();
+        var queue = new Queue<Guid>();
+        queue.Enqueue(dependsOnTaskId);
+
+        while (queue.Count > 0)
+        {
+            var currentId = queue.Dequeue();
+            if (visited.Contains(currentId))
+                continue;
+
+            visited.Add(currentId);
+
+            if (currentId == taskId)
+                return true; // Circular dependency found
+
+            // Get all tasks that currentId depends on
+            var nextDependencies = await _context.TaskDependencies
+                .Where(d => d.TaskId == currentId)
+                .Select(d => d.DependsOnTaskId)
+                .ToListAsync();
+
+            foreach (var nextId in nextDependencies)
+            {
+                if (!visited.Contains(nextId))
+                    queue.Enqueue(nextId);
+            }
+        }
+
+        return false;
+    }
+
+    private static TaskDependencyDto MapToDependencyDto(TaskDependency dependency, NoticeTask dependsOnTask)
+    {
+        return new TaskDependencyDto(
+            Id: dependency.Id,
+            TaskId: dependency.TaskId,
+            DependsOnTaskId: dependency.DependsOnTaskId,
+            DependsOnTask: new TaskSummaryInfoDto(
+                Id: dependsOnTask.Id,
+                Title: dependsOnTask.Title,
+                Status: dependsOnTask.Status,
+                Priority: dependsOnTask.Priority,
+                DueDate: dependsOnTask.DueDate,
+                IsOverdue: IsOverdue(dependsOnTask)
+            ),
+            DependencyType: dependency.DependencyType,
+            CreatedAt: dependency.CreatedAt
+        );
+    }
+
+    // Validate status transition - updated for dependency blocking
+    private async Task ValidateStatusTransitionWithDependenciesAsync(NoticeTask task, string newStatus)
+    {
+        // First validate normal status transition
+        ValidateStatusTransition(task.Status, newStatus);
+
+        // If transitioning to in_progress, check for blocking dependencies
+        if (newStatus == TaskStatusValues.InProgress)
+        {
+            var blockingTasks = await _context.TaskDependencies
+                .Include(d => d.DependsOnTask)
+                .Where(d => d.TaskId == task.Id)
+                .Where(d => d.DependencyType == TaskDependencyType.Blocks)
+                .Where(d => d.DependsOnTask.Status != TaskStatusValues.Done &&
+                           d.DependsOnTask.Status != TaskStatusValues.Archived &&
+                           d.DependsOnTask.Status != TaskStatusValues.Cancelled)
+                .Select(d => d.DependsOnTask.Title)
+                .ToListAsync();
+
+            if (blockingTasks.Any())
+            {
+                throw new InvalidOperationException(
+                    $"Cannot start this task. It is blocked by incomplete tasks: {string.Join(", ", blockingTasks)}");
+            }
+        }
+    }
+
+    // =============================================================================
+    // GAP-TASK-002: Task Reminders
+    // =============================================================================
+
+    public async Task<TaskReminderDto> CreateReminderAsync(Guid taskId, CreateTaskReminderDto dto, Guid userId)
+    {
+        var task = await _context.Tasks
+            .Include(t => t.Notice)
+            .FirstOrDefaultAsync(t => t.Id == taskId)
+            ?? throw new KeyNotFoundException("Task not found");
+
+        if (!task.DueDate.HasValue)
+            throw new InvalidOperationException("Cannot create reminder for a task without a due date");
+
+        if (dto.DaysBeforeDue < 0)
+            throw new InvalidOperationException("Days before due must be non-negative");
+
+        if (dto.DaysBeforeDue > 365)
+            throw new InvalidOperationException("Days before due cannot exceed 365");
+
+        // Check for duplicate reminder
+        var existingReminder = await _context.TaskReminders
+            .AnyAsync(r => r.TaskId == taskId && r.DaysBeforeDue == dto.DaysBeforeDue);
+
+        if (existingReminder)
+            throw new InvalidOperationException($"A reminder for {dto.DaysBeforeDue} days before due already exists");
+
+        var reminder = new TaskReminder
+        {
+            TaskId = taskId,
+            DaysBeforeDue = dto.DaysBeforeDue,
+            IsSent = false,
+            CreatedById = userId
+        };
+
+        _context.TaskReminders.Add(reminder);
+        await _context.SaveChangesAsync();
+
+        _logger.LogInformation("Created reminder for task {TaskId}: {DaysBeforeDue} days before due", taskId, dto.DaysBeforeDue);
+
+        return MapToReminderDto(reminder);
+    }
+
+    public async Task<List<TaskReminderDto>> GetRemindersAsync(Guid taskId, Guid userId)
+    {
+        if (!await CanUserAccessTaskAsync(taskId, userId))
+            throw new KeyNotFoundException("Task not found");
+
+        var reminders = await _context.TaskReminders
+            .Where(r => r.TaskId == taskId)
+            .OrderBy(r => r.DaysBeforeDue)
+            .ToListAsync();
+
+        return reminders.Select(MapToReminderDto).ToList();
+    }
+
+    public async Task DeleteReminderAsync(Guid taskId, Guid reminderId, Guid userId)
+    {
+        var reminder = await _context.TaskReminders
+            .FirstOrDefaultAsync(r => r.Id == reminderId && r.TaskId == taskId)
+            ?? throw new KeyNotFoundException("Reminder not found");
+
+        reminder.DeletedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+
+        _logger.LogInformation("Deleted reminder {ReminderId} for task {TaskId}", reminderId, taskId);
+    }
+
+    private static TaskReminderDto MapToReminderDto(TaskReminder reminder)
+    {
+        return new TaskReminderDto(
+            Id: reminder.Id,
+            TaskId: reminder.TaskId,
+            DaysBeforeDue: reminder.DaysBeforeDue,
+            IsSent: reminder.IsSent,
+            SentAt: reminder.SentAt,
+            CreatedAt: reminder.CreatedAt
+        );
+    }
+
+    // ==========================================================================
+    // Task Attachments (GAP-TASK-004)
+    // ==========================================================================
+
+    public async Task<TaskAttachmentDto> AddAttachmentAsync(
+        Guid taskId,
+        Stream fileStream,
+        string fileName,
+        string contentType,
+        Guid userId)
+    {
+        var task = await _context.Tasks
+            .Include(t => t.Notice)
+            .FirstOrDefaultAsync(t => t.Id == taskId)
+            ?? throw new KeyNotFoundException("Task not found");
+
+        if (!await CanUserAccessTaskAsync(taskId, userId))
+            throw new UnauthorizedAccessException("Access denied");
+
+        // Validate file
+        var maxFileSize = 50 * 1024 * 1024; // 50MB
+        if (fileStream.Length > maxFileSize)
+            throw new InvalidOperationException("File size exceeds maximum allowed (50MB)");
+
+        var allowedTypes = new[] {
+            "application/pdf",
+            "application/msword",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.ms-excel",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "image/jpeg",
+            "image/png",
+            "image/gif",
+            "text/plain",
+            "application/zip",
+            "application/x-zip-compressed"
+        };
+
+        if (!allowedTypes.Contains(contentType.ToLowerInvariant()))
+            throw new InvalidOperationException($"File type '{contentType}' is not allowed");
+
+        // Generate storage path
+        var attachmentId = Guid.NewGuid();
+        var extension = Path.GetExtension(fileName);
+        var storagePath = $"{task.Notice.OrganizationId}/tasks/{taskId}/attachments/{attachmentId}{extension}";
+
+        // For now, store path - in production, upload to S3 via IFileStorageService
+        var fileUrl = storagePath;
+
+        // Compute file hash
+        fileStream.Position = 0;
+        using var sha256 = System.Security.Cryptography.SHA256.Create();
+        var hashBytes = await sha256.ComputeHashAsync(fileStream);
+        var fileHash = Convert.ToHexString(hashBytes).ToLowerInvariant();
+
+        var attachment = new Attachment
+        {
+            Id = attachmentId,
+            TaskId = taskId,
+            UploadedById = userId,
+            FileName = SanitizeFileName(fileName),
+            FileUrl = fileUrl,
+            FileSize = (int)fileStream.Length,
+            FileType = contentType,
+            FileHash = fileHash,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+
+        _context.Attachments.Add(attachment);
+        await _context.SaveChangesAsync();
+
+        _logger.LogInformation(
+            "Added attachment {AttachmentId} to task {TaskId}: {FileName}",
+            attachment.Id, taskId, fileName);
+
+        return MapToAttachmentDto(attachment, userId);
+    }
+
+    public async Task<List<TaskAttachmentDto>> GetAttachmentsAsync(Guid taskId, Guid userId)
+    {
+        if (!await CanUserAccessTaskAsync(taskId, userId))
+            throw new KeyNotFoundException("Task not found");
+
+        var attachments = await _context.Attachments
+            .Include(a => a.UploadedBy)
+            .Where(a => a.TaskId == taskId && a.DeletedAt == null)
+            .OrderByDescending(a => a.CreatedAt)
+            .ToListAsync();
+
+        return attachments.Select(a => MapToAttachmentDto(a, userId)).ToList();
+    }
+
+    public async Task<string> GetAttachmentDownloadUrlAsync(Guid taskId, Guid attachmentId, Guid userId)
+    {
+        if (!await CanUserAccessTaskAsync(taskId, userId))
+            throw new KeyNotFoundException("Task not found");
+
+        var attachment = await _context.Attachments
+            .FirstOrDefaultAsync(a => a.Id == attachmentId && a.TaskId == taskId && a.DeletedAt == null)
+            ?? throw new KeyNotFoundException("Attachment not found");
+
+        // In production, generate pre-signed URL from S3
+        // For now, return the storage path
+        return attachment.FileUrl;
+    }
+
+    public async Task DeleteAttachmentAsync(Guid taskId, Guid attachmentId, Guid userId)
+    {
+        var attachment = await _context.Attachments
+            .FirstOrDefaultAsync(a => a.Id == attachmentId && a.TaskId == taskId && a.DeletedAt == null)
+            ?? throw new KeyNotFoundException("Attachment not found");
+
+        // Only uploader or task creator can delete
+        var task = await _context.Tasks.FindAsync(taskId);
+        if (attachment.UploadedById != userId && task?.CreatedById != userId)
+        {
+            // Check if user is admin/manager
+            var membership = await _context.OrganizationMembers
+                .FirstOrDefaultAsync(m => m.UserId == userId && m.IsActive);
+
+            if (membership == null || (membership.Role != "admin" && membership.Role != "manager" && membership.Role != "owner"))
+                throw new UnauthorizedAccessException("Only the uploader, task creator, or admin can delete attachments");
+        }
+
+        attachment.DeletedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+
+        _logger.LogInformation(
+            "Deleted attachment {AttachmentId} from task {TaskId}",
+            attachmentId, taskId);
+    }
+
+    private static TaskAttachmentDto MapToAttachmentDto(Attachment attachment, Guid currentUserId)
+    {
+        return new TaskAttachmentDto(
+            Id: attachment.Id,
+            FileName: attachment.FileName,
+            FileUrl: attachment.FileUrl,
+            FileSize: attachment.FileSize,
+            FileType: attachment.FileType,
+            DocumentType: null,
+            Description: null,
+            UploadedBy: new TaskAttachmentUserDto(
+                Id: attachment.UploadedById,
+                Name: attachment.UploadedBy?.Name ?? "Unknown",
+                AvatarUrl: null
+            ),
+            CreatedAt: attachment.CreatedAt
+        );
+    }
+
+    private static string SanitizeFileName(string fileName)
+    {
+        var invalidChars = Path.GetInvalidFileNameChars();
+        var sanitized = string.Join("_", fileName.Split(invalidChars, StringSplitOptions.RemoveEmptyEntries));
+        return sanitized.Length > 200 ? sanitized[..200] : sanitized;
     }
 }

@@ -64,7 +64,62 @@ public interface INoticeWorkflowService
         string? noticeCategory,
         DateOnly? responseDeadline,
         decimal? totalDemand);
+
+    /// <summary>
+    /// Gets the priority calculation with detailed breakdown.
+    /// </summary>
+    PriorityCalculationResult CalculatePriorityWithDetails(
+        string? noticeType,
+        string? noticeCategory,
+        DateOnly? responseDeadline,
+        decimal? totalDemand);
+
+    /// <summary>
+    /// Gets the SLA and priority calculation rules.
+    /// </summary>
+    SlaRulesDto GetSlaRules();
 }
+
+/// <summary>
+/// Detailed result of priority calculation.
+/// </summary>
+public record PriorityCalculationResult
+{
+    public required string Priority { get; init; }
+    public required int TotalScore { get; init; }
+    public required PriorityScoreBreakdown Breakdown { get; init; }
+}
+
+/// <summary>
+/// Breakdown of how the priority score was calculated.
+/// </summary>
+public record PriorityScoreBreakdown
+{
+    public int CategoryScore { get; init; }
+    public string? CategoryReason { get; init; }
+    public int TypeScore { get; init; }
+    public string? TypeReason { get; init; }
+    public int DeadlineScore { get; init; }
+    public string? DeadlineReason { get; init; }
+    public int AmountScore { get; init; }
+    public string? AmountReason { get; init; }
+}
+
+/// <summary>
+/// SLA and priority calculation rules.
+/// </summary>
+public record SlaRulesDto
+{
+    public required List<DeadlineRule> DeadlineRules { get; init; }
+    public required List<AmountRule> AmountRules { get; init; }
+    public required List<string> CriticalCategories { get; init; }
+    public required List<string> HighPriorityTypes { get; init; }
+    public required List<PriorityThreshold> PriorityThresholds { get; init; }
+}
+
+public record DeadlineRule(string Description, int DaysRemaining, int Score);
+public record AmountRule(string Description, decimal MinAmount, int Score);
+public record PriorityThreshold(string Priority, int MinScore);
 
 /// <summary>
 /// Implementation of notice workflow service.
@@ -288,6 +343,130 @@ public class NoticeWorkflowService : INoticeWorkflowService
             >= 5 => NoticePriority.High,
             >= 2 => NoticePriority.Medium,
             _ => NoticePriority.Low
+        };
+    }
+
+    /// <inheritdoc />
+    public PriorityCalculationResult CalculatePriorityWithDetails(
+        string? noticeType,
+        string? noticeCategory,
+        DateOnly? responseDeadline,
+        decimal? totalDemand)
+    {
+        var breakdown = new PriorityScoreBreakdown();
+        var totalScore = 0;
+
+        // Category-based scoring
+        if (!string.IsNullOrEmpty(noticeCategory) && CriticalCategories.Contains(noticeCategory))
+        {
+            breakdown = breakdown with
+            {
+                CategoryScore = 4,
+                CategoryReason = $"Critical category: {noticeCategory}"
+            };
+            totalScore += 4;
+        }
+
+        // Notice type scoring
+        if (!string.IsNullOrEmpty(noticeType) && HighPriorityTypes.Contains(noticeType))
+        {
+            breakdown = breakdown with
+            {
+                TypeScore = 3,
+                TypeReason = $"High priority notice type: {noticeType}"
+            };
+            totalScore += 3;
+        }
+
+        // Deadline scoring
+        if (responseDeadline.HasValue)
+        {
+            var daysRemaining = (responseDeadline.Value.ToDateTime(TimeOnly.MinValue) - DateTime.UtcNow).TotalDays;
+
+            var (deadlineScore, deadlineReason) = daysRemaining switch
+            {
+                < 0 => (5, $"Overdue by {Math.Abs((int)daysRemaining)} days"),
+                <= 3 => (4, $"Due in {(int)daysRemaining} days (critical)"),
+                <= 7 => (3, $"Due in {(int)daysRemaining} days (urgent)"),
+                <= 15 => (2, $"Due in {(int)daysRemaining} days"),
+                <= 30 => (1, $"Due in {(int)daysRemaining} days"),
+                _ => (0, $"Due in {(int)daysRemaining} days (low urgency)")
+            };
+
+            breakdown = breakdown with
+            {
+                DeadlineScore = deadlineScore,
+                DeadlineReason = deadlineReason
+            };
+            totalScore += deadlineScore;
+        }
+
+        // Amount scoring
+        if (totalDemand.HasValue && totalDemand > 0)
+        {
+            var (amountScore, amountReason) = totalDemand switch
+            {
+                >= 1000000 => (3, $"High demand: ₹{totalDemand:N0} (≥10 lakh)"),
+                >= 500000 => (2, $"Medium demand: ₹{totalDemand:N0} (≥5 lakh)"),
+                >= 100000 => (1, $"Demand: ₹{totalDemand:N0} (≥1 lakh)"),
+                _ => (0, $"Low demand: ₹{totalDemand:N0}")
+            };
+
+            breakdown = breakdown with
+            {
+                AmountScore = amountScore,
+                AmountReason = amountReason
+            };
+            totalScore += amountScore;
+        }
+
+        // Determine priority
+        var priority = totalScore switch
+        {
+            >= 8 => NoticePriority.Critical,
+            >= 5 => NoticePriority.High,
+            >= 2 => NoticePriority.Medium,
+            _ => NoticePriority.Low
+        };
+
+        return new PriorityCalculationResult
+        {
+            Priority = priority,
+            TotalScore = totalScore,
+            Breakdown = breakdown
+        };
+    }
+
+    /// <inheritdoc />
+    public SlaRulesDto GetSlaRules()
+    {
+        return new SlaRulesDto
+        {
+            DeadlineRules =
+            [
+                new DeadlineRule("Overdue", -1, 5),
+                new DeadlineRule("Critical (≤3 days)", 3, 4),
+                new DeadlineRule("Urgent (≤7 days)", 7, 3),
+                new DeadlineRule("Soon (≤15 days)", 15, 2),
+                new DeadlineRule("Normal (≤30 days)", 30, 1),
+                new DeadlineRule("Low urgency (>30 days)", int.MaxValue, 0)
+            ],
+            AmountRules =
+            [
+                new AmountRule("High (≥₹10 lakh)", 1000000, 3),
+                new AmountRule("Medium (≥₹5 lakh)", 500000, 2),
+                new AmountRule("Low (≥₹1 lakh)", 100000, 1),
+                new AmountRule("Minimal (<₹1 lakh)", 0, 0)
+            ],
+            CriticalCategories = CriticalCategories.ToList(),
+            HighPriorityTypes = HighPriorityTypes.ToList(),
+            PriorityThresholds =
+            [
+                new PriorityThreshold(NoticePriority.Critical, 8),
+                new PriorityThreshold(NoticePriority.High, 5),
+                new PriorityThreshold(NoticePriority.Medium, 2),
+                new PriorityThreshold(NoticePriority.Low, 0)
+            ]
         };
     }
 }

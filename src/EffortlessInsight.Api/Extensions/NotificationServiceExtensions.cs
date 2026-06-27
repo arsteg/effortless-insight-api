@@ -32,8 +32,11 @@ public static class NotificationServiceExtensions
         services.AddScoped<INotificationEngineService, NotificationEngineService>();
         services.AddScoped<INotificationPreferencesService, NotificationPreferencesService>();
         services.AddScoped<INotificationTemplateService, NotificationTemplateService>();
+        services.AddScoped<ITemplateRenderService, TemplateRenderService>();
         services.AddScoped<IDeliveryTrackingService, DeliveryTrackingService>();
         services.AddScoped<IPushTokenService, PushTokenService>();
+        services.AddScoped<IChannelUnsubscribeService, ChannelUnsubscribeService>();
+        services.AddScoped<IDeadLetterService, DeadLetterService>();
 
         // Channel services
         services.AddScoped<IEmailChannelService, ResendEmailService>();
@@ -43,18 +46,32 @@ public static class NotificationServiceExtensions
         services.AddScoped<IInAppChannelService, InAppNotificationService>();
 
         // SignalR connection manager (singleton for shared state)
+        // Note: With Redis backplane, connection state is managed by SignalR itself
         services.AddSingleton<IConnectionManager, InMemoryConnectionManager>();
 
         // Background jobs
         services.AddScoped<NotificationJobs>();
 
-        // SignalR hub
-        services.AddSignalR(options =>
+        // Get Redis connection string for SignalR backplane
+        var redisConnectionString = configuration.GetConnectionString("Redis");
+
+        // SignalR hub with Redis backplane for multi-server support (GAP-NOTIF-003)
+        var signalRBuilder = services.AddSignalR(options =>
         {
             options.EnableDetailedErrors = true;
             options.KeepAliveInterval = TimeSpan.FromSeconds(15);
             options.ClientTimeoutInterval = TimeSpan.FromSeconds(30);
         });
+
+        // Add Redis backplane if Redis connection is configured
+        // This enables SignalR to work across multiple server instances
+        if (!string.IsNullOrEmpty(redisConnectionString))
+        {
+            signalRBuilder.AddStackExchangeRedis(redisConnectionString, options =>
+            {
+                options.Configuration.ChannelPrefix = StackExchange.Redis.RedisChannel.Literal("EffortlessInsight:SignalR:");
+            });
+        }
 
         return services;
     }

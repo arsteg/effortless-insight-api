@@ -509,3 +509,41 @@ public record WebhookEntity
     public long? EndedAt { get; init; }
     public int? ShortUrl { get; init; }
 }
+
+// ============================================================================
+// Refund DTOs
+// ============================================================================
+
+/// <summary>
+/// Request to create a refund for a subscription payment.
+/// </summary>
+/// <param name="Amount">Optional partial refund amount. If null, refunds the full payment.</param>
+/// <param name="Reason">The reason for the refund.</param>
+public record CreateRefundRequest(
+    decimal? Amount,
+    string Reason
+);
+
+// ============================================================================
+// Plan Pricing DTOs
+// ============================================================================
+
+/// <summary>
+/// Extended plan pricing information with annual savings calculation.
+/// </summary>
+/// <param name="Monthly">Monthly price in paise.</param>
+/// <param name="Annually">Annual price in paise (with 2 months free discount).</param>
+/// <param name="Currency">Currency code.</param>
+/// <param name="AnnualDiscount">Percentage discount for annual billing.</param>
+/// <param name="AnnualSavings">Amount saved per year with annual billing in paise.</param>
+/// <param name="EffectiveMonthlyRate">Effective monthly rate when billed annually.</param>
+/// <param name="PerSeat">Per-seat pricing if applicable.</param>
+public record ExtendedPlanPricingDto(
+    int? Monthly,
+    int? Annually,
+    string Currency,
+    int? AnnualDiscount,
+    int? AnnualSavings,
+    int? EffectiveMonthlyRate,
+    PerSeatPricingDto? PerSeat
+);

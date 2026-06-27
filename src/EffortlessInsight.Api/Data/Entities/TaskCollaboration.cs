@@ -19,6 +19,13 @@ public class TaskAssignee
     public Guid UserId { get; set; }
     public ApplicationUser User { get; set; } = null!;
 
+    /// <summary>
+    /// If assigned via team, references the team.
+    /// Null if user was directly assigned.
+    /// </summary>
+    public Guid? TeamId { get; set; }
+    public Team? Team { get; set; }
+
     public DateTime AssignedAt { get; set; } = DateTime.UtcNow;
 
     public Guid? AssignedById { get; set; }
@@ -349,10 +356,11 @@ public static class TaskStatusValues
     public const string Blocked = "blocked";
     public const string OnHold = "on_hold";
     public const string Archived = "archived";
+    public const string Cancelled = "cancelled";
 
     public static readonly string[] All =
     [
-        Todo, InProgress, Done, Blocked, OnHold, Archived
+        Todo, InProgress, Done, Blocked, OnHold, Archived, Cancelled
     ];
 
     public static readonly string[] ActiveStatuses =
@@ -435,6 +443,9 @@ public static class ActivityTypes
     public const string DocumentUploaded = "document_uploaded";
     public const string DocumentReviewed = "document_reviewed";
     public const string DocumentOverdue = "document_overdue";
+
+    // Time tracking activities
+    public const string TimeLogged = "time_logged";
 
     // System activities
     public const string NoticeAssigned = "notice_assigned";

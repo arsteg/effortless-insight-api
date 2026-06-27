@@ -24,6 +24,7 @@ builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
         options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+        options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
     });
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
@@ -32,6 +33,18 @@ builder.Services.AddSwaggerGen(options =>
 
     // Use full type name to avoid schema ID conflicts for types with same name in different namespaces
     options.CustomSchemaIds(type => type.FullName?.Replace("+", ".") ?? type.Name);
+
+    // Resolve conflicting actions by taking the first one
+    options.ResolveConflictingActions(apiDescriptions => apiDescriptions.First());
+
+    // Custom operation ID generator to avoid conflicts
+    options.CustomOperationIds(apiDesc =>
+    {
+        var controllerName = apiDesc.ActionDescriptor.RouteValues["controller"];
+        var actionName = apiDesc.ActionDescriptor.RouteValues["action"];
+        var method = apiDesc.HttpMethod?.ToLower() ?? "get";
+        return $"{controllerName}_{actionName}_{method}";
+    });
 });
 
 // Configure DbContext with PostgreSQL + pgvector
@@ -121,6 +134,7 @@ var app = builder.Build();
 // Configure the HTTP request pipeline
 if (app.Environment.IsDevelopment())
 {
+    app.UseDeveloperExceptionPage(); // Show detailed errors
     app.UseSwagger();
     app.UseSwaggerUI();
 }
@@ -153,6 +167,9 @@ app.UseHangfireDashboard("/hangfire", new DashboardOptions
 // Configure recurring workflow jobs
 EffortlessInsight.Api.Jobs.WorkflowJobsExtensions.ConfigureWorkflowJobs(app);
 
+// Configure recurring organization jobs (suspension expiry, invitation cleanup)
+EffortlessInsight.Api.Jobs.OrganizationJobsExtensions.ConfigureOrganizationJobs(app);
+
 // Configure recurring collaboration jobs (task & document request notifications)
 EffortlessInsight.Api.Jobs.CollaborationJobsExtensions.ConfigureCollaborationJobs(app);
 
@@ -161,6 +178,12 @@ EffortlessInsight.Api.Jobs.NotificationJobsExtensions.ConfigureNotificationJobs(
 
 // Configure recurring billing jobs
 EffortlessInsight.Api.Jobs.BillingJobsExtensions.ConfigureBillingJobs(app);
+
+// Configure data retention cleanup jobs
+EffortlessInsight.Api.Jobs.DataRetentionJobsExtensions.ConfigureDataRetentionJobs(app);
+
+// Configure scheduled report jobs
+EffortlessInsight.Api.Jobs.ReportingJobsExtensions.ConfigureReportingJobs(app);
 
 // Apply migrations and seed data on startup in development
 if (app.Environment.IsDevelopment())

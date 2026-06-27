@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
 
 namespace EffortlessInsight.Api.Data.Entities;
 
@@ -85,6 +86,13 @@ public class NoticeTask : BaseEntity
     public Guid? AssignedToId { get; set; }
     public ApplicationUser? AssignedTo { get; set; }
 
+    /// <summary>
+    /// Team assigned to this task (optional).
+    /// When set, all team members are considered assignees.
+    /// </summary>
+    public Guid? AssignedTeamId { get; set; }
+    public Team? AssignedTeam { get; set; }
+
     [Required]
     [MaxLength(200)]
     public string Title { get; set; } = string.Empty;
@@ -137,6 +145,38 @@ public class NoticeTask : BaseEntity
     public ICollection<TaskAssignee> Assignees { get; set; } = [];
     public ICollection<NoticeTask> Subtasks { get; set; } = [];
     public ICollection<Attachment> Attachments { get; set; } = [];
+
+    /// <summary>
+    /// Dependencies where this task blocks other tasks (this task must complete first).
+    /// </summary>
+    public ICollection<TaskDependency> Dependencies { get; set; } = [];
+
+    /// <summary>
+    /// Dependencies where this task is blocked by other tasks (other tasks must complete first).
+    /// </summary>
+    public ICollection<TaskDependency> DependsOn { get; set; } = [];
+
+    /// <summary>
+    /// Reminders set for this task.
+    /// </summary>
+    public ICollection<TaskReminder> Reminders { get; set; } = [];
+
+    /// <summary>
+    /// Time entries logged for this task.
+    /// </summary>
+    public ICollection<TimeEntry> TimeEntries { get; set; } = [];
+
+    /// <summary>
+    /// Soft delete flag.
+    /// </summary>
+    [NotMapped]
+    public bool IsDeleted => DeletedAt != null;
+
+    /// <summary>
+    /// Organization ID (derived from Notice).
+    /// </summary>
+    [NotMapped]
+    public Guid OrganizationId => Notice?.OrganizationId ?? Guid.Empty;
 }
 
 public class Attachment : BaseEntity
@@ -146,6 +186,12 @@ public class Attachment : BaseEntity
 
     public Guid? ResponseId { get; set; }
     public NoticeResponse? Response { get; set; }
+
+    /// <summary>
+    /// Task this attachment belongs to (for task attachments).
+    /// </summary>
+    public Guid? TaskId { get; set; }
+    public NoticeTask? Task { get; set; }
 
     [Required]
     public Guid UploadedById { get; set; }
@@ -172,6 +218,37 @@ public class Attachment : BaseEntity
 
     [MaxLength(64)]
     public string? FileHash { get; set; }
+
+    // ============================================================================
+    // Versioning
+    // ============================================================================
+
+    /// <summary>
+    /// Version number of this attachment (starts at 1).
+    /// </summary>
+    public int Version { get; set; } = 1;
+
+    /// <summary>
+    /// Reference to the previous version of this attachment.
+    /// </summary>
+    public Guid? PreviousVersionId { get; set; }
+    public Attachment? PreviousVersion { get; set; }
+
+    /// <summary>
+    /// Whether this is the current (latest) version.
+    /// </summary>
+    public bool IsCurrentVersion { get; set; } = true;
+
+    /// <summary>
+    /// Optional note explaining what changed in this version.
+    /// </summary>
+    [MaxLength(500)]
+    public string? VersionNote { get; set; }
+
+    /// <summary>
+    /// Original attachment ID (first version). Used to group all versions together.
+    /// </summary>
+    public Guid? OriginalAttachmentId { get; set; }
 }
 
 public class NoticeResponse : BaseEntity

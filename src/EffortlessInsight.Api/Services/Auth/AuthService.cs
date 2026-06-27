@@ -21,11 +21,12 @@ public class AuthService : IAuthService
     private readonly IConfiguration _configuration;
     private readonly ITwoFactorService _twoFactorService;
     private readonly IOtpService _otpService;
+    private readonly IGeoLocationService _geoLocationService;
 
     private const int MaxFailedAttempts = 5;
-    private const int LockoutMinutes = 15;
+    private const int LockoutMinutes = 30;
     private const int VerificationTokenExpiryHours = 24;
-    private const int PasswordResetTokenExpiryHours = 24;
+    private const int PasswordResetTokenExpiryHours = 1;
     private const int PasswordHistoryCount = 5;
 
     public AuthService(
@@ -37,7 +38,8 @@ public class AuthService : IAuthService
         ILogger<AuthService> logger,
         IConfiguration configuration,
         ITwoFactorService twoFactorService,
-        IOtpService otpService)
+        IOtpService otpService,
+        IGeoLocationService geoLocationService)
     {
         _userManager = userManager;
         _dbContext = dbContext;
@@ -48,6 +50,7 @@ public class AuthService : IAuthService
         _configuration = configuration;
         _twoFactorService = twoFactorService;
         _otpService = otpService;
+        _geoLocationService = geoLocationService;
     }
 
     public async Task<RegisterResponse> RegisterAsync(RegisterRequest request, string ipAddress, string? userAgent)
@@ -215,7 +218,7 @@ public class AuthService : IAuthService
         }
 
         // Reset failed login attempts on successful login
-        await ResetFailedLoginAttemptsAsync(user);
+        await ResetFailedLoginAttemptsAsync(user, ipAddress, userAgent);
 
         // Generate tokens and create session
         var loginResponse = await CreateLoginSessionAsync(user, request.RememberMe, request.DeviceInfo, ipAddress, userAgent);
@@ -341,11 +344,16 @@ public class AuthService : IAuthService
 
         // Mark email as verified
         user.EmailConfirmed = true;
+        user.IsEmailVerified = true;
+        user.EmailVerifiedAt = DateTime.UtcNow;
         user.UpdatedAt = DateTime.UtcNow;
         await _userManager.UpdateAsync(user);
 
         // Remove the token from cache
         await _cache.RemoveAsync(cacheKey);
+
+        // Audit log
+        await LogAuthEventAsync(user.Id, user.Email, AuthEventTypes.EmailVerified, true, null, null, null);
 
         _logger.LogInformation("Email verified for user: {Email}", user.Email);
     }
@@ -398,6 +406,9 @@ public class AuthService : IAuthService
         {
             _logger.LogError(ex, "Failed to send password reset email to {Email}", user.Email);
         }
+
+        // Audit log
+        await LogAuthEventAsync(user.Id, user.Email, AuthEventTypes.PasswordResetRequest, true, null, ipAddress, null);
 
         _logger.LogInformation("Password reset requested for: {Email}", user.Email);
     }
@@ -459,6 +470,9 @@ public class AuthService : IAuthService
         // Revoke all sessions
         await RevokeAllUserSessionsAsync(user.Id, "password_change");
 
+        // Audit log
+        await LogAuthEventAsync(user.Id, user.Email, AuthEventTypes.PasswordResetComplete, true, null, null, null);
+
         _logger.LogInformation("Password reset successful for: {Email}", user.Email);
     }
 
@@ -503,14 +517,22 @@ public class AuthService : IAuthService
         user.UpdatedAt = DateTime.UtcNow;
         await _userManager.UpdateAsync(user);
 
+        // Audit log
+        await LogAuthEventAsync(user.Id, user.Email, AuthEventTypes.PasswordChange, true, null, null, null);
+
         _logger.LogInformation("Password changed for user: {UserId}", userId);
     }
 
     public async Task LogoutAsync(Guid userId, string? refreshTokenJti, bool allDevices)
     {
+        var user = await _userManager.FindByIdAsync(userId.ToString());
+
         if (allDevices)
         {
             await RevokeAllUserSessionsAsync(userId, "logout");
+
+            // Audit log
+            await LogAuthEventAsync(userId, user?.Email, AuthEventTypes.AllSessionsRevoked, true, null, null, null);
         }
         else if (!string.IsNullOrEmpty(refreshTokenJti))
         {
@@ -523,6 +545,9 @@ public class AuthService : IAuthService
                 session.RevokedReason = "logout";
                 await _dbContext.SaveChangesAsync();
             }
+
+            // Audit log
+            await LogAuthEventAsync(userId, user?.Email, AuthEventTypes.Logout, true, null, null, null);
         }
 
         _logger.LogInformation("User logged out: {UserId}, AllDevices: {AllDevices}", userId, allDevices);
@@ -705,6 +730,9 @@ public class AuthService : IAuthService
         // Remove setup from cache
         await _cache.RemoveAsync($"2fa_setup:{userId}");
 
+        // Audit log
+        await LogAuthEventAsync(user.Id, user.Email, AuthEventTypes.TwoFactorEnabled, true, null, null, null);
+
         _logger.LogInformation("2FA enabled for user: {UserId}", userId);
 
         return new TwoFactorVerifySetupResponse(
@@ -740,6 +768,9 @@ public class AuthService : IAuthService
         user.UpdatedAt = DateTime.UtcNow;
 
         await _userManager.UpdateAsync(user);
+
+        // Audit log
+        await LogAuthEventAsync(user.Id, user.Email, AuthEventTypes.TwoFactorDisabled, true, null, null, null);
 
         _logger.LogInformation("2FA disabled for user: {UserId}", userId);
     }
@@ -808,7 +839,7 @@ public class AuthService : IAuthService
         await _cache.RemoveAsync($"2fa_partial:{request.PartialToken}");
 
         // Reset failed login attempts
-        await ResetFailedLoginAttemptsAsync(user);
+        await ResetFailedLoginAttemptsAsync(user, ipAddress, userAgent);
 
         // Get user's organization from memberships first (multi-org support), then fallback to legacy field
         var membership = await _dbContext.OrganizationMembers
@@ -929,6 +960,329 @@ public class AuthService : IAuthService
 
     #endregion
 
+    #region OAuth
+
+    public async Task<OAuthProvidersResponse> GetEnabledOAuthProvidersAsync()
+    {
+        var oauthSection = _configuration.GetSection("OAuth");
+        var providers = new List<OAuthProviderInfo>();
+
+        var googleEnabled = oauthSection.GetSection("Google").GetValue<bool>("Enabled");
+        var googleClientId = oauthSection.GetSection("Google").GetValue<string>("ClientId");
+        if (googleEnabled && !string.IsNullOrEmpty(googleClientId))
+        {
+            providers.Add(new OAuthProviderInfo("google", "Google", true));
+        }
+
+        var microsoftEnabled = oauthSection.GetSection("Microsoft").GetValue<bool>("Enabled");
+        var microsoftClientId = oauthSection.GetSection("Microsoft").GetValue<string>("ClientId");
+        if (microsoftEnabled && !string.IsNullOrEmpty(microsoftClientId))
+        {
+            providers.Add(new OAuthProviderInfo("microsoft", "Microsoft", true));
+        }
+
+        return await Task.FromResult(new OAuthProvidersResponse(providers));
+    }
+
+    public async Task<OAuthLoginUrlResponse> GetOAuthLoginUrlAsync(string provider, string? state)
+    {
+        var oauthSection = _configuration.GetSection("OAuth");
+        var callbackBaseUrl = oauthSection.GetValue<string>("CallbackBaseUrl") ?? "http://localhost:3000";
+
+        // Generate state token for CSRF protection if not provided
+        var stateToken = state ?? GenerateSecureToken();
+
+        // Store state in cache for verification on callback
+        await _cache.SetStringAsync(
+            $"oauth_state:{stateToken}",
+            JsonSerializer.Serialize(new OAuthStateData { CreatedAt = DateTime.UtcNow, Provider = provider }),
+            new DistributedCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(10)
+            });
+
+        string loginUrl;
+        switch (provider.ToLowerInvariant())
+        {
+            case "google":
+                var googleClientId = oauthSection.GetSection("Google").GetValue<string>("ClientId");
+                if (string.IsNullOrEmpty(googleClientId))
+                {
+                    throw new InvalidOperationException("GOOGLE_OAUTH_NOT_CONFIGURED");
+                }
+                var googleRedirectUri = Uri.EscapeDataString($"{callbackBaseUrl}/auth/callback/google");
+                loginUrl = $"https://accounts.google.com/o/oauth2/v2/auth?client_id={googleClientId}&redirect_uri={googleRedirectUri}&response_type=code&scope=email%20profile&state={stateToken}&access_type=offline&prompt=consent";
+                break;
+
+            case "microsoft":
+                var microsoftClientId = oauthSection.GetSection("Microsoft").GetValue<string>("ClientId");
+                if (string.IsNullOrEmpty(microsoftClientId))
+                {
+                    throw new InvalidOperationException("MICROSOFT_OAUTH_NOT_CONFIGURED");
+                }
+                var microsoftRedirectUri = Uri.EscapeDataString($"{callbackBaseUrl}/auth/callback/microsoft");
+                loginUrl = $"https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id={microsoftClientId}&redirect_uri={microsoftRedirectUri}&response_type=code&scope=openid%20email%20profile&state={stateToken}&response_mode=query";
+                break;
+
+            default:
+                throw new ArgumentException($"Unsupported OAuth provider: {provider}");
+        }
+
+        return new OAuthLoginUrlResponse(loginUrl, provider);
+    }
+
+    public async Task<object> HandleOAuthCallbackAsync(string provider, string code, string? state, string ipAddress, string? userAgent)
+    {
+        // Verify state if provided
+        if (!string.IsNullOrEmpty(state))
+        {
+            var stateDataJson = await _cache.GetStringAsync($"oauth_state:{state}");
+            if (string.IsNullOrEmpty(stateDataJson))
+            {
+                throw new InvalidOperationException("INVALID_OAUTH_STATE");
+            }
+            await _cache.RemoveAsync($"oauth_state:{state}");
+        }
+
+        var oauthSection = _configuration.GetSection("OAuth");
+        var callbackBaseUrl = oauthSection.GetValue<string>("CallbackBaseUrl") ?? "http://localhost:3000";
+
+        OAuthUserInfo? userInfo;
+        switch (provider.ToLowerInvariant())
+        {
+            case "google":
+                userInfo = await ExchangeGoogleCodeAsync(code, callbackBaseUrl);
+                break;
+            case "microsoft":
+                userInfo = await ExchangeMicrosoftCodeAsync(code, callbackBaseUrl);
+                break;
+            default:
+                throw new ArgumentException($"Unsupported OAuth provider: {provider}");
+        }
+
+        if (userInfo == null || string.IsNullOrEmpty(userInfo.Email))
+        {
+            throw new InvalidOperationException("FAILED_TO_GET_USER_INFO");
+        }
+
+        // Find or create user
+        var user = await _userManager.FindByEmailAsync(userInfo.Email);
+
+        if (user == null)
+        {
+            // Create new user for OAuth login
+            user = new ApplicationUser
+            {
+                UserName = userInfo.Email,
+                Email = userInfo.Email,
+                Name = userInfo.Name ?? userInfo.Email.Split('@')[0],
+                EmailConfirmed = true, // OAuth emails are verified
+                IsEmailVerified = true,
+                EmailVerifiedAt = DateTime.UtcNow,
+                Role = "owner",
+                OAuthProvider = provider,
+                OAuthProviderId = userInfo.Id,
+                AvatarUrl = userInfo.Picture,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            var result = await _userManager.CreateAsync(user);
+            if (!result.Succeeded)
+            {
+                var errors = string.Join(", ", result.Errors.Select(e => e.Description));
+                _logger.LogWarning("OAuth user registration failed: {Errors}", errors);
+                throw new InvalidOperationException($"REGISTRATION_FAILED: {errors}");
+            }
+
+            _logger.LogInformation("Created new user via OAuth: {Email} ({Provider})", userInfo.Email, provider);
+        }
+        else
+        {
+            // Update OAuth info if not already set
+            if (string.IsNullOrEmpty(user.OAuthProvider))
+            {
+                user.OAuthProvider = provider;
+                user.OAuthProviderId = userInfo.Id;
+            }
+
+            // Update avatar if not set
+            if (string.IsNullOrEmpty(user.AvatarUrl) && !string.IsNullOrEmpty(userInfo.Picture))
+            {
+                user.AvatarUrl = userInfo.Picture;
+            }
+
+            await _userManager.UpdateAsync(user);
+        }
+
+        // Check if account is active
+        if (!user.IsActive)
+        {
+            throw new UnauthorizedAccessException("ACCOUNT_DISABLED");
+        }
+
+        // Check for 2FA
+        if (user.Is2faEnabled)
+        {
+            var partialToken = GenerateSecureToken();
+            var partialTokenData = new PartialTokenData
+            {
+                UserId = user.Id,
+                Email = user.Email!,
+                RememberMe = false,
+                DeviceInfo = null,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            await _cache.SetStringAsync(
+                $"2fa_partial:{partialToken}",
+                JsonSerializer.Serialize(partialTokenData),
+                new DistributedCacheEntryOptions
+                {
+                    AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5)
+                });
+
+            return new TwoFactorRequiredResponse(
+                Requires2fa: true,
+                PartialToken: partialToken,
+                ExpiresIn: 300,
+                Methods: new List<string> { "totp", "backup_code" }
+            );
+        }
+
+        // Create login session
+        var loginResponse = await CreateLoginSessionAsync(user, false, null, ipAddress, userAgent);
+
+        await LogLoginAuditAsync(user.Id, user.Email, true, null, ipAddress, userAgent, $"oauth_{provider}");
+
+        return loginResponse;
+    }
+
+    private async Task<OAuthUserInfo?> ExchangeGoogleCodeAsync(string code, string callbackBaseUrl)
+    {
+        var oauthSection = _configuration.GetSection("OAuth:Google");
+        var clientId = oauthSection.GetValue<string>("ClientId");
+        var clientSecret = oauthSection.GetValue<string>("ClientSecret");
+        var redirectUri = $"{callbackBaseUrl}/auth/callback/google";
+
+        using var httpClient = new HttpClient();
+
+        // Exchange code for tokens
+        var tokenRequest = new Dictionary<string, string>
+        {
+            ["code"] = code,
+            ["client_id"] = clientId!,
+            ["client_secret"] = clientSecret!,
+            ["redirect_uri"] = redirectUri,
+            ["grant_type"] = "authorization_code"
+        };
+
+        var tokenResponse = await httpClient.PostAsync(
+            "https://oauth2.googleapis.com/token",
+            new FormUrlEncodedContent(tokenRequest));
+
+        if (!tokenResponse.IsSuccessStatusCode)
+        {
+            _logger.LogWarning("Failed to exchange Google code: {Status}", tokenResponse.StatusCode);
+            return null;
+        }
+
+        var tokenJson = await tokenResponse.Content.ReadAsStringAsync();
+        var tokenData = JsonSerializer.Deserialize<JsonElement>(tokenJson);
+        var accessToken = tokenData.GetProperty("access_token").GetString();
+
+        // Get user info
+        httpClient.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+
+        var userInfoResponse = await httpClient.GetAsync("https://www.googleapis.com/oauth2/v2/userinfo");
+        if (!userInfoResponse.IsSuccessStatusCode)
+        {
+            _logger.LogWarning("Failed to get Google user info: {Status}", userInfoResponse.StatusCode);
+            return null;
+        }
+
+        var userInfoJson = await userInfoResponse.Content.ReadAsStringAsync();
+        var userInfo = JsonSerializer.Deserialize<JsonElement>(userInfoJson);
+
+        return new OAuthUserInfo
+        {
+            Id = userInfo.TryGetProperty("id", out var id) ? id.GetString() : null,
+            Email = userInfo.TryGetProperty("email", out var email) ? email.GetString() : null,
+            Name = userInfo.TryGetProperty("name", out var name) ? name.GetString() : null,
+            Picture = userInfo.TryGetProperty("picture", out var picture) ? picture.GetString() : null
+        };
+    }
+
+    private async Task<OAuthUserInfo?> ExchangeMicrosoftCodeAsync(string code, string callbackBaseUrl)
+    {
+        var oauthSection = _configuration.GetSection("OAuth:Microsoft");
+        var clientId = oauthSection.GetValue<string>("ClientId");
+        var clientSecret = oauthSection.GetValue<string>("ClientSecret");
+        var redirectUri = $"{callbackBaseUrl}/auth/callback/microsoft";
+
+        using var httpClient = new HttpClient();
+
+        // Exchange code for tokens
+        var tokenRequest = new Dictionary<string, string>
+        {
+            ["code"] = code,
+            ["client_id"] = clientId!,
+            ["client_secret"] = clientSecret!,
+            ["redirect_uri"] = redirectUri,
+            ["grant_type"] = "authorization_code",
+            ["scope"] = "openid email profile"
+        };
+
+        var tokenResponse = await httpClient.PostAsync(
+            "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+            new FormUrlEncodedContent(tokenRequest));
+
+        if (!tokenResponse.IsSuccessStatusCode)
+        {
+            _logger.LogWarning("Failed to exchange Microsoft code: {Status}", tokenResponse.StatusCode);
+            return null;
+        }
+
+        var tokenJson = await tokenResponse.Content.ReadAsStringAsync();
+        var tokenData = JsonSerializer.Deserialize<JsonElement>(tokenJson);
+        var accessToken = tokenData.GetProperty("access_token").GetString();
+
+        // Get user info from Microsoft Graph
+        httpClient.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+
+        var userInfoResponse = await httpClient.GetAsync("https://graph.microsoft.com/v1.0/me");
+        if (!userInfoResponse.IsSuccessStatusCode)
+        {
+            _logger.LogWarning("Failed to get Microsoft user info: {Status}", userInfoResponse.StatusCode);
+            return null;
+        }
+
+        var userInfoJson = await userInfoResponse.Content.ReadAsStringAsync();
+        var userInfo = JsonSerializer.Deserialize<JsonElement>(userInfoJson);
+
+        // Get email - Microsoft may return it in different fields
+        string? email = null;
+        if (userInfo.TryGetProperty("mail", out var mailProp))
+        {
+            email = mailProp.GetString();
+        }
+        if (string.IsNullOrEmpty(email) && userInfo.TryGetProperty("userPrincipalName", out var upnProp))
+        {
+            email = upnProp.GetString();
+        }
+
+        return new OAuthUserInfo
+        {
+            Id = userInfo.TryGetProperty("id", out var id) ? id.GetString() : null,
+            Email = email,
+            Name = userInfo.TryGetProperty("displayName", out var name) ? name.GetString() : null,
+            Picture = null // Microsoft Graph requires separate API call for photo
+        };
+    }
+
+    #endregion
+
     #region Private Methods
 
     private async Task<LoginResponse> CreateLoginSessionAsync(
@@ -957,6 +1311,9 @@ public class AuthService : IAuthService
         var accessToken = _jwtService.GenerateAccessToken(user, organization, roleOverride);
         var (refreshToken, jti, expiresAt) = _jwtService.GenerateRefreshToken(rememberMe);
 
+        // Get geolocation for IP address (fire-and-forget friendly, won't block if it fails)
+        var geoLocation = await _geoLocationService.GetLocationAsync(ipAddress);
+
         // Create session
         var session = new UserSession
         {
@@ -968,6 +1325,8 @@ public class AuthService : IAuthService
             Platform = deviceInfo?.Platform ?? "web",
             UserAgent = userAgent,
             IpAddress = ipAddress,
+            LocationCity = geoLocation?.City,
+            LocationCountry = geoLocation?.Country,
             ExpiresAt = expiresAt,
             LastActiveAt = DateTime.UtcNow
         };
@@ -1019,25 +1378,54 @@ public class AuthService : IAuthService
         user.FailedLoginAttempts++;
         user.LastFailedLoginAt = DateTime.UtcNow;
 
+        var wasLocked = false;
         if (user.FailedLoginAttempts >= MaxFailedAttempts)
         {
             user.IsLocked = true;
             user.LockedUntil = DateTime.UtcNow.AddMinutes(LockoutMinutes);
+            wasLocked = true;
             _logger.LogWarning("Account locked due to too many failed attempts: {Email}", user.Email);
         }
 
         await _userManager.UpdateAsync(user);
         await LogLoginAuditAsync(user.Id, user.Email, false, "invalid_password", ipAddress, userAgent, "password");
+
+        // Log account locked event
+        if (wasLocked)
+        {
+            await LogAuthEventAsync(
+                user.Id,
+                user.Email,
+                AuthEventTypes.AccountLocked,
+                true,
+                $"Locked after {MaxFailedAttempts} failed attempts",
+                ipAddress,
+                userAgent);
+        }
     }
 
-    private async Task ResetFailedLoginAttemptsAsync(ApplicationUser user)
+    private async Task ResetFailedLoginAttemptsAsync(ApplicationUser user, string? ipAddress = null, string? userAgent = null)
     {
+        var wasLocked = user.IsLocked;
         if (user.FailedLoginAttempts > 0 || user.IsLocked)
         {
             user.FailedLoginAttempts = 0;
             user.IsLocked = false;
             user.LockedUntil = null;
             await _userManager.UpdateAsync(user);
+
+            // Log account unlocked event if it was locked
+            if (wasLocked)
+            {
+                await LogAuthEventAsync(
+                    user.Id,
+                    user.Email,
+                    AuthEventTypes.AccountUnlocked,
+                    true,
+                    "Unlocked after successful login",
+                    ipAddress,
+                    userAgent);
+            }
         }
     }
 
@@ -1065,15 +1453,39 @@ public class AuthService : IAuthService
         string? userAgent,
         string authMethod)
     {
+        await LogAuthEventAsync(
+            userId,
+            email,
+            success ? AuthEventTypes.Login : AuthEventTypes.LoginFailed,
+            success,
+            failureReason,
+            ipAddress,
+            userAgent,
+            authMethod);
+    }
+
+    private async Task LogAuthEventAsync(
+        Guid? userId,
+        string? email,
+        string eventType,
+        bool success,
+        string? failureReason,
+        string? ipAddress,
+        string? userAgent,
+        string? authMethod = null,
+        string? metadata = null)
+    {
         var audit = new LoginAudit
         {
             UserId = userId,
             EmailAttempted = email,
+            EventType = eventType,
             Success = success,
             FailureReason = failureReason,
-            IpAddress = ipAddress,
+            IpAddress = ipAddress ?? "unknown",
             UserAgent = userAgent,
-            AuthMethod = authMethod,
+            AuthMethod = authMethod ?? "system",
+            Metadata = metadata,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -1156,6 +1568,20 @@ internal class TwoFactorSetupData
     public string Secret { get; set; } = string.Empty;
     public List<string> BackupCodes { get; set; } = new();
     public DateTime CreatedAt { get; set; }
+}
+
+internal class OAuthStateData
+{
+    public string Provider { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; }
+}
+
+internal class OAuthUserInfo
+{
+    public string? Id { get; set; }
+    public string? Email { get; set; }
+    public string? Name { get; set; }
+    public string? Picture { get; set; }
 }
 
 #endregion

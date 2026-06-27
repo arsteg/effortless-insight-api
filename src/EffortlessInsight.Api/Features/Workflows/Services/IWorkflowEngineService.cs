@@ -170,6 +170,44 @@ public interface IWorkflowEngineService
 
     #endregion
 
+    #region Parallel Execution
+
+    /// <summary>
+    /// Gets active stage instances for a workflow (supports parallel execution).
+    /// </summary>
+    Task<List<StageInstanceDto>> GetActiveStageInstancesAsync(
+        Guid noticeId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Completes a specific stage instance in a parallel workflow.
+    /// Handles join logic when completing branches.
+    /// </summary>
+    Task<TransitionResult> CompleteStageInstanceAsync(
+        Guid noticeId,
+        Guid stageInstanceId,
+        CompleteStageInstanceRequest request,
+        Guid userId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Forks the workflow into parallel branches.
+    /// </summary>
+    Task<TransitionResult> ForkWorkflowAsync(
+        Guid noticeId,
+        ForkWorkflowRequest request,
+        Guid userId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Gets parallel branch status for a workflow.
+    /// </summary>
+    Task<ParallelBranchStatusDto?> GetParallelBranchStatusAsync(
+        Guid noticeId,
+        CancellationToken cancellationToken = default);
+
+    #endregion
+
     #region Templates
 
     /// <summary>

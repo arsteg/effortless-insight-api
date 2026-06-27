@@ -62,6 +62,24 @@ public class OrganizationMember : BaseEntity
     public string? SuspensionReason { get; set; }
 
     /// <summary>
+    /// When the suspension expires and member is automatically reactivated.
+    /// Null means indefinite suspension until manually unsuspended.
+    /// </summary>
+    public DateTime? SuspensionExpiresAt { get; set; }
+
+    /// <summary>
+    /// Computed property: true if member is active and not suspended
+    /// </summary>
+    [NotMapped]
+    public bool IsActive => Status == "active" && DeletedAt == null;
+
+    /// <summary>
+    /// Computed property: true if member is currently suspended
+    /// </summary>
+    [NotMapped]
+    public bool IsSuspended => Status == "suspended";
+
+    /// <summary>
     /// Per-member notification preferences stored as JSONB
     /// </summary>
     public Dictionary<string, object>? NotificationPreferences { get; set; }
@@ -83,4 +101,13 @@ public class OrganizationMember : BaseEntity
     /// Last activity timestamp for this membership
     /// </summary>
     public DateTime? LastActiveAt { get; set; }
+
+    /// <summary>
+    /// Optional reference to a custom role for fine-grained permissions.
+    /// If set, permissions are derived from CustomRole instead of the base Role.
+    /// </summary>
+    public Guid? CustomRoleId { get; set; }
+
+    [ForeignKey(nameof(CustomRoleId))]
+    public CustomRole? CustomRole { get; set; }
 }

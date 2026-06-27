@@ -105,4 +105,5 @@ public static class WebhookEventStatus
     public const string Processed = "processed";
     public const string Failed = "failed";
     public const string Skipped = "skipped";
+    public const string DeadLetter = "dead_letter";
 }

@@ -2,6 +2,7 @@ using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.DTOs;
 using EffortlessInsight.Api.Features.Workflows.Dtos;
+using EffortlessInsight.Api.Services.Collaboration;
 using EffortlessInsight.Api.Services.Notifications;
 using Microsoft.EntityFrameworkCore;
 
@@ -15,16 +16,26 @@ public class WorkflowEngineService : IWorkflowEngineService
     private readonly ApplicationDbContext _context;
     private readonly ILogger<WorkflowEngineService> _logger;
     private readonly INotificationEngineService _notificationService;
+    private readonly IConditionEvaluator _conditionEvaluator;
+    private readonly ITaskService _taskService;
+    private readonly IAssignmentEngineService _assignmentEngine;
     private const int MaxBulkOperationSize = 50;
+    private const int MaxAutoTransitionDepth = 5; // Prevent infinite loops
 
     public WorkflowEngineService(
         ApplicationDbContext context,
         ILogger<WorkflowEngineService> logger,
-        INotificationEngineService notificationService)
+        INotificationEngineService notificationService,
+        IConditionEvaluator conditionEvaluator,
+        ITaskService taskService,
+        IAssignmentEngineService assignmentEngine)
     {
         _context = context;
         _logger = logger;
         _notificationService = notificationService;
+        _conditionEvaluator = conditionEvaluator;
+        _taskService = taskService;
+        _assignmentEngine = assignmentEngine;
     }
 
     #region Workflow Instance Management
@@ -96,6 +107,7 @@ public class WorkflowEngineService : IWorkflowEngineService
         {
             NoticeId = request.NoticeId,
             WorkflowTemplateId = template.Id,
+            TemplateVersionUsed = template.Version,
             CurrentStageKey = startStage.StageKey,
             CurrentStageId = startStage.Id,
             StageEnteredAt = now,
@@ -210,6 +222,7 @@ public class WorkflowEngineService : IWorkflowEngineService
             .Include(i => i.WorkflowTemplate)
             .ThenInclude(t => t.Stages)
             .Include(i => i.CurrentStage)
+            .Include(i => i.Notice)
             .FirstOrDefaultAsync(i => i.NoticeId == noticeId && i.Status == WorkflowInstanceStatuses.Active, cancellationToken);
 
         if (instance == null)
@@ -220,6 +233,22 @@ public class WorkflowEngineService : IWorkflowEngineService
                 Message = "No active workflow found",
                 Errors = ["No active workflow exists for this notice"]
             };
+        }
+
+        // GAP-WF-005: Validate stage permissions before allowing transition
+        if (instance.CurrentStage != null)
+        {
+            var permissionResult = await ValidateStagePermissionsAsync(
+                instance.CurrentStage, userId, instance.Notice.OrganizationId, cancellationToken);
+            if (!permissionResult.IsValid)
+            {
+                return new TransitionResult
+                {
+                    Success = false,
+                    Message = "Insufficient permissions",
+                    Errors = [permissionResult.Error!]
+                };
+            }
         }
 
         // Validate transition
@@ -283,6 +312,37 @@ public class WorkflowEngineService : IWorkflowEngineService
         _logger.LogInformation("Transitioned workflow for notice {NoticeId} from {FromStage} to {ToStage}",
             noticeId, previousStageKey, targetStage.StageKey);
 
+        // GAP-WF-008: Auto-create task when entering a task stage or when AutoCreateTask is enabled
+        await TryAutoCreateTaskForStageAsync(instance, targetStage, userId, cancellationToken);
+
+        // GAP-WF-004: Auto-assign based on assignment rules if no manual assignment
+        if (!instance.AssignedToId.HasValue && targetStage.StageType != WorkflowStageTypes.End)
+        {
+            var autoAssigneeId = await _assignmentEngine.DetermineAssigneeAsync(
+                instance, targetStage, cancellationToken);
+
+            if (autoAssigneeId.HasValue)
+            {
+                instance.AssignedToId = autoAssigneeId;
+                instance.UpdatedAt = DateTime.UtcNow;
+                await _context.SaveChangesAsync(cancellationToken);
+
+                _logger.LogInformation(
+                    "Auto-assigned workflow for notice {NoticeId} to user {UserId} at stage {StageKey}",
+                    noticeId, autoAssigneeId.Value, targetStage.StageKey);
+            }
+        }
+
+        // Evaluate auto-transitions for the new stage
+        var autoTransitionResult = await EvaluateAutoTransitionsAsync(
+            instance, targetStage, userId, 0, cancellationToken);
+
+        if (autoTransitionResult != null)
+        {
+            // Auto-transition occurred, return that result
+            return autoTransitionResult;
+        }
+
         var instanceDto = await GetWorkflowInstanceByIdAsync(instance.Id, cancellationToken);
 
         return new TransitionResult
@@ -291,6 +351,256 @@ public class WorkflowEngineService : IWorkflowEngineService
             Message = $"Successfully transitioned to {targetStage.Name}",
             Instance = instanceDto
         };
+    }
+
+    /// <summary>
+    /// Evaluates and executes auto-transitions based on stage rules and notice conditions.
+    /// </summary>
+    private async Task<TransitionResult?> EvaluateAutoTransitionsAsync(
+        NoticeWorkflowInstance instance,
+        WorkflowStage currentStage,
+        Guid userId,
+        int depth,
+        CancellationToken cancellationToken)
+    {
+        // Prevent infinite loops
+        if (depth >= MaxAutoTransitionDepth)
+        {
+            _logger.LogWarning(
+                "Max auto-transition depth reached for notice {NoticeId} at stage {StageKey}",
+                instance.NoticeId, currentStage.StageKey);
+            return null;
+        }
+
+        // Check if stage has auto-transition rules
+        if (currentStage.AutoTransitionRules == null || currentStage.AutoTransitionRules.Count == 0)
+            return null;
+
+        // Load the notice to evaluate conditions
+        var notice = await _context.Notices
+            .AsNoTracking()
+            .FirstOrDefaultAsync(n => n.Id == instance.NoticeId, cancellationToken);
+
+        if (notice == null)
+            return null;
+
+        // Evaluate each auto-transition rule in order
+        foreach (var rule in currentStage.AutoTransitionRules)
+        {
+            var condition = rule.Condition;
+
+            // If condition is empty, it always matches
+            var conditionMatches = string.IsNullOrWhiteSpace(condition.Field) ||
+                                   _conditionEvaluator.Evaluate(condition, notice);
+
+            if (conditionMatches)
+            {
+                // Handle delayed transitions
+                if (rule.DelayMinutes > 0)
+                {
+                    _logger.LogInformation(
+                        "Auto-transition delayed by {DelayMinutes} minutes for notice {NoticeId} to stage {TargetStage}",
+                        rule.DelayMinutes, instance.NoticeId, rule.TargetStage);
+                    // TODO: Schedule delayed transition via Hangfire
+                    return null;
+                }
+
+                // Find target stage
+                var targetStage = instance.WorkflowTemplate.Stages
+                    .FirstOrDefault(s => s.StageKey == rule.TargetStage);
+
+                if (targetStage == null)
+                {
+                    _logger.LogWarning(
+                        "Auto-transition target stage {TargetStage} not found for notice {NoticeId}",
+                        rule.TargetStage, instance.NoticeId);
+                    continue;
+                }
+
+                // Perform the auto-transition
+                var now = DateTime.UtcNow;
+                var previousStageKey = instance.CurrentStageKey;
+                var timeInPreviousStage = (int)(now - instance.StageEnteredAt).TotalMinutes;
+
+                instance.CurrentStageKey = targetStage.StageKey;
+                instance.CurrentStageId = targetStage.Id;
+                instance.StageEnteredAt = now;
+                instance.SlaDeadline = targetStage.SlaHours.HasValue ? now.AddHours(targetStage.SlaHours.Value) : null;
+                instance.SlaStatus = WorkflowSlaStatuses.OnTrack;
+                instance.SlaPercentConsumed = 0;
+                instance.TransitionCount++;
+                instance.TotalTimeMinutes += timeInPreviousStage;
+                instance.UpdatedAt = now;
+
+                // Check if this is an end stage
+                if (targetStage.StageType == WorkflowStageTypes.End)
+                {
+                    instance.Status = WorkflowInstanceStatuses.Completed;
+                    instance.CompletedAt = now;
+                    instance.CompletionOutcome = "auto_completed";
+                }
+
+                // Create history entry for auto-transition
+                var historyEntry = new WorkflowHistory
+                {
+                    WorkflowInstanceId = instance.Id,
+                    NoticeId = instance.NoticeId,
+                    EventType = WorkflowHistoryEventTypes.StageTransition,
+                    FromStageKey = previousStageKey,
+                    ToStageKey = targetStage.StageKey,
+                    PerformedById = null, // System-initiated
+                    PerformedBySystem = "AutoTransition",
+                    Description = $"Auto-transitioned from '{previousStageKey}' to '{targetStage.StageKey}' based on condition: {condition.Field} {condition.Operator} {condition.Value}",
+                    TimeInStageMinutes = timeInPreviousStage,
+                    SlaStatusAtEvent = instance.SlaStatus,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                };
+                _context.WorkflowHistories.Add(historyEntry);
+
+                await _context.SaveChangesAsync(cancellationToken);
+
+                _logger.LogInformation(
+                    "Auto-transitioned workflow for notice {NoticeId} from {FromStage} to {ToStage}",
+                    instance.NoticeId, previousStageKey, targetStage.StageKey);
+
+                // Recursively evaluate auto-transitions for the new stage
+                var recursiveResult = await EvaluateAutoTransitionsAsync(
+                    instance, targetStage, userId, depth + 1, cancellationToken);
+
+                if (recursiveResult != null)
+                    return recursiveResult;
+
+                var instanceDto = await GetWorkflowInstanceByIdAsync(instance.Id, cancellationToken);
+                return new TransitionResult
+                {
+                    Success = true,
+                    Message = $"Auto-transitioned to {targetStage.Name}",
+                    Instance = instanceDto
+                };
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// GAP-WF-008: Auto-creates a task when entering a task stage or when AutoCreateTask is enabled.
+    /// </summary>
+    private async Task TryAutoCreateTaskForStageAsync(
+        NoticeWorkflowInstance instance,
+        WorkflowStage stage,
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
+        // Check if this stage should auto-create a task
+        if (stage.StageType != WorkflowStageTypes.Task && !stage.AutoCreateTask)
+        {
+            return;
+        }
+
+        try
+        {
+            // Build task details from template or stage metadata
+            string taskTitle;
+            string? taskDescription = null;
+            string taskPriority = TaskPriorityValues.Medium;
+            decimal? estimatedHours = null;
+            DateTime? dueDate = null;
+
+            // If a task template is specified, load it
+            if (stage.TaskTemplateId.HasValue)
+            {
+                var template = await _context.TaskTemplates
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(t => t.Id == stage.TaskTemplateId.Value && t.IsActive, cancellationToken);
+
+                if (template != null)
+                {
+                    taskTitle = template.DefaultTitle;
+                    taskDescription = template.DefaultDescription;
+                    taskPriority = template.DefaultPriority;
+                    estimatedHours = template.DefaultEstimatedHours;
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "Task template {TemplateId} not found or inactive for stage {StageKey}",
+                        stage.TaskTemplateId, stage.StageKey);
+                    taskTitle = stage.Name;
+                }
+            }
+            else
+            {
+                // Use stage metadata or stage name for task details
+                taskTitle = stage.Metadata?.TryGetValue("taskTitle", out var titleObj) == true
+                    ? titleObj?.ToString() ?? stage.Name
+                    : stage.Name;
+
+                if (stage.Metadata?.TryGetValue("taskDescription", out var descObj) == true)
+                {
+                    taskDescription = descObj?.ToString();
+                }
+
+                if (stage.Metadata?.TryGetValue("taskPriority", out var priorityObj) == true)
+                {
+                    var priorityStr = priorityObj?.ToString();
+                    if (!string.IsNullOrEmpty(priorityStr) && TaskPriorityValues.IsValid(priorityStr))
+                    {
+                        taskPriority = priorityStr;
+                    }
+                }
+            }
+
+            // Set due date based on SLA if available
+            if (stage.SlaHours.HasValue)
+            {
+                dueDate = DateTime.UtcNow.AddHours(stage.SlaHours.Value);
+            }
+
+            // Determine assignees - use workflow assignee if available
+            var assignees = new List<Guid>();
+            if (instance.AssignedToId.HasValue)
+            {
+                assignees.Add(instance.AssignedToId.Value);
+            }
+            else
+            {
+                // Fall back to the user performing the transition
+                assignees.Add(userId);
+            }
+
+            // Create the task
+            var createTaskDto = new CreateTaskDto(
+                Title: taskTitle,
+                Description: taskDescription,
+                Assignees: assignees,
+                AssignedTeamId: null,
+                Priority: taskPriority,
+                DueDate: dueDate,
+                EstimatedHours: estimatedHours,
+                Labels: ["workflow-task", $"stage:{stage.StageKey}"],
+                ParentTaskId: null,
+                TemplateId: stage.TaskTemplateId
+            );
+
+            var createdTask = await _taskService.CreateTaskAsync(
+                instance.NoticeId,
+                createTaskDto,
+                userId
+            );
+
+            _logger.LogInformation(
+                "Auto-created task {TaskId} for notice {NoticeId} on entering stage {StageKey}",
+                createdTask.Id, instance.NoticeId, stage.StageKey);
+        }
+        catch (Exception ex)
+        {
+            // Log error but don't fail the transition
+            _logger.LogError(ex,
+                "Failed to auto-create task for notice {NoticeId} on stage {StageKey}",
+                instance.NoticeId, stage.StageKey);
+        }
     }
 
     public async Task<(bool IsValid, string? Error)> ValidateTransitionAsync(
@@ -341,6 +651,144 @@ public class WorkflowEngineService : IWorkflowEngineService
         }
 
         return (true, null);
+    }
+
+    /// <summary>
+    /// GAP-WF-005: Validates that the user has the required permissions to transition from the current stage.
+    /// Checks stage.Metadata for "minRole" or "allowedRoles" permission requirements.
+    /// </summary>
+    /// <param name="stage">The workflow stage to validate permissions for.</param>
+    /// <param name="userId">The user attempting the transition.</param>
+    /// <param name="organizationId">The organization context for role lookup.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A tuple indicating if permissions are valid and any error message.</returns>
+    private async Task<(bool IsValid, string? Error)> ValidateStagePermissionsAsync(
+        WorkflowStage stage,
+        Guid userId,
+        Guid organizationId,
+        CancellationToken cancellationToken)
+    {
+        // If no metadata or no permission requirements, allow the transition
+        if (stage.Metadata == null || stage.Metadata.Count == 0)
+        {
+            return (true, null);
+        }
+
+        // Check if stage has permission requirements
+        var hasMinRole = stage.Metadata.TryGetValue("minRole", out var minRoleObj);
+        var hasAllowedRoles = stage.Metadata.TryGetValue("allowedRoles", out var allowedRolesObj);
+
+        if (!hasMinRole && !hasAllowedRoles)
+        {
+            return (true, null);
+        }
+
+        // Load the user's role from the organization membership
+        var membership = await _context.OrganizationMembers
+            .AsNoTracking()
+            .FirstOrDefaultAsync(m =>
+                m.UserId == userId &&
+                m.OrganizationId == organizationId &&
+                m.Status == "active",
+                cancellationToken);
+
+        if (membership == null)
+        {
+            return (false, "User is not a member of this organization");
+        }
+
+        var userRole = membership.Role.ToLowerInvariant();
+
+        // Define role hierarchy (higher index = more permissions)
+        var roleHierarchy = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+        {
+            { "viewer", 0 },
+            { "member", 1 },
+            { "ca", 2 },
+            { "manager", 3 },
+            { "admin", 4 },
+            { "owner", 5 }
+        };
+
+        // Check allowedRoles first (more specific)
+        if (hasAllowedRoles && allowedRolesObj != null)
+        {
+            var allowedRoles = ParseAllowedRoles(allowedRolesObj);
+            if (allowedRoles.Count > 0)
+            {
+                if (!allowedRoles.Contains(userRole, StringComparer.OrdinalIgnoreCase))
+                {
+                    return (false, $"User role '{userRole}' is not in the allowed roles for this stage: {string.Join(", ", allowedRoles)}");
+                }
+                return (true, null);
+            }
+        }
+
+        // Check minRole (minimum required role level)
+        if (hasMinRole && minRoleObj != null)
+        {
+            var minRole = minRoleObj.ToString()?.ToLowerInvariant() ?? "";
+
+            if (!roleHierarchy.TryGetValue(minRole, out var requiredLevel))
+            {
+                _logger.LogWarning("Unknown minRole '{MinRole}' in stage metadata", minRole);
+                return (true, null); // Unknown role - allow by default
+            }
+
+            if (!roleHierarchy.TryGetValue(userRole, out var userLevel))
+            {
+                _logger.LogWarning("Unknown user role '{UserRole}'", userRole);
+                return (false, $"Unknown user role: {userRole}");
+            }
+
+            if (userLevel < requiredLevel)
+            {
+                return (false, $"Minimum role required: '{minRole}'. User has role: '{userRole}'");
+            }
+        }
+
+        return (true, null);
+    }
+
+    /// <summary>
+    /// Parses allowedRoles from metadata value which can be a string array, JsonElement, or comma-separated string.
+    /// </summary>
+    private static List<string> ParseAllowedRoles(object allowedRolesObj)
+    {
+        var roles = new List<string>();
+
+        if (allowedRolesObj is List<string> roleList)
+        {
+            roles.AddRange(roleList);
+        }
+        else if (allowedRolesObj is string[] roleArray)
+        {
+            roles.AddRange(roleArray);
+        }
+        else if (allowedRolesObj is System.Text.Json.JsonElement jsonElement)
+        {
+            if (jsonElement.ValueKind == System.Text.Json.JsonValueKind.Array)
+            {
+                foreach (var item in jsonElement.EnumerateArray())
+                {
+                    if (item.ValueKind == System.Text.Json.JsonValueKind.String)
+                    {
+                        roles.Add(item.GetString() ?? "");
+                    }
+                }
+            }
+            else if (jsonElement.ValueKind == System.Text.Json.JsonValueKind.String)
+            {
+                var rolesStr = jsonElement.GetString() ?? "";
+                roles.AddRange(rolesStr.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+            }
+        }
+        else if (allowedRolesObj is string rolesString)
+        {
+            roles.AddRange(rolesString.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+        }
+
+        return roles;
     }
 
     public async Task<List<WorkflowStageDto>> GetAvailableTransitionsAsync(
@@ -1166,6 +1614,461 @@ public class WorkflowEngineService : IWorkflowEngineService
                 }
             }
         }
+    }
+
+    #endregion
+
+    #region Parallel Execution
+
+    public async Task<List<StageInstanceDto>> GetActiveStageInstancesAsync(
+        Guid noticeId,
+        CancellationToken cancellationToken = default)
+    {
+        var instance = await _context.NoticeWorkflowInstances
+            .Include(i => i.StageInstances.Where(si => si.Status == StageInstanceStatuses.Active))
+                .ThenInclude(si => si.Stage)
+            .Include(i => i.StageInstances)
+                .ThenInclude(si => si.AssignedTo)
+            .Where(i => i.NoticeId == noticeId && i.Status == WorkflowInstanceStatuses.Active)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (instance == null)
+            return [];
+
+        return instance.StageInstances
+            .Where(si => si.Status == StageInstanceStatuses.Active)
+            .Select(si => MapToStageInstanceDto(si))
+            .ToList();
+    }
+
+    public async Task<TransitionResult> CompleteStageInstanceAsync(
+        Guid noticeId,
+        Guid stageInstanceId,
+        CompleteStageInstanceRequest request,
+        Guid userId,
+        CancellationToken cancellationToken = default)
+    {
+        var instance = await _context.NoticeWorkflowInstances
+            .Include(i => i.WorkflowTemplate)
+                .ThenInclude(t => t.Stages)
+            .Include(i => i.StageInstances)
+                .ThenInclude(si => si.Stage)
+            .Where(i => i.NoticeId == noticeId && i.Status == WorkflowInstanceStatuses.Active)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (instance == null)
+        {
+            return new TransitionResult
+            {
+                Success = false,
+                Message = "No active workflow found",
+                Errors = ["No active workflow exists for this notice"]
+            };
+        }
+
+        var stageInstance = instance.StageInstances.FirstOrDefault(si => si.Id == stageInstanceId);
+        if (stageInstance == null || stageInstance.Status != StageInstanceStatuses.Active)
+        {
+            return new TransitionResult
+            {
+                Success = false,
+                Message = "Stage instance not found or not active",
+                Errors = ["The specified stage instance does not exist or is not active"]
+            };
+        }
+
+        var now = DateTime.UtcNow;
+        var timeInStage = (int)(now - stageInstance.EnteredAt).TotalMinutes;
+
+        // Complete the stage instance
+        stageInstance.Status = StageInstanceStatuses.Completed;
+        stageInstance.CompletedAt = now;
+        stageInstance.Outcome = request.Outcome ?? "completed";
+        stageInstance.TimeSpentMinutes = timeInStage;
+        stageInstance.UpdatedAt = now;
+
+        // Create history entry
+        var historyEntry = new WorkflowHistory
+        {
+            WorkflowInstanceId = instance.Id,
+            NoticeId = noticeId,
+            EventType = WorkflowHistoryEventTypes.StageTransition,
+            FromStageKey = stageInstance.StageKey,
+            ToStageKey = request.TargetStageKey,
+            PerformedById = userId,
+            Description = $"Completed parallel stage '{stageInstance.StageKey}' with outcome '{stageInstance.Outcome}'",
+            Reason = request.Reason,
+            TimeInStageMinutes = timeInStage,
+            EventData = request.Metadata,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        _context.WorkflowHistories.Add(historyEntry);
+
+        // Check if we need to handle join logic
+        var result = await HandleParallelJoinAsync(instance, stageInstance, request, userId, now, cancellationToken);
+
+        await _context.SaveChangesAsync(cancellationToken);
+
+        _logger.LogInformation(
+            "Completed stage instance {StageInstanceId} for notice {NoticeId} with outcome {Outcome}",
+            stageInstanceId, noticeId, stageInstance.Outcome);
+
+        return result;
+    }
+
+    public async Task<TransitionResult> ForkWorkflowAsync(
+        Guid noticeId,
+        ForkWorkflowRequest request,
+        Guid userId,
+        CancellationToken cancellationToken = default)
+    {
+        if (request.TargetStageKeys.Count < 2)
+        {
+            return new TransitionResult
+            {
+                Success = false,
+                Message = "Invalid fork request",
+                Errors = ["Fork requires at least 2 target stages"]
+            };
+        }
+
+        var instance = await _context.NoticeWorkflowInstances
+            .Include(i => i.WorkflowTemplate)
+                .ThenInclude(t => t.Stages)
+            .Include(i => i.StageInstances)
+            .Where(i => i.NoticeId == noticeId && i.Status == WorkflowInstanceStatuses.Active)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (instance == null)
+        {
+            return new TransitionResult
+            {
+                Success = false,
+                Message = "No active workflow found",
+                Errors = ["No active workflow exists for this notice"]
+            };
+        }
+
+        // Validate all target stages exist
+        var allStages = instance.WorkflowTemplate.Stages.ToDictionary(s => s.StageKey);
+        foreach (var targetKey in request.TargetStageKeys)
+        {
+            if (!allStages.ContainsKey(targetKey))
+            {
+                return new TransitionResult
+                {
+                    Success = false,
+                    Message = "Invalid target stage",
+                    Errors = [$"Stage '{targetKey}' does not exist in the workflow template"]
+                };
+            }
+        }
+
+        var now = DateTime.UtcNow;
+        var branchIndex = 0;
+
+        // Create stage instances for each parallel branch
+        foreach (var targetKey in request.TargetStageKeys)
+        {
+            var targetStage = allStages[targetKey];
+            var branchId = $"branch_{Guid.NewGuid():N}";
+            branchIndex++;
+
+            var stageInstance = new WorkflowStageInstance
+            {
+                WorkflowInstanceId = instance.Id,
+                StageId = targetStage.Id,
+                StageKey = targetStage.StageKey,
+                BranchId = branchId,
+                Status = StageInstanceStatuses.Active,
+                EnteredAt = now,
+                SlaDeadline = targetStage.SlaHours.HasValue ? now.AddHours(targetStage.SlaHours.Value) : null,
+                SlaStatus = WorkflowSlaStatuses.OnTrack,
+                SlaPercentConsumed = 0,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+
+            // Apply branch-specific assignment if provided
+            if (request.BranchAssignments?.TryGetValue(targetKey, out var assignment) == true)
+            {
+                stageInstance.AssignedToId = assignment.AssignToUserId;
+                stageInstance.AssignedRole = assignment.AssignToRole;
+            }
+
+            _context.WorkflowStageInstances.Add(stageInstance);
+        }
+
+        // Update instance to reflect parallel state
+        instance.HasParallelStages = true;
+        instance.ActiveBranchCount = request.TargetStageKeys.Count;
+        instance.UpdatedAt = now;
+
+        // Create history entry
+        var historyEntry = new WorkflowHistory
+        {
+            WorkflowInstanceId = instance.Id,
+            NoticeId = noticeId,
+            EventType = "workflow_forked",
+            FromStageKey = instance.CurrentStageKey,
+            PerformedById = userId,
+            Description = $"Workflow forked into {request.TargetStageKeys.Count} parallel branches: {string.Join(", ", request.TargetStageKeys)}",
+            Reason = request.Reason,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        _context.WorkflowHistories.Add(historyEntry);
+
+        await _context.SaveChangesAsync(cancellationToken);
+
+        _logger.LogInformation(
+            "Forked workflow for notice {NoticeId} into {BranchCount} parallel branches",
+            noticeId, request.TargetStageKeys.Count);
+
+        var instanceDto = await GetWorkflowInstanceByIdAsync(instance.Id, cancellationToken);
+        return new TransitionResult
+        {
+            Success = true,
+            Message = $"Workflow forked into {request.TargetStageKeys.Count} parallel branches",
+            Instance = instanceDto
+        };
+    }
+
+    public async Task<ParallelBranchStatusDto?> GetParallelBranchStatusAsync(
+        Guid noticeId,
+        CancellationToken cancellationToken = default)
+    {
+        var instance = await _context.NoticeWorkflowInstances
+            .Include(i => i.WorkflowTemplate)
+                .ThenInclude(t => t.Stages)
+            .Include(i => i.StageInstances)
+                .ThenInclude(si => si.Stage)
+            .Include(i => i.StageInstances)
+                .ThenInclude(si => si.AssignedTo)
+            .Where(i => i.NoticeId == noticeId && i.Status == WorkflowInstanceStatuses.Active)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (instance == null || !instance.HasParallelStages)
+            return null;
+
+        var activeInstances = instance.StageInstances
+            .Where(si => si.Status == StageInstanceStatuses.Active)
+            .ToList();
+
+        var completedInstances = instance.StageInstances
+            .Where(si => si.Status == StageInstanceStatuses.Completed && si.BranchId != null)
+            .ToList();
+
+        var allBranchIds = instance.StageInstances
+            .Where(si => si.BranchId != null)
+            .Select(si => si.BranchId!)
+            .Distinct()
+            .ToList();
+
+        var branches = activeInstances
+            .Where(si => si.BranchId != null)
+            .Select(si => new BranchStatusDto
+            {
+                BranchId = si.BranchId!,
+                CurrentStageKey = si.StageKey,
+                CurrentStageName = si.Stage?.Name ?? si.StageKey,
+                Status = si.Status,
+                AssignedToId = si.AssignedToId,
+                AssignedToName = si.AssignedTo?.Name,
+                SlaDeadline = si.SlaDeadline,
+                SlaStatus = si.SlaStatus
+            })
+            .ToList();
+
+        // Find next synchronization point
+        SynchronizationPointDto? syncPoint = null;
+        var syncStage = instance.WorkflowTemplate.Stages
+            .Where(s => s.IsSynchronizationPoint)
+            .OrderBy(s => s.StageOrder)
+            .FirstOrDefault();
+
+        if (syncStage != null)
+        {
+            var requiredBranches = syncStage.JoinType == WorkflowJoinTypes.All
+                ? allBranchIds.Count
+                : syncStage.MinBranchesToComplete ?? 1;
+
+            syncPoint = new SynchronizationPointDto
+            {
+                StageKey = syncStage.StageKey,
+                StageName = syncStage.Name,
+                JoinType = syncStage.JoinType ?? WorkflowJoinTypes.All,
+                MinBranchesToComplete = syncStage.MinBranchesToComplete,
+                CompletedBranches = completedInstances.Count,
+                RequiredBranches = requiredBranches,
+                IsReady = completedInstances.Count >= requiredBranches
+            };
+        }
+
+        return new ParallelBranchStatusDto
+        {
+            WorkflowInstanceId = instance.Id,
+            NoticeId = noticeId,
+            HasParallelStages = true,
+            ActiveBranchCount = activeInstances.Count,
+            CompletedBranchCount = completedInstances.Count,
+            TotalBranchCount = allBranchIds.Count,
+            Branches = branches,
+            NextSyncPoint = syncPoint
+        };
+    }
+
+    private async Task<TransitionResult> HandleParallelJoinAsync(
+        NoticeWorkflowInstance instance,
+        WorkflowStageInstance completedStageInstance,
+        CompleteStageInstanceRequest request,
+        Guid userId,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        // Check if there are other active branches
+        var activeBranches = instance.StageInstances
+            .Where(si => si.Status == StageInstanceStatuses.Active && si.Id != completedStageInstance.Id)
+            .ToList();
+
+        // Find the sync point stage
+        var syncStage = instance.WorkflowTemplate.Stages
+            .FirstOrDefault(s => s.IsSynchronizationPoint);
+
+        if (syncStage == null)
+        {
+            // No sync point - if all branches complete, workflow completes
+            if (activeBranches.Count == 0)
+            {
+                instance.HasParallelStages = false;
+                instance.ActiveBranchCount = 0;
+
+                // If target stage is specified, transition to it
+                if (!string.IsNullOrEmpty(request.TargetStageKey))
+                {
+                    var targetStage = instance.WorkflowTemplate.Stages.FirstOrDefault(s => s.StageKey == request.TargetStageKey);
+                    if (targetStage != null)
+                    {
+                        instance.CurrentStageKey = targetStage.StageKey;
+                        instance.CurrentStageId = targetStage.Id;
+                        instance.StageEnteredAt = now;
+                    }
+                }
+            }
+            else
+            {
+                instance.ActiveBranchCount = activeBranches.Count;
+            }
+
+            var instanceDto = await GetWorkflowInstanceByIdAsync(instance.Id, cancellationToken);
+            return new TransitionResult
+            {
+                Success = true,
+                Message = activeBranches.Count > 0
+                    ? $"Stage completed. {activeBranches.Count} branches still active."
+                    : "All parallel branches completed.",
+                Instance = instanceDto
+            };
+        }
+
+        // Handle join based on join type
+        var completedBranches = instance.StageInstances
+            .Where(si => si.Status == StageInstanceStatuses.Completed && si.BranchId != null)
+            .ToList();
+
+        var allBranchIds = instance.StageInstances
+            .Where(si => si.BranchId != null)
+            .Select(si => si.BranchId!)
+            .Distinct()
+            .ToList();
+
+        var requiredBranches = syncStage.JoinType == WorkflowJoinTypes.All
+            ? allBranchIds.Count
+            : syncStage.MinBranchesToComplete ?? 1;
+
+        if (completedBranches.Count >= requiredBranches)
+        {
+            // Join condition met - transition to sync stage
+            if (syncStage.JoinType == WorkflowJoinTypes.Any && activeBranches.Count > 0)
+            {
+                // Cancel remaining branches
+                foreach (var branch in activeBranches)
+                {
+                    branch.Status = StageInstanceStatuses.Cancelled;
+                    branch.CompletedAt = now;
+                    branch.Outcome = "cancelled_by_join";
+                    branch.UpdatedAt = now;
+                }
+            }
+
+            instance.HasParallelStages = false;
+            instance.ActiveBranchCount = 0;
+            instance.CurrentStageKey = syncStage.StageKey;
+            instance.CurrentStageId = syncStage.Id;
+            instance.StageEnteredAt = now;
+            instance.SlaDeadline = syncStage.SlaHours.HasValue ? now.AddHours(syncStage.SlaHours.Value) : null;
+            instance.SlaStatus = WorkflowSlaStatuses.OnTrack;
+            instance.SlaPercentConsumed = 0;
+
+            // Create history entry for join
+            var joinHistory = new WorkflowHistory
+            {
+                WorkflowInstanceId = instance.Id,
+                NoticeId = instance.NoticeId,
+                EventType = "workflow_joined",
+                ToStageKey = syncStage.StageKey,
+                PerformedById = userId,
+                Description = $"Parallel branches joined at '{syncStage.Name}' (join type: {syncStage.JoinType})",
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            _context.WorkflowHistories.Add(joinHistory);
+
+            var instanceDto = await GetWorkflowInstanceByIdAsync(instance.Id, cancellationToken);
+            return new TransitionResult
+            {
+                Success = true,
+                Message = $"Branches joined at '{syncStage.Name}'",
+                Instance = instanceDto
+            };
+        }
+        else
+        {
+            instance.ActiveBranchCount = activeBranches.Count;
+            var instanceDto = await GetWorkflowInstanceByIdAsync(instance.Id, cancellationToken);
+            return new TransitionResult
+            {
+                Success = true,
+                Message = $"Stage completed. Waiting for {requiredBranches - completedBranches.Count} more branch(es) to complete.",
+                Instance = instanceDto
+            };
+        }
+    }
+
+    private static StageInstanceDto MapToStageInstanceDto(WorkflowStageInstance si)
+    {
+        return new StageInstanceDto
+        {
+            Id = si.Id,
+            WorkflowInstanceId = si.WorkflowInstanceId,
+            StageId = si.StageId,
+            StageKey = si.StageKey,
+            StageName = si.Stage?.Name ?? si.StageKey,
+            BranchId = si.BranchId,
+            Status = si.Status,
+            EnteredAt = si.EnteredAt,
+            CompletedAt = si.CompletedAt,
+            SlaDeadline = si.SlaDeadline,
+            SlaStatus = si.SlaStatus,
+            SlaPercentConsumed = si.SlaPercentConsumed,
+            AssignedToId = si.AssignedToId,
+            AssignedToName = si.AssignedTo?.Name,
+            AssignedRole = si.AssignedRole,
+            Outcome = si.Outcome,
+            TimeSpentMinutes = si.TimeSpentMinutes,
+            AllowedTransitions = si.Stage?.AllowedTransitions ?? []
+        };
     }
 
     #endregion

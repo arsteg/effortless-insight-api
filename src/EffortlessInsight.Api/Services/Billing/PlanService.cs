@@ -163,6 +163,68 @@ public class PlanService : IPlanService
         return newPrice > currentPrice ? "upgrade" : "downgrade";
     }
 
+    /// <summary>
+    /// Gets extended plan pricing with annual savings calculation.
+    /// Annual pricing applies 10/12 ratio (2 months free) discount.
+    /// </summary>
+    /// <param name="planCode">The plan code.</param>
+    /// <returns>Extended pricing information including annual savings.</returns>
+    public async Task<ExtendedPlanPricingDto?> GetPlanPricingAsync(string planCode)
+    {
+        var plan = await GetPlanByCodeAsync(planCode);
+        if (plan == null)
+            return null;
+
+        return CalculateExtendedPricing(plan);
+    }
+
+    /// <summary>
+    /// Calculates extended pricing with annual discount (2 months free = 10/12 ratio).
+    /// </summary>
+    private static ExtendedPlanPricingDto CalculateExtendedPricing(SubscriptionPlan plan)
+    {
+        var monthlyPrice = plan.PricingMonthly ?? 0;
+
+        // Annual price should be 10 months worth (2 months free)
+        // If stored annual price exists, use it; otherwise calculate
+        var annualPrice = plan.PricingAnnually ?? (monthlyPrice * 10);
+
+        // Calculate savings and discount percentage
+        var fullYearPrice = monthlyPrice * 12;
+        var annualSavings = fullYearPrice > 0 ? fullYearPrice - annualPrice : 0;
+        var effectiveMonthlyRate = annualPrice > 0 ? annualPrice / 12 : 0;
+
+        // Calculate discount percentage (should be ~16.67% for 2 months free)
+        var annualDiscount = fullYearPrice > 0
+            ? (int)Math.Round((1.0 - (double)annualPrice / fullYearPrice) * 100)
+            : (int?)null;
+
+        return new ExtendedPlanPricingDto(
+            Monthly: plan.PricingMonthly,
+            Annually: annualPrice > 0 ? annualPrice : null,
+            Currency: plan.Currency,
+            AnnualDiscount: annualDiscount,
+            AnnualSavings: annualSavings > 0 ? annualSavings : null,
+            EffectiveMonthlyRate: effectiveMonthlyRate > 0 ? effectiveMonthlyRate : null,
+            PerSeat: plan.PerSeatMonthly.HasValue || plan.PerSeatAnnually.HasValue
+                ? new PerSeatPricingDto(
+                    plan.PerSeatMonthly,
+                    plan.PerSeatAnnually ?? (plan.PerSeatMonthly.HasValue ? plan.PerSeatMonthly.Value * 10 : null))
+                : null
+        );
+    }
+
+    /// <summary>
+    /// Calculates the annual price using the 10/12 discount (2 months free).
+    /// </summary>
+    /// <param name="monthlyPrice">The monthly price in paise.</param>
+    /// <returns>The annual price with 2 months free discount.</returns>
+    public static int CalculateAnnualPriceWithDiscount(int monthlyPrice)
+    {
+        // 2 months free = pay for 10 months
+        return monthlyPrice * 10;
+    }
+
     private async Task<List<SubscriptionPlan>> GetActivePlansAsync()
     {
         // Try cache first

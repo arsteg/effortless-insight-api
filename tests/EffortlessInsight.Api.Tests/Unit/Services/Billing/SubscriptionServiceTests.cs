@@ -19,6 +19,7 @@ public class SubscriptionServiceTests : IDisposable
     private readonly IRazorpayService _razorpayService;
     private readonly ICouponService _couponService;
     private readonly IInvoiceService _invoiceService;
+    private readonly IBillingNotificationService _billingNotificationService;
     private readonly ILogger<SubscriptionService> _logger;
     private readonly SubscriptionService _sut;
 
@@ -30,6 +31,7 @@ public class SubscriptionServiceTests : IDisposable
         _razorpayService = Substitute.For<IRazorpayService>();
         _couponService = Substitute.For<ICouponService>();
         _invoiceService = Substitute.For<IInvoiceService>();
+        _billingNotificationService = Substitute.For<IBillingNotificationService>();
         _logger = Substitute.For<ILogger<SubscriptionService>>();
 
         _sut = new SubscriptionService(
@@ -39,6 +41,7 @@ public class SubscriptionServiceTests : IDisposable
             _razorpayService,
             _couponService,
             _invoiceService,
+            _billingNotificationService,
             _logger);
     }
 

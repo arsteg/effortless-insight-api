@@ -178,6 +178,22 @@ public class BillingSubscription : BaseEntity
     /// </summary>
     public Dictionary<string, object>? Metadata { get; set; }
 
+    /// <summary>
+    /// When the subscription was paused.
+    /// </summary>
+    public DateTime? PausedAt { get; set; }
+
+    /// <summary>
+    /// Reason for pausing the subscription.
+    /// </summary>
+    [MaxLength(500)]
+    public string? PauseReason { get; set; }
+
+    /// <summary>
+    /// When the subscription is scheduled to automatically resume.
+    /// </summary>
+    public DateTime? ScheduledResumeAt { get; set; }
+
     // Navigation properties
     public ICollection<Invoice> Invoices { get; set; } = [];
     public ICollection<Payment> Payments { get; set; } = [];
@@ -191,6 +207,7 @@ public static class SubscriptionStatus
 {
     public const string Trialing = "trialing";
     public const string Active = "active";
+    public const string Paused = "paused";
     public const string PastDue = "past_due";
     public const string Cancelled = "cancelled";
     public const string Expired = "expired";

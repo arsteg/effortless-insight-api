@@ -444,6 +444,43 @@ public class TestableApplicationDbContext : ApplicationDbContext
             entity.Property(e => e.TestResults).HasConversion(jsonConverterNullable);
         });
 
+        // Fix ApprovalChain Dictionary properties for InMemory
+        modelBuilder.Entity<ApprovalChain>(entity =>
+        {
+            entity.Property(e => e.TriggerConditions).HasConversion(jsonConverterNullable);
+        });
+
+        // Fix ApprovalStep Dictionary properties for InMemory
+        modelBuilder.Entity<ApprovalStep>(entity =>
+        {
+            entity.Property(e => e.Conditions).HasConversion(jsonConverterNullable);
+        });
+
+        // Fix ApprovalRequest Dictionary properties for InMemory
+        modelBuilder.Entity<ApprovalRequest>(entity =>
+        {
+            entity.Property(e => e.Metadata).HasConversion(jsonConverterNullable);
+        });
+
+        // Fix DataExport Dictionary properties for InMemory
+        modelBuilder.Entity<DataExport>(entity =>
+        {
+            entity.Property(e => e.Options).HasConversion(jsonConverterNullable);
+            entity.Property(e => e.Summary).HasConversion(jsonConverterNullable);
+        });
+
+        // Fix Team Dictionary properties for InMemory
+        modelBuilder.Entity<Team>(entity =>
+        {
+            entity.Property(e => e.Settings).HasConversion(jsonConverterNullable);
+        });
+
+        // Fix WorkflowStageInstance Dictionary properties for InMemory
+        modelBuilder.Entity<WorkflowStageInstance>(entity =>
+        {
+            entity.Property(e => e.Metadata).HasConversion(jsonConverterNullable);
+        });
+
         // Ignore value object types that are serialized as JSON (not separate tables)
         modelBuilder.Ignore<WorkflowAction>();
         modelBuilder.Ignore<AutoTransitionRule>();

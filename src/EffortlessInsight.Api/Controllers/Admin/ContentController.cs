@@ -357,7 +357,7 @@ public class ContentController : ControllerBase
 
     private Guid GetAdminUserId()
     {
-        var claim = User.FindFirst("AdminUserId") ?? User.FindFirst("sub");
+        var claim = User.FindFirst("admin_id") ?? User.FindFirst("sub");
         return Guid.Parse(claim?.Value ?? throw new UnauthorizedAccessException("Admin user ID not found"));
     }
 

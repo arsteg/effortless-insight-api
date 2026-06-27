@@ -320,6 +320,18 @@ namespace EffortlessInsight.Api.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
 
+                    b.Property<bool>("NotifyCriticalAlerts")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("NotifyDailySummary")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("NotifyEmailEnabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("NotifySecurityAlerts")
+                        .HasColumnType("boolean");
+
                     b.Property<DateTime?>("PasswordChangedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -1019,6 +1031,9 @@ namespace EffortlessInsight.Api.Migrations
                     b.Property<bool>("EmailConfirmed")
                         .HasColumnType("boolean");
 
+                    b.Property<DateTime?>("EmailVerifiedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<int>("FailedLoginAttempts")
                         .HasColumnType("integer");
 
@@ -1032,11 +1047,17 @@ namespace EffortlessInsight.Api.Migrations
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
 
+                    b.Property<bool>("IsEmailVerified")
+                        .HasColumnType("boolean");
+
                     b.Property<bool>("IsLocked")
                         .HasColumnType("boolean");
 
                     b.Property<bool>("IsMobileVerified")
                         .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("LastActivityAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<DateTime?>("LastFailedLoginAt")
                         .HasColumnType("timestamp with time zone");
@@ -1090,6 +1111,14 @@ namespace EffortlessInsight.Api.Migrations
                     b.Property<string>("NormalizedUserName")
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
+
+                    b.Property<string>("OAuthProvider")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("OAuthProviderId")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
 
                     b.Property<Guid?>("OrganizationId")
                         .HasColumnType("uuid");
@@ -1150,6 +1179,267 @@ namespace EffortlessInsight.Api.Migrations
                     b.ToTable("AspNetUsers", (string)null);
                 });
 
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.ApprovalAction", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ActionType")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<Guid>("ActorId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ApprovalRequestId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ApprovalStepId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Comments")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("DelegatedToId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("DelegationReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("IpAddress")
+                        .HasMaxLength(45)
+                        .HasColumnType("character varying(45)");
+
+                    b.Property<bool>("IsAutomatic")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ActorId");
+
+                    b.HasIndex("ApprovalRequestId");
+
+                    b.HasIndex("ApprovalStepId");
+
+                    b.HasIndex("DelegatedToId");
+
+                    b.HasIndex("ApprovalRequestId", "CreatedAt")
+                        .HasDatabaseName("IX_ApprovalActions_Request_Created");
+
+                    b.ToTable("ApprovalActions");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.ApprovalChain", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int?>("DefaultTimeoutHours")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsParallel")
+                        .HasColumnType("boolean");
+
+                    b.Property<int?>("MinApprovalsRequired")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Dictionary<string, object>>("TriggerConditions")
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("TriggerEvent")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.HasIndex("TriggerEvent");
+
+                    b.HasIndex("OrganizationId", "IsActive")
+                        .HasDatabaseName("IX_ApprovalChains_Org_Active");
+
+                    b.ToTable("ApprovalChains");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.ApprovalRequest", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ApprovalChainId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("CurrentStep")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("CurrentStepDeadline")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Dictionary<string, object>>("Metadata")
+                        .HasColumnType("jsonb");
+
+                    b.Property<Guid>("NoticeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("RequestNotes")
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("RequestedById")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ResponseId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ApprovalChainId");
+
+                    b.HasIndex("CurrentStepDeadline")
+                        .HasDatabaseName("IX_ApprovalRequests_Deadline_Pending")
+                        .HasFilter("\"Status\" = 'pending'");
+
+                    b.HasIndex("NoticeId");
+
+                    b.HasIndex("RequestedById");
+
+                    b.HasIndex("ResponseId");
+
+                    b.HasIndex("Status");
+
+                    b.HasIndex("NoticeId", "Status")
+                        .HasDatabaseName("IX_ApprovalRequests_Notice_Status");
+
+                    b.ToTable("ApprovalRequests");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.ApprovalStep", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("AllowDelegation")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid>("ApprovalChainId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ApproverId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ApproverRole")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("ApproverType")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<Dictionary<string, object>>("Conditions")
+                        .HasColumnType("jsonb");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("EscalationUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Instructions")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<bool>("IsOptional")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<int>("StepOrder")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("TimeoutHours")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ApprovalChainId");
+
+                    b.HasIndex("ApproverId");
+
+                    b.HasIndex("EscalationUserId");
+
+                    b.HasIndex("ApprovalChainId", "StepOrder")
+                        .IsUnique()
+                        .HasDatabaseName("IX_ApprovalSteps_Chain_Order");
+
+                    b.ToTable("ApprovalSteps");
+                });
+
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Attachment", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1191,13 +1481,22 @@ namespace EffortlessInsight.Api.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
 
+                    b.Property<bool>("IsCurrentVersion")
+                        .HasColumnType("boolean");
+
                     b.Property<Guid?>("NoticeId")
                         .HasColumnType("uuid");
 
-                    b.Property<Guid?>("NoticeTaskId")
+                    b.Property<Guid?>("OriginalAttachmentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("PreviousVersionId")
                         .HasColumnType("uuid");
 
                     b.Property<Guid?>("ResponseId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("TaskId")
                         .HasColumnType("uuid");
 
                     b.Property<DateTime?>("UpdatedAt")
@@ -1206,15 +1505,33 @@ namespace EffortlessInsight.Api.Migrations
                     b.Property<Guid>("UploadedById")
                         .HasColumnType("uuid");
 
+                    b.Property<int>("Version")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("VersionNote")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
                     b.HasKey("Id");
 
-                    b.HasIndex("NoticeId");
+                    b.HasIndex("NoticeId")
+                        .HasFilter("\"DeletedAt\" IS NULL");
 
-                    b.HasIndex("NoticeTaskId");
+                    b.HasIndex("OriginalAttachmentId")
+                        .HasFilter("\"DeletedAt\" IS NULL");
 
-                    b.HasIndex("ResponseId");
+                    b.HasIndex("PreviousVersionId");
+
+                    b.HasIndex("ResponseId")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("TaskId");
 
                     b.HasIndex("UploadedById");
+
+                    b.HasIndex("NoticeId", "IsCurrentVersion")
+                        .HasDatabaseName("IX_Attachments_NoticeId_Current")
+                        .HasFilter("\"DeletedAt\" IS NULL AND \"IsCurrentVersion\" = true");
 
                     b.ToTable("Attachments");
                 });
@@ -1433,6 +1750,13 @@ namespace EffortlessInsight.Api.Migrations
                     b.Property<Guid>("OrganizationId")
                         .HasColumnType("uuid");
 
+                    b.Property<string>("PauseReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTime?>("PausedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<int>("PaymentRetryCount")
                         .HasColumnType("integer");
 
@@ -1462,6 +1786,9 @@ namespace EffortlessInsight.Api.Migrations
                     b.Property<string>("ScheduledPlanCode")
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)");
+
+                    b.Property<DateTime?>("ScheduledResumeAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<int>("SeatsAdditional")
                         .HasColumnType("integer");
@@ -2334,6 +2661,60 @@ namespace EffortlessInsight.Api.Migrations
                     b.ToTable("WebhookEvents");
                 });
 
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.ChannelUnsubscribe", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Category")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("Channel")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ExternalReference")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<string>("NotificationType")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<DateTime>("UnsubscribedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("ChannelUnsubscribes");
+                });
+
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Comment", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2467,6 +2848,156 @@ namespace EffortlessInsight.Api.Migrations
                     b.HasIndex("UserId");
 
                     b.ToTable("CommentReactions");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.CustomRole", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("BaseRole")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("Color")
+                        .HasMaxLength(7)
+                        .HasColumnType("character varying(7)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<int>("DisplayOrder")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsSystem")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("NameNormalized")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.PrimitiveCollection<List<string>>("Permissions")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IsActive")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("IsSystem")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("OrganizationId")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("OrganizationId", "DisplayOrder")
+                        .HasDatabaseName("IX_CustomRoles_Org_DisplayOrder")
+                        .HasFilter("\"DeletedAt\" IS NULL AND \"IsActive\" = true");
+
+                    b.HasIndex("OrganizationId", "NameNormalized")
+                        .IsUnique()
+                        .HasDatabaseName("IX_CustomRoles_Org_Name_Unique")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.ToTable("CustomRoles");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.DataExport", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Error")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<DateTime?>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("FileKey")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<long?>("FileSizeBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("FileUrl")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Format")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<Dictionary<string, object>>("Options")
+                        .HasColumnType("jsonb");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("ProcessingStartedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("RequestedById")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<Dictionary<string, object>>("Summary")
+                        .HasColumnType("jsonb");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("RequestedById")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("Status")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.ToTable("DataExports");
                 });
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.DeadlineExtension", b =>
@@ -3249,8 +3780,8 @@ namespace EffortlessInsight.Api.Migrations
 
                     b.Property<string>("AuthMethod")
                         .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -3259,9 +3790,14 @@ namespace EffortlessInsight.Api.Migrations
                         .HasMaxLength(255)
                         .HasColumnType("character varying(255)");
 
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
                     b.Property<string>("FailureReason")
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
 
                     b.Property<string>("IpAddress")
                         .IsRequired()
@@ -3275,6 +3811,9 @@ namespace EffortlessInsight.Api.Migrations
                     b.Property<string>("LocationCountry")
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
+
+                    b.Property<string>("Metadata")
+                        .HasColumnType("text");
 
                     b.Property<bool>("Success")
                         .HasColumnType("boolean");
@@ -3324,6 +3863,13 @@ namespace EffortlessInsight.Api.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
 
+                    b.Property<string>("DepartmentCode")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<DateTime?>("DueDate")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<DateOnly?>("ExtendedDeadline")
                         .HasColumnType("date");
 
@@ -3365,6 +3911,9 @@ namespace EffortlessInsight.Api.Migrations
                     b.Property<decimal?>("InterestAmount")
                         .HasColumnType("decimal(15,2)");
 
+                    b.Property<bool>("IsManualEntry")
+                        .HasColumnType("boolean");
+
                     b.Property<DateOnly?>("IssueDate")
                         .HasColumnType("date");
 
@@ -3382,6 +3931,9 @@ namespace EffortlessInsight.Api.Migrations
 
                     b.Property<Dictionary<string, object>>("Metadata")
                         .HasColumnType("jsonb");
+
+                    b.Property<string>("Notes")
+                        .HasColumnType("text");
 
                     b.Property<string>("NoticeCategory")
                         .HasMaxLength(50)
@@ -3453,10 +4005,18 @@ namespace EffortlessInsight.Api.Migrations
                     b.Property<DateOnly?>("ResponseDeadline")
                         .HasColumnType("date");
 
+                    b.Property<string>("Section")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(30)
                         .HasColumnType("character varying(30)");
+
+                    b.Property<string>("Summary")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
 
                     b.PrimitiveCollection<List<string>>("Tags")
                         .HasColumnType("jsonb");
@@ -3763,6 +4323,48 @@ namespace EffortlessInsight.Api.Migrations
                     b.ToTable("NoticeFiles");
                 });
 
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.NoticeRelationship", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CreatedById")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("RelationshipType")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<Guid>("SourceNoticeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("TargetNoticeId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedById");
+
+                    b.HasIndex("SourceNoticeId");
+
+                    b.HasIndex("TargetNoticeId");
+
+                    b.HasIndex("SourceNoticeId", "TargetNoticeId", "RelationshipType")
+                        .IsUnique()
+                        .HasDatabaseName("IX_NoticeRelationships_Unique");
+
+                    b.ToTable("NoticeRelationships");
+                });
+
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.NoticeResponse", b =>
                 {
                     b.Property<Guid>("Id")
@@ -3841,6 +4443,9 @@ namespace EffortlessInsight.Api.Migrations
                     b.Property<decimal?>("ActualHours")
                         .HasColumnType("numeric");
 
+                    b.Property<Guid?>("AssignedTeamId")
+                        .HasColumnType("uuid");
+
                     b.Property<Guid?>("AssignedToId")
                         .HasColumnType("uuid");
 
@@ -3904,6 +4509,9 @@ namespace EffortlessInsight.Api.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("AssignedTeamId")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
                     b.HasIndex("AssignedToId")
                         .HasFilter("\"DeletedAt\" IS NULL");
 
@@ -3940,6 +4548,9 @@ namespace EffortlessInsight.Api.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<int>("ActiveBranchCount")
+                        .HasColumnType("integer");
+
                     b.Property<string>("AssignedRole")
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
@@ -3967,6 +4578,9 @@ namespace EffortlessInsight.Api.Migrations
 
                     b.Property<DateTime?>("DeletedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("HasParallelStages")
+                        .HasColumnType("boolean");
 
                     b.Property<Dictionary<string, object>>("Metadata")
                         .HasColumnType("jsonb");
@@ -3998,6 +4612,9 @@ namespace EffortlessInsight.Api.Migrations
                         .IsRequired()
                         .HasMaxLength(20)
                         .HasColumnType("character varying(20)");
+
+                    b.Property<int>("TemplateVersionUsed")
+                        .HasColumnType("integer");
 
                     b.Property<int>("TotalTimeMinutes")
                         .HasColumnType("integer");
@@ -4141,6 +4758,77 @@ namespace EffortlessInsight.Api.Migrations
                         .HasFilter("\"DeletedAt\" IS NULL");
 
                     b.ToTable("Notifications");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.NotificationDeadLetter", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Channel")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("FirstAttemptAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsResolved")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime>("LastAttemptAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LastError")
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("NotificationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("OriginalDeliveryId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Payload")
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("Recipient")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<string>("Resolution")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("ResolutionNotes")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("ResolvedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ResolvedById")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("NotificationId");
+
+                    b.HasIndex("OriginalDeliveryId");
+
+                    b.ToTable("NotificationDeadLetters");
                 });
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.NotificationDelivery", b =>
@@ -4654,6 +5342,9 @@ namespace EffortlessInsight.Api.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<Guid?>("CustomRoleId")
+                        .HasColumnType("uuid");
+
                     b.Property<DateTime?>("DeletedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -4691,6 +5382,9 @@ namespace EffortlessInsight.Api.Migrations
                     b.Property<Guid?>("SuspendedById")
                         .HasColumnType("uuid");
 
+                    b.Property<DateTime?>("SuspensionExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("SuspensionReason")
                         .HasMaxLength(255)
                         .HasColumnType("character varying(255)");
@@ -4702,6 +5396,8 @@ namespace EffortlessInsight.Api.Migrations
                         .HasColumnType("uuid");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("CustomRoleId");
 
                     b.HasIndex("InvitedById");
 
@@ -5036,13 +5732,112 @@ namespace EffortlessInsight.Api.Migrations
                     b.Property<Guid?>("AssignedById")
                         .HasColumnType("uuid");
 
+                    b.Property<Guid?>("TeamId")
+                        .HasColumnType("uuid");
+
                     b.HasKey("TaskId", "UserId");
 
                     b.HasIndex("AssignedById");
 
+                    b.HasIndex("TeamId");
+
                     b.HasIndex("UserId");
 
                     b.ToTable("TaskAssignees");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.TaskDependency", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DependencyType")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<Guid>("DependsOnTaskId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("TaskId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DependencyType")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("DependsOnTaskId")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("TaskId")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("TaskId", "DependsOnTaskId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_TaskDependencies_Task_DependsOn_Unique")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.ToTable("TaskDependencies");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.TaskReminder", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CreatedById")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("DaysBeforeDue")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsSent")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("SentAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("TaskId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedById");
+
+                    b.HasIndex("TaskId")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("IsSent", "DaysBeforeDue")
+                        .HasDatabaseName("IX_TaskReminders_Pending")
+                        .HasFilter("\"DeletedAt\" IS NULL AND \"IsSent\" = false");
+
+                    b.HasIndex("TaskId", "DaysBeforeDue")
+                        .IsUnique()
+                        .HasDatabaseName("IX_TaskReminders_Task_Days_Unique")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.ToTable("TaskReminders");
                 });
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.TaskTemplate", b =>
@@ -5116,6 +5911,199 @@ namespace EffortlessInsight.Api.Migrations
                         .HasFilter("\"DeletedAt\" IS NULL");
 
                     b.ToTable("TaskTemplates");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Team", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Color")
+                        .HasMaxLength(7)
+                        .HasColumnType("character varying(7)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<int>("HierarchyLevel")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("HierarchyPath")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("Icon")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid?>("LeaderId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("NameNormalized")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ParentTeamId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Dictionary<string, object>>("Settings")
+                        .HasColumnType("jsonb");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("HierarchyPath")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("IsActive")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("LeaderId")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("OrganizationId")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("ParentTeamId")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("OrganizationId", "NameNormalized", "ParentTeamId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_Teams_Org_Name_Parent_Unique")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.ToTable("Teams");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.TeamMember", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsPrimary")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime>("JoinedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<Guid>("TeamId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Title")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Role")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("TeamId")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("UserId")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("TeamId", "UserId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_TeamMembers_Team_User_Unique")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("UserId", "IsPrimary")
+                        .IsUnique()
+                        .HasDatabaseName("IX_TeamMembers_User_Primary_Unique")
+                        .HasFilter("\"DeletedAt\" IS NULL AND \"IsPrimary\" = true");
+
+                    b.ToTable("TeamMembers");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.TimeEntry", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateOnly>("Date")
+                        .HasColumnType("date");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTime?>("EndTime")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal>("Hours")
+                        .HasColumnType("numeric");
+
+                    b.Property<bool>("IsBillable")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("StartTime")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("TaskId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TaskId");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("TimeEntries");
                 });
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.UserNotificationPreference", b =>
@@ -5333,6 +6321,10 @@ namespace EffortlessInsight.Api.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<string>("Comment")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -5350,6 +6342,10 @@ namespace EffortlessInsight.Api.Migrations
                         .IsRequired()
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)");
+
+                    b.Property<string>("FromStage")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
 
                     b.Property<string>("FromStageKey")
                         .HasMaxLength(50)
@@ -5385,6 +6381,10 @@ namespace EffortlessInsight.Api.Migrations
 
                     b.Property<int?>("TimeInStageMinutes")
                         .HasColumnType("integer");
+
+                    b.Property<string>("ToStage")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
 
                     b.Property<string>("ToStageKey")
                         .HasMaxLength(50)
@@ -5552,6 +6552,9 @@ namespace EffortlessInsight.Api.Migrations
                         .IsRequired()
                         .HasColumnType("jsonb");
 
+                    b.Property<bool>("AutoCreateTask")
+                        .HasColumnType("boolean");
+
                     b.Property<List<AutoTransitionRule>>("AutoTransitionRules")
                         .IsRequired()
                         .HasColumnType("jsonb");
@@ -5584,13 +6587,27 @@ namespace EffortlessInsight.Api.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)");
 
+                    b.Property<bool>("IsSynchronizationPoint")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("JoinType")
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
                     b.Property<Dictionary<string, object>>("Metadata")
                         .HasColumnType("jsonb");
+
+                    b.Property<int?>("MinBranchesToComplete")
+                        .HasColumnType("integer");
 
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
+
+                    b.Property<string>("ParallelBranchId")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
 
                     b.Property<int?>("SlaHours")
                         .HasColumnType("integer");
@@ -5610,6 +6627,9 @@ namespace EffortlessInsight.Api.Migrations
                         .IsRequired()
                         .HasMaxLength(20)
                         .HasColumnType("character varying(20)");
+
+                    b.Property<Guid?>("TaskTemplateId")
+                        .HasColumnType("uuid");
 
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -5632,6 +6652,107 @@ namespace EffortlessInsight.Api.Migrations
                         .HasFilter("\"DeletedAt\" IS NULL");
 
                     b.ToTable("WorkflowStages");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.WorkflowStageInstance", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AssignedRole")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<Guid?>("AssignedToId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("BranchId")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("EnteredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Dictionary<string, object>>("Metadata")
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("Outcome")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<DateTime?>("SlaDeadline")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("SlaPercentConsumed")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("SlaStatus")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<Guid>("StageId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("StageKey")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<int>("TimeSpentMinutes")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("WorkflowInstanceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("WorkflowStageId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AssignedToId");
+
+                    b.HasIndex("BranchId")
+                        .HasFilter("\"DeletedAt\" IS NULL AND \"BranchId\" IS NOT NULL");
+
+                    b.HasIndex("StageId")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("Status")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("WorkflowInstanceId")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("WorkflowStageId");
+
+                    b.HasIndex("WorkflowInstanceId", "Status")
+                        .HasDatabaseName("IX_WorkflowStageInstances_Instance_Status")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("WorkflowInstanceId", "BranchId", "Status")
+                        .HasDatabaseName("IX_WorkflowStageInstances_Instance_Branch_Status")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.ToTable("WorkflowStageInstances");
                 });
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.WorkflowTemplate", b =>
@@ -5992,19 +7113,128 @@ namespace EffortlessInsight.Api.Migrations
                     b.Navigation("Organization");
                 });
 
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.ApprovalAction", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "Actor")
+                        .WithMany()
+                        .HasForeignKey("ActorId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApprovalRequest", "ApprovalRequest")
+                        .WithMany("Actions")
+                        .HasForeignKey("ApprovalRequestId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApprovalStep", "ApprovalStep")
+                        .WithMany()
+                        .HasForeignKey("ApprovalStepId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "DelegatedTo")
+                        .WithMany()
+                        .HasForeignKey("DelegatedToId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("Actor");
+
+                    b.Navigation("ApprovalRequest");
+
+                    b.Navigation("ApprovalStep");
+
+                    b.Navigation("DelegatedTo");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.ApprovalChain", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Organization", "Organization")
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Organization");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.ApprovalRequest", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApprovalChain", "ApprovalChain")
+                        .WithMany("Requests")
+                        .HasForeignKey("ApprovalChainId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Notice", "Notice")
+                        .WithMany()
+                        .HasForeignKey("NoticeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "RequestedBy")
+                        .WithMany()
+                        .HasForeignKey("RequestedById")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.NoticeResponse", "Response")
+                        .WithMany()
+                        .HasForeignKey("ResponseId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("ApprovalChain");
+
+                    b.Navigation("Notice");
+
+                    b.Navigation("RequestedBy");
+
+                    b.Navigation("Response");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.ApprovalStep", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApprovalChain", "ApprovalChain")
+                        .WithMany("Steps")
+                        .HasForeignKey("ApprovalChainId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "Approver")
+                        .WithMany()
+                        .HasForeignKey("ApproverId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "EscalationUser")
+                        .WithMany()
+                        .HasForeignKey("EscalationUserId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("ApprovalChain");
+
+                    b.Navigation("Approver");
+
+                    b.Navigation("EscalationUser");
+                });
+
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Attachment", b =>
                 {
                     b.HasOne("EffortlessInsight.Api.Data.Entities.Notice", "Notice")
                         .WithMany("Attachments")
                         .HasForeignKey("NoticeId");
 
-                    b.HasOne("EffortlessInsight.Api.Data.Entities.NoticeTask", null)
-                        .WithMany("Attachments")
-                        .HasForeignKey("NoticeTaskId");
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Attachment", "PreviousVersion")
+                        .WithMany()
+                        .HasForeignKey("PreviousVersionId")
+                        .OnDelete(DeleteBehavior.SetNull);
 
                     b.HasOne("EffortlessInsight.Api.Data.Entities.NoticeResponse", "Response")
                         .WithMany("Attachments")
                         .HasForeignKey("ResponseId");
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.NoticeTask", "Task")
+                        .WithMany("Attachments")
+                        .HasForeignKey("TaskId");
 
                     b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "UploadedBy")
                         .WithMany()
@@ -6014,7 +7244,11 @@ namespace EffortlessInsight.Api.Migrations
 
                     b.Navigation("Notice");
 
+                    b.Navigation("PreviousVersion");
+
                     b.Navigation("Response");
+
+                    b.Navigation("Task");
 
                     b.Navigation("UploadedBy");
                 });
@@ -6221,6 +7455,17 @@ namespace EffortlessInsight.Api.Migrations
                     b.Navigation("Organization");
                 });
 
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.ChannelUnsubscribe", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Comment", b =>
                 {
                     b.HasOne("EffortlessInsight.Api.Data.Entities.Notice", "Notice")
@@ -6274,6 +7519,36 @@ namespace EffortlessInsight.Api.Migrations
                     b.Navigation("Comment");
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.CustomRole", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Organization", "Organization")
+                        .WithMany("CustomRoles")
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Organization");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.DataExport", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Organization", "Organization")
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "RequestedBy")
+                        .WithMany()
+                        .HasForeignKey("RequestedById")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Organization");
+
+                    b.Navigation("RequestedBy");
                 });
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.DeadlineExtension", b =>
@@ -6560,6 +7835,33 @@ namespace EffortlessInsight.Api.Migrations
                     b.Navigation("UploadedBy");
                 });
 
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.NoticeRelationship", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "CreatedBy")
+                        .WithMany()
+                        .HasForeignKey("CreatedById")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Notice", "SourceNotice")
+                        .WithMany("OutgoingRelationships")
+                        .HasForeignKey("SourceNoticeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Notice", "TargetNotice")
+                        .WithMany("IncomingRelationships")
+                        .HasForeignKey("TargetNoticeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("CreatedBy");
+
+                    b.Navigation("SourceNotice");
+
+                    b.Navigation("TargetNotice");
+                });
+
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.NoticeResponse", b =>
                 {
                     b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "ApprovedBy")
@@ -6587,6 +7889,11 @@ namespace EffortlessInsight.Api.Migrations
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.NoticeTask", b =>
                 {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Team", "AssignedTeam")
+                        .WithMany()
+                        .HasForeignKey("AssignedTeamId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "AssignedTo")
                         .WithMany("AssignedTasks")
                         .HasForeignKey("AssignedToId");
@@ -6616,6 +7923,8 @@ namespace EffortlessInsight.Api.Migrations
                         .WithMany()
                         .HasForeignKey("TemplateId")
                         .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("AssignedTeam");
 
                     b.Navigation("AssignedTo");
 
@@ -6688,6 +7997,25 @@ namespace EffortlessInsight.Api.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.NotificationDeadLetter", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Notification", "Notification")
+                        .WithMany()
+                        .HasForeignKey("NotificationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.NotificationDelivery", "OriginalDelivery")
+                        .WithMany()
+                        .HasForeignKey("OriginalDeliveryId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Notification");
+
+                    b.Navigation("OriginalDelivery");
+                });
+
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.NotificationDelivery", b =>
                 {
                     b.HasOne("EffortlessInsight.Api.Data.Entities.Notification", "Notification")
@@ -6747,6 +8075,11 @@ namespace EffortlessInsight.Api.Migrations
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.OrganizationMember", b =>
                 {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.CustomRole", "CustomRole")
+                        .WithMany("Members")
+                        .HasForeignKey("CustomRoleId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "InvitedBy")
                         .WithMany()
                         .HasForeignKey("InvitedById")
@@ -6768,6 +8101,8 @@ namespace EffortlessInsight.Api.Migrations
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.Navigation("CustomRole");
 
                     b.Navigation("InvitedBy");
 
@@ -6850,6 +8185,11 @@ namespace EffortlessInsight.Api.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Team", "Team")
+                        .WithMany()
+                        .HasForeignKey("TeamId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "User")
                         .WithMany()
                         .HasForeignKey("UserId")
@@ -6860,7 +8200,46 @@ namespace EffortlessInsight.Api.Migrations
 
                     b.Navigation("Task");
 
+                    b.Navigation("Team");
+
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.TaskDependency", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.NoticeTask", "DependsOnTask")
+                        .WithMany("Dependencies")
+                        .HasForeignKey("DependsOnTaskId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.NoticeTask", "Task")
+                        .WithMany("DependsOn")
+                        .HasForeignKey("TaskId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("DependsOnTask");
+
+                    b.Navigation("Task");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.TaskReminder", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "CreatedBy")
+                        .WithMany()
+                        .HasForeignKey("CreatedById")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.NoticeTask", "Task")
+                        .WithMany("Reminders")
+                        .HasForeignKey("TaskId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("CreatedBy");
+
+                    b.Navigation("Task");
                 });
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.TaskTemplate", b =>
@@ -6878,6 +8257,69 @@ namespace EffortlessInsight.Api.Migrations
                     b.Navigation("CreatedBy");
 
                     b.Navigation("Organization");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Team", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "Leader")
+                        .WithMany()
+                        .HasForeignKey("LeaderId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Organization", "Organization")
+                        .WithMany("Teams")
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Team", "ParentTeam")
+                        .WithMany("SubTeams")
+                        .HasForeignKey("ParentTeamId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("Leader");
+
+                    b.Navigation("Organization");
+
+                    b.Navigation("ParentTeam");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.TeamMember", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Team", "Team")
+                        .WithMany("Members")
+                        .HasForeignKey("TeamId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Team");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.TimeEntry", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.NoticeTask", "Task")
+                        .WithMany("TimeEntries")
+                        .HasForeignKey("TaskId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Task");
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.UserNotificationPreference", b =>
@@ -6978,6 +8420,38 @@ namespace EffortlessInsight.Api.Migrations
                         .IsRequired();
 
                     b.Navigation("WorkflowTemplate");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.WorkflowStageInstance", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "AssignedTo")
+                        .WithMany()
+                        .HasForeignKey("AssignedToId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.WorkflowStage", "Stage")
+                        .WithMany()
+                        .HasForeignKey("StageId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.NoticeWorkflowInstance", "WorkflowInstance")
+                        .WithMany("StageInstances")
+                        .HasForeignKey("WorkflowInstanceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.WorkflowStage", "WorkflowStage")
+                        .WithMany()
+                        .HasForeignKey("WorkflowStageId");
+
+                    b.Navigation("AssignedTo");
+
+                    b.Navigation("Stage");
+
+                    b.Navigation("WorkflowInstance");
+
+                    b.Navigation("WorkflowStage");
                 });
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.WorkflowTemplate", b =>
@@ -7084,6 +8558,18 @@ namespace EffortlessInsight.Api.Migrations
                     b.Navigation("UploadedNotices");
                 });
 
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.ApprovalChain", b =>
+                {
+                    b.Navigation("Requests");
+
+                    b.Navigation("Steps");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.ApprovalRequest", b =>
+                {
+                    b.Navigation("Actions");
+                });
+
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Billing.BillingSubscription", b =>
                 {
                     b.Navigation("CouponRedemptions");
@@ -7114,6 +8600,11 @@ namespace EffortlessInsight.Api.Migrations
                     b.Navigation("Replies");
                 });
 
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.CustomRole", b =>
+                {
+                    b.Navigation("Members");
+                });
+
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.DocumentRequest", b =>
                 {
                     b.Navigation("Documents");
@@ -7142,6 +8633,10 @@ namespace EffortlessInsight.Api.Migrations
 
                     b.Navigation("Folders");
 
+                    b.Navigation("IncomingRelationships");
+
+                    b.Navigation("OutgoingRelationships");
+
                     b.Navigation("Reminders");
 
                     b.Navigation("Responses");
@@ -7165,12 +8660,22 @@ namespace EffortlessInsight.Api.Migrations
 
                     b.Navigation("Attachments");
 
+                    b.Navigation("Dependencies");
+
+                    b.Navigation("DependsOn");
+
+                    b.Navigation("Reminders");
+
                     b.Navigation("Subtasks");
+
+                    b.Navigation("TimeEntries");
                 });
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.NoticeWorkflowInstance", b =>
                 {
                     b.Navigation("History");
+
+                    b.Navigation("StageInstances");
                 });
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Notification", b =>
@@ -7180,6 +8685,8 @@ namespace EffortlessInsight.Api.Migrations
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Organization", b =>
                 {
+                    b.Navigation("CustomRoles");
+
                     b.Navigation("Invitations");
 
                     b.Navigation("Members");
@@ -7190,7 +8697,16 @@ namespace EffortlessInsight.Api.Migrations
 
                     b.Navigation("Subscriptions");
 
+                    b.Navigation("Teams");
+
                     b.Navigation("Users");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Team", b =>
+                {
+                    b.Navigation("Members");
+
+                    b.Navigation("SubTeams");
                 });
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.WorkflowTemplate", b =>

@@ -30,6 +30,8 @@ public interface IOrganizationManagementService
     Task RemoveMemberAsync(Guid organizationId, Guid memberId, Guid userId);
     Task LeaveOrganizationAsync(Guid organizationId, Guid userId);
     Task<TransferOwnershipResponse> TransferOwnershipAsync(Guid organizationId, TransferOwnershipRequest request, Guid userId);
+    Task<MemberSuspensionResponse> SuspendMemberAsync(Guid organizationId, Guid memberId, SuspendMemberRequest request, Guid userId);
+    Task<MemberSuspensionResponse> UnsuspendMemberAsync(Guid organizationId, Guid memberId, Guid userId);
 
     // Invitation Management
     Task<InvitationDto> InviteMemberAsync(Guid organizationId, InviteMemberRequest request, Guid userId);
@@ -773,6 +775,152 @@ public class OrganizationManagementService : IOrganizationManagementService
                 ["removed_user_id"] = removedUserId.ToString()
             }
         });
+    }
+
+    public async Task<MemberSuspensionResponse> SuspendMemberAsync(
+        Guid organizationId,
+        Guid memberId,
+        SuspendMemberRequest request,
+        Guid userId)
+    {
+        var actorMembership = await ValidateAdminAccessAsync(organizationId, userId);
+
+        var targetMembership = await _dbContext.OrganizationMembers
+            .Include(m => m.User)
+            .FirstOrDefaultAsync(m => m.Id == memberId && m.OrganizationId == organizationId)
+            ?? throw new KeyNotFoundException("MEMBER_NOT_FOUND");
+
+        // Cannot suspend owner
+        if (targetMembership.Role == "owner")
+        {
+            throw new UnauthorizedAccessException("CANNOT_SUSPEND_OWNER");
+        }
+
+        // Admin cannot suspend other admins
+        if (actorMembership.Role == "admin" && targetMembership.Role == "admin")
+        {
+            throw new UnauthorizedAccessException("ADMIN_CANNOT_SUSPEND_ADMIN");
+        }
+
+        // Check if already suspended
+        if (targetMembership.Status == "suspended")
+        {
+            throw new InvalidOperationException("ALREADY_SUSPENDED");
+        }
+
+        // Apply suspension
+        targetMembership.Status = "suspended";
+        targetMembership.SuspendedAt = DateTime.UtcNow;
+        targetMembership.SuspendedById = userId;
+        targetMembership.SuspensionReason = request.Reason;
+        targetMembership.SuspensionExpiresAt = request.ExpiresAt;
+        targetMembership.UpdatedAt = DateTime.UtcNow;
+
+        await _dbContext.SaveChangesAsync();
+
+        _logger.LogInformation(
+            "Member {MemberId} suspended in organization {OrganizationId} by user {UserId}. Reason: {Reason}",
+            memberId, organizationId, userId, request.Reason);
+
+        // Get suspender details
+        var suspender = await _dbContext.Users.FindAsync(userId);
+
+        // Audit logging
+        await _auditService.LogAsync(new AuditLogEntry
+        {
+            Action = "member.suspended",
+            EntityType = "OrganizationMember",
+            EntityId = memberId,
+            UserId = userId,
+            OrganizationId = organizationId,
+            NewValues = new
+            {
+                Status = "suspended",
+                Reason = request.Reason,
+                ExpiresAt = request.ExpiresAt
+            },
+            Metadata = new Dictionary<string, object>
+            {
+                ["suspended_user_id"] = targetMembership.UserId.ToString()
+            }
+        });
+
+        return new MemberSuspensionResponse(
+            MemberId: targetMembership.Id,
+            UserId: targetMembership.UserId,
+            UserEmail: targetMembership.User.Email ?? "",
+            UserName: targetMembership.User.Name ?? "",
+            Status: targetMembership.Status,
+            SuspendedAt: targetMembership.SuspendedAt,
+            SuspensionReason: targetMembership.SuspensionReason,
+            SuspensionExpiresAt: targetMembership.SuspensionExpiresAt,
+            SuspendedById: targetMembership.SuspendedById,
+            SuspendedByName: suspender?.Name
+        );
+    }
+
+    public async Task<MemberSuspensionResponse> UnsuspendMemberAsync(
+        Guid organizationId,
+        Guid memberId,
+        Guid userId)
+    {
+        await ValidateAdminAccessAsync(organizationId, userId);
+
+        var targetMembership = await _dbContext.OrganizationMembers
+            .Include(m => m.User)
+            .FirstOrDefaultAsync(m => m.Id == memberId && m.OrganizationId == organizationId)
+            ?? throw new KeyNotFoundException("MEMBER_NOT_FOUND");
+
+        // Check if actually suspended
+        if (targetMembership.Status != "suspended")
+        {
+            throw new InvalidOperationException("NOT_SUSPENDED");
+        }
+
+        var previousReason = targetMembership.SuspensionReason;
+
+        // Remove suspension
+        targetMembership.Status = "active";
+        targetMembership.SuspendedAt = null;
+        targetMembership.SuspendedById = null;
+        targetMembership.SuspensionReason = null;
+        targetMembership.SuspensionExpiresAt = null;
+        targetMembership.UpdatedAt = DateTime.UtcNow;
+
+        await _dbContext.SaveChangesAsync();
+
+        _logger.LogInformation(
+            "Member {MemberId} unsuspended in organization {OrganizationId} by user {UserId}",
+            memberId, organizationId, userId);
+
+        // Audit logging
+        await _auditService.LogAsync(new AuditLogEntry
+        {
+            Action = "member.unsuspended",
+            EntityType = "OrganizationMember",
+            EntityId = memberId,
+            UserId = userId,
+            OrganizationId = organizationId,
+            OldValues = new
+            {
+                Status = "suspended",
+                Reason = previousReason
+            },
+            NewValues = new { Status = "active" }
+        });
+
+        return new MemberSuspensionResponse(
+            MemberId: targetMembership.Id,
+            UserId: targetMembership.UserId,
+            UserEmail: targetMembership.User.Email ?? "",
+            UserName: targetMembership.User.Name ?? "",
+            Status: targetMembership.Status,
+            SuspendedAt: null,
+            SuspensionReason: null,
+            SuspensionExpiresAt: null,
+            SuspendedById: null,
+            SuspendedByName: null
+        );
     }
 
     public async Task LeaveOrganizationAsync(Guid organizationId, Guid userId)

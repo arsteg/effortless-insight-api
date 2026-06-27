@@ -89,6 +89,20 @@ public interface IFileStorageServiceExtended : IFileStorageService
     /// Gets the S3 key for an attachment.
     /// </summary>
     string GetAttachmentKey(Guid organizationId, Guid noticeId, Guid attachmentId, string extension);
+
+    /// <summary>
+    /// Uploads a report file to the reports bucket and returns a pre-signed download URL.
+    /// </summary>
+    /// <param name="fileName">Name of the file</param>
+    /// <param name="contentType">MIME content type</param>
+    /// <param name="content">File content as byte array</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Pre-signed download URL for the uploaded report</returns>
+    Task<string> UploadReportAsync(
+        string fileName,
+        string contentType,
+        byte[] content,
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -323,6 +337,52 @@ public class S3FileStorageServiceImpl : IFileStorageServiceExtended
             extension = "." + extension;
 
         return $"{organizationId}/notices/{noticeId}/attachments/{attachmentId}{extension}";
+    }
+
+    /// <inheritdoc />
+    public async Task<string> UploadReportAsync(
+        string fileName,
+        string contentType,
+        byte[] content,
+        CancellationToken cancellationToken = default)
+    {
+        // Generate unique key for the report
+        var timestamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss");
+        var key = $"reports/{timestamp}/{SanitizeFileName(fileName)}";
+
+        var request = new PutObjectRequest
+        {
+            BucketName = _options.ReportsBucket,
+            Key = key,
+            InputStream = new MemoryStream(content),
+            ContentType = contentType
+        };
+
+        request.Metadata.Add("generated-at", DateTime.UtcNow.ToString("O"));
+        request.Metadata.Add("original-filename", SanitizeFileName(fileName));
+
+        await _s3Client.PutObjectAsync(request, cancellationToken);
+
+        _logger.LogInformation(
+            "Uploaded report to S3 reports bucket: {Key}, size: {Size} bytes",
+            key, content.Length);
+
+        // Generate pre-signed URL for download (1 hour expiry)
+        var downloadRequest = new GetPreSignedUrlRequest
+        {
+            BucketName = _options.ReportsBucket,
+            Key = key,
+            Verb = HttpVerb.GET,
+            Expires = DateTime.UtcNow.AddMinutes(60),
+            ResponseHeaderOverrides = new ResponseHeaderOverrides
+            {
+                ContentDisposition = $"attachment; filename=\"{SanitizeFileName(fileName)}\""
+            }
+        };
+
+        var downloadUrl = await _s3Client.GetPreSignedURLAsync(downloadRequest);
+
+        return downloadUrl;
     }
 
     /// <summary>

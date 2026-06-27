@@ -32,6 +32,10 @@ public class ApplicationUser : IdentityUser<Guid>
 
     public DateTime? MobileVerifiedAt { get; set; }
 
+    public bool IsEmailVerified { get; set; }
+
+    public DateTime? EmailVerifiedAt { get; set; }
+
     // Security fields
     public bool Is2faEnabled { get; set; }
 
@@ -52,6 +56,12 @@ public class ApplicationUser : IdentityUser<Guid>
     public bool MustChangePassword { get; set; }
 
     // OAuth
+    [MaxLength(50)]
+    public string? OAuthProvider { get; set; }
+
+    [MaxLength(255)]
+    public string? OAuthProviderId { get; set; }
+
     [MaxLength(255)]
     public string? GoogleId { get; set; }
 
@@ -61,10 +71,21 @@ public class ApplicationUser : IdentityUser<Guid>
     // Activity tracking
     public DateTime? LastLoginAt { get; set; }
 
+    /// <summary>
+    /// Last activity timestamp for the user.
+    /// </summary>
+    public DateTime? LastActivityAt { get; set; }
+
     [MaxLength(45)]
     public string? LastLoginIp { get; set; }
 
     public string? LastLoginUserAgent { get; set; }
+
+    /// <summary>
+    /// Full name of the user (computed or stored).
+    /// </summary>
+    [NotMapped]
+    public string FullName => Name ?? Email ?? "Unknown";
 
     // Preferences as JSON
     public Dictionary<string, object>? Preferences { get; set; }
