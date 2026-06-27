@@ -218,6 +218,90 @@ public class SubscriptionsController : ControllerBase
     }
 
     /// <summary>
+    /// Pause the current subscription.
+    /// </summary>
+    [HttpPost("current/pause")]
+    [ProducesResponseType(typeof(ApiResponse<SubscriptionPauseResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> PauseSubscription([FromBody] PauseSubscriptionRequest request)
+    {
+        try
+        {
+            var orgId = _currentOrganization.OrganizationId;
+            if (orgId == null)
+            {
+                return BadRequest(new ApiErrorResponse(false, "NO_ORG", "No organization selected"));
+            }
+
+            var subscription = await _subscriptionService.GetSubscriptionEntityAsync(orgId.Value);
+            if (subscription == null)
+            {
+                return NotFound(new ApiErrorResponse(false, "NOT_FOUND", "No subscription found"));
+            }
+
+            var result = await _subscriptionService.PauseSubscriptionAsync(
+                subscription.Id,
+                request.Reason,
+                request.ResumeAt);
+
+            _logger.LogInformation(
+                "Subscription {SubscriptionId} paused for organization {OrganizationId}",
+                subscription.Id, orgId.Value);
+
+            return Ok(new ApiResponse<SubscriptionPauseResponse>(true, new SubscriptionPauseResponse(
+                SubscriptionId: result.Id,
+                Status: result.Status.ToString(),
+                PausedAt: result.PausedAt,
+                ScheduledResumeAt: result.ScheduledResumeAt
+            )));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new ApiErrorResponse(false, "PAUSE_FAILED", ex.Message));
+        }
+    }
+
+    /// <summary>
+    /// Resume a paused subscription.
+    /// </summary>
+    [HttpPost("current/resume")]
+    [ProducesResponseType(typeof(ApiResponse<SubscriptionResumeResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ResumeSubscription()
+    {
+        try
+        {
+            var orgId = _currentOrganization.OrganizationId;
+            if (orgId == null)
+            {
+                return BadRequest(new ApiErrorResponse(false, "NO_ORG", "No organization selected"));
+            }
+
+            var subscription = await _subscriptionService.GetSubscriptionEntityAsync(orgId.Value);
+            if (subscription == null)
+            {
+                return NotFound(new ApiErrorResponse(false, "NOT_FOUND", "No subscription found"));
+            }
+
+            var result = await _subscriptionService.ResumeSubscriptionAsync(subscription.Id);
+
+            _logger.LogInformation(
+                "Subscription {SubscriptionId} resumed for organization {OrganizationId}",
+                subscription.Id, orgId.Value);
+
+            return Ok(new ApiResponse<SubscriptionResumeResponse>(true, new SubscriptionResumeResponse(
+                SubscriptionId: result.Id,
+                Status: result.Status.ToString().ToLowerInvariant(),
+                CurrentPeriodEnd: result.CurrentPeriodEnd
+            )));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new ApiErrorResponse(false, "RESUME_FAILED", ex.Message));
+        }
+    }
+
+    /// <summary>
     /// Validate a coupon code.
     /// </summary>
     [HttpPost("/api/v1/coupons/validate")]

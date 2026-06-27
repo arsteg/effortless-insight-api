@@ -1791,6 +1791,118 @@ public class NoticesController : ControllerBase
 
     #endregion
 
+    #region Export
+
+    /// <summary>
+    /// Export notices to CSV, Excel, or PDF
+    /// </summary>
+    [HttpGet("export")]
+    [ProducesResponseType(typeof(FileResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> Export(
+        [FromQuery] NoticeFilterDto filter,
+        [FromQuery] string format = "csv",
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            if (!_currentOrg.HasPermission("notices.view"))
+            {
+                return Forbid();
+            }
+
+            var validFormats = new[] { "csv", "xlsx", "pdf" };
+            if (!validFormats.Contains(format.ToLower()))
+            {
+                return BadRequest(new ApiErrorResponse(false, "INVALID_FORMAT",
+                    "Format must be one of: csv, xlsx, pdf"));
+            }
+
+            var orgId = GetCurrentOrganizationId();
+            var result = await _noticeService.GetListAsync(orgId, filter, cancellationToken);
+            var notices = result.Items.Select(MapToDto).ToList();
+
+            var (fileBytes, contentType, fileName) = format.ToLower() switch
+            {
+                "csv" => GenerateCsv(notices),
+                "xlsx" => GenerateExcel(notices),
+                "pdf" => GeneratePdf(notices),
+                _ => throw new InvalidOperationException("Invalid format")
+            };
+
+            return File(fileBytes, contentType, fileName);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to export notices");
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
+        }
+    }
+
+    private (byte[] FileBytes, string ContentType, string FileName) GenerateCsv(List<NoticeDto> notices)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("Notice Number,Type,Category,GSTIN,Status,Priority,Issue Date,Response Deadline,Tax Amount,Penalty Amount,Risk Score,Assigned To");
+
+        foreach (var notice in notices)
+        {
+            sb.AppendLine($"\"{notice.NoticeNumber ?? ""}\",\"{notice.NoticeType ?? ""}\",\"{notice.NoticeCategory ?? ""}\",\"{notice.Gstin ?? ""}\",\"{notice.Status}\",\"{notice.Priority}\",\"{notice.IssueDate?.ToString("yyyy-MM-dd") ?? ""}\",\"{notice.ResponseDeadline?.ToString("yyyy-MM-dd") ?? ""}\",{notice.TaxAmount ?? 0},{notice.PenaltyAmount ?? 0},{notice.RiskScore ?? 0},\"{notice.AssignedToName ?? ""}\"");
+        }
+
+        return (System.Text.Encoding.UTF8.GetBytes(sb.ToString()), "text/csv", $"notices-export-{DateTime.UtcNow:yyyy-MM-dd}.csv");
+    }
+
+    private (byte[] FileBytes, string ContentType, string FileName) GenerateExcel(List<NoticeDto> notices)
+    {
+        using var workbook = new ClosedXML.Excel.XLWorkbook();
+        var worksheet = workbook.Worksheets.Add("Notices");
+
+        // Headers
+        var headers = new[] { "Notice Number", "Type", "Category", "GSTIN", "Status", "Priority",
+            "Issue Date", "Response Deadline", "Tax Amount", "Penalty Amount", "Risk Score", "Assigned To" };
+        for (int i = 0; i < headers.Length; i++)
+        {
+            worksheet.Cell(1, i + 1).Value = headers[i];
+            worksheet.Cell(1, i + 1).Style.Font.Bold = true;
+        }
+
+        // Data
+        for (int row = 0; row < notices.Count; row++)
+        {
+            var notice = notices[row];
+            worksheet.Cell(row + 2, 1).Value = notice.NoticeNumber ?? "";
+            worksheet.Cell(row + 2, 2).Value = notice.NoticeType ?? "";
+            worksheet.Cell(row + 2, 3).Value = notice.NoticeCategory ?? "";
+            worksheet.Cell(row + 2, 4).Value = notice.Gstin ?? "";
+            worksheet.Cell(row + 2, 5).Value = notice.Status;
+            worksheet.Cell(row + 2, 6).Value = notice.Priority;
+            worksheet.Cell(row + 2, 7).Value = notice.IssueDate?.ToString("yyyy-MM-dd") ?? "";
+            worksheet.Cell(row + 2, 8).Value = notice.ResponseDeadline?.ToString("yyyy-MM-dd") ?? "";
+            worksheet.Cell(row + 2, 9).Value = (double)(notice.TaxAmount ?? 0);
+            worksheet.Cell(row + 2, 10).Value = (double)(notice.PenaltyAmount ?? 0);
+            worksheet.Cell(row + 2, 11).Value = notice.RiskScore ?? 0;
+            worksheet.Cell(row + 2, 12).Value = notice.AssignedToName ?? "";
+        }
+
+        worksheet.Columns().AdjustToContents();
+
+        using var stream = new MemoryStream();
+        workbook.SaveAs(stream);
+        return (stream.ToArray(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            $"notices-export-{DateTime.UtcNow:yyyy-MM-dd}.xlsx");
+    }
+
+    private (byte[] FileBytes, string ContentType, string FileName) GeneratePdf(List<NoticeDto> notices)
+    {
+        // Use a dedicated PDF generator class to avoid namespace conflicts
+        var pdfGenerator = new Services.Reporting.NoticesPdfExportGenerator();
+        var pdfBytes = pdfGenerator.Generate(notices);
+        return (pdfBytes, "application/pdf", $"notices-export-{DateTime.UtcNow:yyyy-MM-dd}.pdf");
+    }
+
+    #endregion
+
     #region SLA Rules
 
     /// <summary>

@@ -13,15 +13,18 @@ namespace EffortlessInsight.Api.Controllers;
 public class TasksController : ControllerBase
 {
     private readonly ITaskService _taskService;
+    private readonly ITimeTrackingService _timeTrackingService;
     private readonly ICurrentOrganizationService _orgService;
     private readonly ILogger<TasksController> _logger;
 
     public TasksController(
         ITaskService taskService,
+        ITimeTrackingService timeTrackingService,
         ICurrentOrganizationService orgService,
         ILogger<TasksController> logger)
     {
         _taskService = taskService;
+        _timeTrackingService = timeTrackingService;
         _orgService = orgService;
         _logger = logger;
     }
@@ -494,7 +497,323 @@ public class TasksController : ControllerBase
             return StatusCode(StatusCodes.Status403Forbidden, new { error = ex.Message });
         }
     }
+    // ==========================================================================
+    // Task Time Tracking Endpoints (GAP-TASK-003)
+    // ==========================================================================
+
+    /// <summary>
+    /// Get all time entries for a task
+    /// </summary>
+    [HttpGet("tasks/{taskId:guid}/time-entries")]
+    [ProducesResponseType(typeof(TimeEntriesResponseDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetTimeEntries(Guid taskId)
+    {
+        try
+        {
+            var entries = await _timeTrackingService.GetTimeEntriesAsync(taskId, default);
+            var totalHours = await _timeTrackingService.GetTotalHoursAsync(taskId, default);
+            var activeTimer = await _timeTrackingService.GetActiveTimerAsync(taskId, GetUserId(), default);
+
+            var result = new TimeEntriesResponseDto(
+                Entries: entries.Select(e => new TimeEntryDto(
+                    e.Id,
+                    e.TaskId,
+                    e.UserId,
+                    e.User?.Name ?? "Unknown",
+                    e.Date,
+                    e.Hours,
+                    e.Description,
+                    e.IsBillable,
+                    e.StartTime,
+                    e.EndTime,
+                    e.IsTimerRunning,
+                    e.CreatedAt
+                )).ToList(),
+                TotalHours: totalHours,
+                ActiveTimerId: activeTimer?.Id
+            );
+
+            return Ok(result);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Log time manually for a task
+    /// </summary>
+    [HttpPost("tasks/{taskId:guid}/time-entries")]
+    [ProducesResponseType(typeof(TimeEntryDto), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> LogTime(Guid taskId, [FromBody] CreateTimeEntryDto dto)
+    {
+        try
+        {
+            var entry = await _timeTrackingService.LogTimeAsync(
+                taskId,
+                GetUserId(),
+                dto.Hours,
+                dto.Date,
+                dto.Description,
+                dto.IsBillable ?? true,
+                default);
+
+            var result = new TimeEntryDto(
+                entry.Id,
+                entry.TaskId,
+                entry.UserId,
+                null,
+                entry.Date,
+                entry.Hours,
+                entry.Description,
+                entry.IsBillable,
+                entry.StartTime,
+                entry.EndTime,
+                entry.IsTimerRunning,
+                entry.CreatedAt
+            );
+
+            return CreatedAtAction(nameof(GetTimeEntries), new { taskId }, result);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { error = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Start a timer for a task
+    /// </summary>
+    [HttpPost("tasks/{taskId:guid}/timer/start")]
+    [ProducesResponseType(typeof(TimeEntryDto), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> StartTimer(Guid taskId)
+    {
+        try
+        {
+            var entry = await _timeTrackingService.StartTimerAsync(taskId, GetUserId(), default);
+
+            var result = new TimeEntryDto(
+                entry.Id,
+                entry.TaskId,
+                entry.UserId,
+                null,
+                entry.Date,
+                entry.Hours,
+                entry.Description,
+                entry.IsBillable,
+                entry.StartTime,
+                entry.EndTime,
+                entry.IsTimerRunning,
+                entry.CreatedAt
+            );
+
+            return CreatedAtAction(nameof(GetTimeEntries), new { taskId }, result);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { error = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Stop a running timer
+    /// </summary>
+    [HttpPost("tasks/{taskId:guid}/timer/{entryId:guid}/stop")]
+    [ProducesResponseType(typeof(TimeEntryDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> StopTimer(Guid taskId, Guid entryId)
+    {
+        try
+        {
+            var entry = await _timeTrackingService.StopTimerAsync(entryId, default);
+
+            var result = new TimeEntryDto(
+                entry.Id,
+                entry.TaskId,
+                entry.UserId,
+                null,
+                entry.Date,
+                entry.Hours,
+                entry.Description,
+                entry.IsBillable,
+                entry.StartTime,
+                entry.EndTime,
+                entry.IsTimerRunning,
+                entry.CreatedAt
+            );
+
+            return Ok(result);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { error = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Update a time entry
+    /// </summary>
+    [HttpPatch("tasks/{taskId:guid}/time-entries/{entryId:guid}")]
+    [ProducesResponseType(typeof(TimeEntryDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> UpdateTimeEntry(
+        Guid taskId,
+        Guid entryId,
+        [FromBody] UpdateTimeEntryDto dto)
+    {
+        try
+        {
+            var entry = await _timeTrackingService.UpdateTimeEntryAsync(entryId, GetUserId(), dto, default);
+
+            var result = new TimeEntryDto(
+                entry.Id,
+                entry.TaskId,
+                entry.UserId,
+                null,
+                entry.Date,
+                entry.Hours,
+                entry.Description,
+                entry.IsBillable,
+                entry.StartTime,
+                entry.EndTime,
+                entry.IsTimerRunning,
+                entry.CreatedAt
+            );
+
+            return Ok(result);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { error = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Delete a time entry
+    /// </summary>
+    [HttpDelete("tasks/{taskId:guid}/time-entries/{entryId:guid}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> DeleteTimeEntry(Guid taskId, Guid entryId)
+    {
+        try
+        {
+            await _timeTrackingService.DeleteTimeEntryAsync(entryId, GetUserId(), default);
+            return NoContent();
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { error = ex.Message });
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Get active timer for current user on a task
+    /// </summary>
+    [HttpGet("tasks/{taskId:guid}/timer/active")]
+    [ProducesResponseType(typeof(TimeEntryDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetActiveTimer(Guid taskId)
+    {
+        try
+        {
+            var entry = await _timeTrackingService.GetActiveTimerAsync(taskId, GetUserId(), default);
+
+            if (entry == null)
+            {
+                return NotFound(new { error = "No active timer" });
+            }
+
+            var result = new TimeEntryDto(
+                entry.Id,
+                entry.TaskId,
+                entry.UserId,
+                null,
+                entry.Date,
+                entry.Hours,
+                entry.Description,
+                entry.IsBillable,
+                entry.StartTime,
+                entry.EndTime,
+                entry.IsTimerRunning,
+                entry.CreatedAt
+            );
+
+            return Ok(result);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { error = ex.Message });
+        }
+    }
 }
 
 // Supporting DTOs
 public record AttachmentDownloadResponse(string DownloadUrl, DateTime ExpiresAt);
+
+// Time Entry DTOs
+public record TimeEntriesResponseDto(
+    List<TimeEntryDto> Entries,
+    decimal TotalHours,
+    Guid? ActiveTimerId);
+
+public record TimeEntryDto(
+    Guid Id,
+    Guid TaskId,
+    Guid UserId,
+    string? UserName,
+    DateOnly Date,
+    decimal Hours,
+    string? Description,
+    bool IsBillable,
+    DateTime? StartTime,
+    DateTime? EndTime,
+    bool IsTimerRunning,
+    DateTime CreatedAt);
+
+public record CreateTimeEntryDto(
+    decimal Hours,
+    DateOnly Date,
+    string? Description = null,
+    bool? IsBillable = true);

@@ -281,6 +281,28 @@ public record SubscriptionCancelledDto(
 );
 
 // ============================================================================
+// Pause/Resume Subscription DTOs
+// ============================================================================
+
+public record PauseSubscriptionRequest(
+    string Reason,
+    DateTime? ResumeAt = null
+);
+
+public record SubscriptionPauseResponse(
+    Guid SubscriptionId,
+    string Status,
+    DateTime? PausedAt,
+    DateTime? ScheduledResumeAt
+);
+
+public record SubscriptionResumeResponse(
+    Guid SubscriptionId,
+    string Status,
+    DateTime CurrentPeriodEnd
+);
+
+// ============================================================================
 // Add Seats DTOs
 // ============================================================================
 
