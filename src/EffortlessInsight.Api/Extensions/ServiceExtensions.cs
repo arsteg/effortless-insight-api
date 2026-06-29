@@ -13,6 +13,7 @@ using EffortlessInsight.Api.Services.Workflows;
 using EffortlessInsight.Api.Features.Workflows.Services;
 using EffortlessInsight.Api.Services.Collaboration;
 using EffortlessInsight.Api.Services.Billing;
+using EffortlessInsight.Api.Services.Analytics;
 using EffortlessInsight.Api.Options;
 using EffortlessInsight.Api.Filters;
 using FluentValidation;
@@ -125,6 +126,11 @@ public static class ServiceExtensions
         services.AddScoped<Services.Reporting.IReportBuilderService, Services.Reporting.ReportBuilderService>();
         services.AddScoped<Services.Reporting.IReportQueryBuilder, Services.Reporting.ReportQueryBuilder>();
         services.AddScoped<Services.Reporting.IReportExportService, Services.Reporting.ReportExportService>();
+
+        // Register analytics services (GAP-RPT-001, GAP-RPT-002)
+        services.AddScoped<IDashboardService, DashboardService>();
+        services.AddScoped<INoticeAnalyticsService, NoticeAnalyticsService>();
+        services.AddScoped<IUserPerformanceService, UserPerformanceService>();
 
         return services;
     }

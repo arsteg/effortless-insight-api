@@ -164,22 +164,20 @@ public class DashboardService : IDashboardService
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
         var weekAgo = DateTime.UtcNow.AddDays(-7);
 
-        // Run queries in parallel for better performance
-        var noticeMetricsTask = GetNoticeMetricsAsync(orgId, today, weekAgo, ct);
-        var taskMetricsTask = GetTaskMetricsAsync(orgId, today, weekAgo, ct);
-        var workflowMetricsTask = GetWorkflowMetricsAsync(orgId, weekAgo, ct);
-        var deadlinesTask = GetUpcomingDeadlinesAsync(orgId, today, ct);
-        var activityTask = GetRecentActivityAsync(orgId, weekAgo, ct);
-
-        await Task.WhenAll(noticeMetricsTask, taskMetricsTask, workflowMetricsTask, deadlinesTask, activityTask);
+        // Run queries sequentially (DbContext is not thread-safe)
+        var notices = await GetNoticeMetricsAsync(orgId, today, weekAgo, ct);
+        var tasks = await GetTaskMetricsAsync(orgId, today, weekAgo, ct);
+        var workflows = await GetWorkflowMetricsAsync(orgId, weekAgo, ct);
+        var deadlines = await GetUpcomingDeadlinesAsync(orgId, today, ct);
+        var activity = await GetRecentActivityAsync(orgId, weekAgo, ct);
 
         return new DashboardMetrics
         {
-            Notices = await noticeMetricsTask,
-            Tasks = await taskMetricsTask,
-            Workflows = await workflowMetricsTask,
-            Deadlines = await deadlinesTask,
-            Activity = await activityTask,
+            Notices = notices,
+            Tasks = tasks,
+            Workflows = workflows,
+            Deadlines = deadlines,
+            Activity = activity,
             GeneratedAt = DateTime.UtcNow
         };
     }
@@ -191,7 +189,7 @@ public class DashboardService : IDashboardService
         CancellationToken ct)
     {
         var notices = await _dbContext.Notices
-            .Where(n => n.OrganizationId == orgId && !n.IsDeleted)
+            .Where(n => n.OrganizationId == orgId && n.DeletedAt == null)
             .Select(n => new
             {
                 n.Status,
@@ -244,7 +242,7 @@ public class DashboardService : IDashboardService
         CancellationToken ct)
     {
         var tasks = await _dbContext.Tasks
-            .Where(t => t.Notice.OrganizationId == orgId && !t.IsDeleted)
+            .Where(t => t.Notice.OrganizationId == orgId && t.DeletedAt == null)
             .Select(t => new
             {
                 t.Status,
@@ -346,7 +344,7 @@ public class DashboardService : IDashboardService
         // Get notice deadlines
         var noticeDeadlines = await _dbContext.Notices
             .Where(n => n.OrganizationId == orgId &&
-                !n.IsDeleted &&
+                n.DeletedAt == null &&
                 n.ResponseDeadline.HasValue &&
                 n.ResponseDeadline.Value <= next7Days &&
                 n.Status != NoticeStatus.Closed &&
@@ -371,7 +369,7 @@ public class DashboardService : IDashboardService
 
         var taskDeadlines = await _dbContext.Tasks
             .Where(t => t.Notice.OrganizationId == orgId &&
-                !t.IsDeleted &&
+                t.DeletedAt == null &&
                 t.DueDate.HasValue &&
                 t.DueDate.Value <= next7DaysDateTime &&
                 TaskStatusValues.ActiveStatuses.Contains(t.Status))
@@ -434,7 +432,7 @@ public class DashboardService : IDashboardService
                 a.Message,
                 a.CreatedAt,
                 a.ActorId,
-                ActorName = a.Actor != null ? a.Actor.FullName : null,
+                ActorName = a.Actor != null ? a.Actor.Name : null,
                 ActorAvatar = a.Actor != null ? a.Actor.AvatarUrl : null,
                 a.NoticeId,
                 NoticeNumber = a.Notice != null ? a.Notice.NoticeNumber : null

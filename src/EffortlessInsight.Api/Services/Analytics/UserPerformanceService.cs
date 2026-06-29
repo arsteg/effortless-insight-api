@@ -62,7 +62,7 @@ public class UserPerformanceService : IUserPerformanceService
         // Get user info
         var user = await _context.Users
             .Where(u => u.Id == userId)
-            .Select(u => new { u.Id, u.FullName, u.Email, u.AvatarUrl })
+            .Select(u => new { u.Id, u.Name, u.Email, u.AvatarUrl })
             .FirstOrDefaultAsync(ct)
             ?? throw new KeyNotFoundException($"User {userId} not found");
 
@@ -140,7 +140,7 @@ public class UserPerformanceService : IUserPerformanceService
 
         return new UserPerformanceSummary(
             UserId: user.Id,
-            UserName: user.FullName ?? user.Email ?? "Unknown",
+            UserName: user.Name ?? user.Email ?? "Unknown",
             UserEmail: user.Email,
             AvatarUrl: user.AvatarUrl,
             TasksCompleted: tasksCompleted,

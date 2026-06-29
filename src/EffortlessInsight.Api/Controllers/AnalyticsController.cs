@@ -88,7 +88,7 @@ public class AnalyticsController : ControllerBase
 
         var metrics = await _dashboardService.GetDashboardMetricsAsync(orgId, ct);
 
-        return Ok(metrics);
+        return Ok(new ApiResponse<DashboardMetrics>(true, metrics));
     }
 
     // ==========================================================================
