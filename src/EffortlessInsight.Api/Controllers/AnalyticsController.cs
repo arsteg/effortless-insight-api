@@ -72,21 +72,37 @@ public class AnalyticsController : ControllerBase
     /// - **Workflows**: Active workflows, SLA metrics, completion rates
     /// - **Deadlines**: Next 7 days deadlines for both notices and tasks
     /// - **Activity**: Last 10 recent activities with actor information
+    ///
+    /// Optionally filter metrics by date range using startDate and endDate parameters.
     /// </remarks>
+    /// <param name="startDate">Optional start date for filtering metrics (filters by created date)</param>
+    /// <param name="endDate">Optional end date for filtering metrics</param>
+    /// <param name="ct">Cancellation token</param>
     /// <response code="200">Dashboard metrics retrieved successfully</response>
     /// <response code="401">Unauthorized - valid authentication required</response>
+    /// <response code="400">Bad request - invalid date range</response>
     [HttpGet("dashboard")]
     [ProducesResponseType(typeof(DashboardMetrics), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    public async Task<IActionResult> GetDashboardMetrics(CancellationToken ct)
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> GetDashboardMetrics(
+        [FromQuery] DateOnly? startDate = null,
+        [FromQuery] DateOnly? endDate = null,
+        CancellationToken ct = default)
     {
+        // Validate date range if both are provided
+        if (startDate.HasValue && endDate.HasValue && startDate.Value > endDate.Value)
+        {
+            return BadRequest(new { error = "Start date cannot be after end date" });
+        }
+
         var orgId = GetOrganizationId();
 
         _logger.LogInformation(
-            "Retrieving dashboard metrics for organization {OrgId}",
-            orgId);
+            "Retrieving dashboard metrics for organization {OrgId} with date range {StartDate} to {EndDate}",
+            orgId, startDate, endDate);
 
-        var metrics = await _dashboardService.GetDashboardMetricsAsync(orgId, ct);
+        var metrics = await _dashboardService.GetDashboardMetricsAsync(orgId, startDate, endDate, ct);
 
         return Ok(new ApiResponse<DashboardMetrics>(true, metrics));
     }

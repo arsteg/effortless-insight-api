@@ -12,7 +12,15 @@ public interface IDashboardService
     /// <summary>
     /// Get comprehensive dashboard metrics for an organization.
     /// </summary>
-    Task<DashboardMetrics> GetDashboardMetricsAsync(Guid orgId, CancellationToken ct = default);
+    /// <param name="orgId">Organization ID</param>
+    /// <param name="startDate">Optional start date for filtering metrics</param>
+    /// <param name="endDate">Optional end date for filtering metrics</param>
+    /// <param name="ct">Cancellation token</param>
+    Task<DashboardMetrics> GetDashboardMetricsAsync(
+        Guid orgId,
+        DateOnly? startDate = null,
+        DateOnly? endDate = null,
+        CancellationToken ct = default);
 }
 
 /// <summary>
@@ -26,6 +34,8 @@ public record DashboardMetrics
     public UpcomingDeadlines Deadlines { get; init; } = new();
     public RecentActivity Activity { get; init; } = new();
     public DateTime GeneratedAt { get; init; } = DateTime.UtcNow;
+    public DateOnly? PeriodStart { get; init; }
+    public DateOnly? PeriodEnd { get; init; }
 }
 
 /// <summary>
@@ -157,19 +167,32 @@ public class DashboardService : IDashboardService
     }
 
     /// <inheritdoc />
-    public async Task<DashboardMetrics> GetDashboardMetricsAsync(Guid orgId, CancellationToken ct = default)
+    public async Task<DashboardMetrics> GetDashboardMetricsAsync(
+        Guid orgId,
+        DateOnly? startDate = null,
+        DateOnly? endDate = null,
+        CancellationToken ct = default)
     {
-        _logger.LogInformation("Generating dashboard metrics for organization {OrgId}", orgId);
+        _logger.LogInformation(
+            "Generating dashboard metrics for organization {OrgId} with date range {StartDate} to {EndDate}",
+            orgId, startDate, endDate);
 
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
+
+        // If no date range specified, default to showing all data (current behavior)
+        // The "weekAgo" is used for "this week" metrics regardless of filter
         var weekAgo = DateTime.UtcNow.AddDays(-7);
 
+        // Convert DateOnly to DateTime for filtering
+        DateTime? filterStart = startDate?.ToDateTime(TimeOnly.MinValue);
+        DateTime? filterEnd = endDate?.ToDateTime(TimeOnly.MaxValue);
+
         // Run queries sequentially (DbContext is not thread-safe)
-        var notices = await GetNoticeMetricsAsync(orgId, today, weekAgo, ct);
-        var tasks = await GetTaskMetricsAsync(orgId, today, weekAgo, ct);
-        var workflows = await GetWorkflowMetricsAsync(orgId, weekAgo, ct);
+        var notices = await GetNoticeMetricsAsync(orgId, today, weekAgo, filterStart, filterEnd, ct);
+        var tasks = await GetTaskMetricsAsync(orgId, today, weekAgo, filterStart, filterEnd, ct);
+        var workflows = await GetWorkflowMetricsAsync(orgId, weekAgo, filterStart, filterEnd, ct);
         var deadlines = await GetUpcomingDeadlinesAsync(orgId, today, ct);
-        var activity = await GetRecentActivityAsync(orgId, weekAgo, ct);
+        var activity = await GetRecentActivityAsync(orgId, weekAgo, filterStart, filterEnd, ct);
 
         return new DashboardMetrics
         {
@@ -178,7 +201,9 @@ public class DashboardService : IDashboardService
             Workflows = workflows,
             Deadlines = deadlines,
             Activity = activity,
-            GeneratedAt = DateTime.UtcNow
+            GeneratedAt = DateTime.UtcNow,
+            PeriodStart = startDate,
+            PeriodEnd = endDate
         };
     }
 
@@ -186,10 +211,20 @@ public class DashboardService : IDashboardService
         Guid orgId,
         DateOnly today,
         DateTime weekAgo,
+        DateTime? filterStart,
+        DateTime? filterEnd,
         CancellationToken ct)
     {
-        var notices = await _dbContext.Notices
-            .Where(n => n.OrganizationId == orgId && n.DeletedAt == null)
+        var query = _dbContext.Notices
+            .Where(n => n.OrganizationId == orgId && n.DeletedAt == null);
+
+        // Apply date range filter if specified
+        if (filterStart.HasValue)
+            query = query.Where(n => n.CreatedAt >= filterStart.Value);
+        if (filterEnd.HasValue)
+            query = query.Where(n => n.CreatedAt <= filterEnd.Value);
+
+        var notices = await query
             .Select(n => new
             {
                 n.Status,
@@ -239,10 +274,20 @@ public class DashboardService : IDashboardService
         Guid orgId,
         DateOnly today,
         DateTime weekAgo,
+        DateTime? filterStart,
+        DateTime? filterEnd,
         CancellationToken ct)
     {
-        var tasks = await _dbContext.Tasks
-            .Where(t => t.Notice.OrganizationId == orgId && t.DeletedAt == null)
+        var query = _dbContext.Tasks
+            .Where(t => t.Notice.OrganizationId == orgId && t.DeletedAt == null);
+
+        // Apply date range filter if specified
+        if (filterStart.HasValue)
+            query = query.Where(t => t.CreatedAt >= filterStart.Value);
+        if (filterEnd.HasValue)
+            query = query.Where(t => t.CreatedAt <= filterEnd.Value);
+
+        var tasks = await query
             .Select(t => new
             {
                 t.Status,
@@ -291,10 +336,20 @@ public class DashboardService : IDashboardService
     private async Task<WorkflowMetrics> GetWorkflowMetricsAsync(
         Guid orgId,
         DateTime weekAgo,
+        DateTime? filterStart,
+        DateTime? filterEnd,
         CancellationToken ct)
     {
-        var workflows = await _dbContext.NoticeWorkflowInstances
-            .Where(w => w.Notice.OrganizationId == orgId)
+        var query = _dbContext.NoticeWorkflowInstances
+            .Where(w => w.Notice.OrganizationId == orgId);
+
+        // Apply date range filter if specified
+        if (filterStart.HasValue)
+            query = query.Where(w => w.CreatedAt >= filterStart.Value);
+        if (filterEnd.HasValue)
+            query = query.Where(w => w.CreatedAt <= filterEnd.Value);
+
+        var workflows = await query
             .Select(w => new
             {
                 w.Status,
@@ -417,12 +472,25 @@ public class DashboardService : IDashboardService
     private async Task<RecentActivity> GetRecentActivityAsync(
         Guid orgId,
         DateTime weekAgo,
+        DateTime? filterStart,
+        DateTime? filterEnd,
         CancellationToken ct)
     {
         var todayStart = DateTime.UtcNow.Date;
 
-        var activities = await _dbContext.ActivityLogs
-            .Where(a => a.OrganizationId == orgId && a.CreatedAt >= weekAgo)
+        var query = _dbContext.ActivityLogs
+            .Where(a => a.OrganizationId == orgId);
+
+        // Apply date range filter if specified, otherwise use weekAgo
+        if (filterStart.HasValue)
+            query = query.Where(a => a.CreatedAt >= filterStart.Value);
+        else
+            query = query.Where(a => a.CreatedAt >= weekAgo);
+
+        if (filterEnd.HasValue)
+            query = query.Where(a => a.CreatedAt <= filterEnd.Value);
+
+        var activities = await query
             .OrderByDescending(a => a.CreatedAt)
             .Take(10)
             .Select(a => new

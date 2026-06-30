@@ -56,6 +56,7 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
     public DbSet<UserSession> UserSessions => Set<UserSession>();
     public DbSet<LoginAudit> LoginAudits => Set<LoginAudit>();
     public DbSet<PasswordHistory> PasswordHistory => Set<PasswordHistory>();
+    public DbSet<UserOAuthProvider> UserOAuthProviders => Set<UserOAuthProvider>();
 
     // Token Management entities
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
@@ -649,6 +650,18 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
         // Password History indexes
         modelBuilder.Entity<PasswordHistory>()
             .HasIndex(p => p.UserId);
+
+        // UserOAuthProvider configuration
+        modelBuilder.Entity<UserOAuthProvider>(entity =>
+        {
+            entity.HasIndex(e => e.UserId);
+            entity.HasIndex(e => new { e.Provider, e.ProviderId })
+                .IsUnique()
+                .HasDatabaseName("IX_UserOAuthProviders_Provider_ProviderId");
+            entity.HasIndex(e => new { e.UserId, e.Provider })
+                .IsUnique()
+                .HasDatabaseName("IX_UserOAuthProviders_UserId_Provider");
+        });
 
         // ============================================================================
         // NoticeResponse Configuration

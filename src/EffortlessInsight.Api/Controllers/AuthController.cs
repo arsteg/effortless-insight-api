@@ -761,14 +761,17 @@ public class AuthController : ControllerBase
     /// <summary>
     /// Get OAuth login URL for a provider
     /// </summary>
+    /// <param name="provider">OAuth provider (google, microsoft)</param>
+    /// <param name="state">Optional custom state token</param>
+    /// <param name="forceReauth">If true, forces re-authentication even if user is already signed in to provider</param>
     [HttpGet("oauth/{provider}/login")]
     [ProducesResponseType(typeof(ApiResponse<OAuthLoginUrlResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
-    public async Task<IActionResult> GetOAuthLoginUrl(string provider, [FromQuery] string? state)
+    public async Task<IActionResult> GetOAuthLoginUrl(string provider, [FromQuery] string? state, [FromQuery] bool forceReauth = false)
     {
         try
         {
-            var result = await _authService.GetOAuthLoginUrlAsync(provider, state);
+            var result = await _authService.GetOAuthLoginUrlAsync(provider, state, forceReauth);
             return Ok(new ApiResponse<OAuthLoginUrlResponse>(true, result));
         }
         catch (InvalidOperationException ex) when (ex.Message.EndsWith("_NOT_CONFIGURED"))
@@ -812,9 +815,17 @@ public class AuthController : ControllerBase
 
             return Ok(new ApiResponse<LoginResponse>(true, (LoginResponse)result));
         }
+        catch (InvalidOperationException ex) when (ex.Message == "MISSING_OAUTH_STATE")
+        {
+            return BadRequest(new ApiErrorResponse(false, "MISSING_STATE", "OAuth state parameter is required"));
+        }
         catch (InvalidOperationException ex) when (ex.Message == "INVALID_OAUTH_STATE")
         {
             return BadRequest(new ApiErrorResponse(false, "INVALID_STATE", "Invalid or expired OAuth state"));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "OAUTH_PROVIDER_MISMATCH")
+        {
+            return BadRequest(new ApiErrorResponse(false, "PROVIDER_MISMATCH", "OAuth provider mismatch - possible tampering detected"));
         }
         catch (InvalidOperationException ex) when (ex.Message == "FAILED_TO_GET_USER_INFO")
         {
@@ -840,6 +851,170 @@ public class AuthController : ControllerBase
             return StatusCode(StatusCodes.Status500InternalServerError,
                 new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
         }
+    }
+
+    /// <summary>
+    /// Get current user's OAuth provider info (legacy single-provider)
+    /// </summary>
+    [Authorize]
+    [HttpGet("oauth/info")]
+    [ProducesResponseType(typeof(ApiResponse<UserOAuthInfoResponse>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetUserOAuthInfo()
+    {
+        try
+        {
+            var userId = GetCurrentUserId();
+            var result = await _authService.GetUserOAuthInfoAsync(userId);
+
+            if (result == null)
+            {
+                return NotFound(new ApiErrorResponse(false, "USER_NOT_FOUND", "User not found"));
+            }
+
+            return Ok(new ApiResponse<UserOAuthInfoResponse>(true, result));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Get OAuth info failed");
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
+        }
+    }
+
+    /// <summary>
+    /// Get all OAuth providers linked to the current user
+    /// </summary>
+    [Authorize]
+    [HttpGet("oauth/providers/linked")]
+    [ProducesResponseType(typeof(ApiResponse<UserOAuthProvidersResponse>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetUserOAuthProviders()
+    {
+        try
+        {
+            var userId = GetCurrentUserId();
+            var result = await _authService.GetUserOAuthProvidersAsync(userId);
+
+            return Ok(new ApiResponse<UserOAuthProvidersResponse>(true, result));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "USER_NOT_FOUND")
+        {
+            return NotFound(new ApiErrorResponse(false, "USER_NOT_FOUND", "User not found"));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Get user OAuth providers failed");
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
+        }
+    }
+
+    /// <summary>
+    /// Link an additional OAuth provider to the current user's account
+    /// </summary>
+    [Authorize]
+    [HttpPost("oauth/{provider}/link")]
+    [ProducesResponseType(typeof(ApiResponse<LinkedOAuthProviderDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> LinkOAuthProvider(string provider, [FromBody] OAuthCallbackRequest request)
+    {
+        try
+        {
+            var userId = GetCurrentUserId();
+            var result = await _authService.LinkOAuthProviderAsync(userId, provider, request.Code, request.State);
+
+            return Ok(new ApiResponse<LinkedOAuthProviderDto>(true, result));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "MISSING_OAUTH_STATE")
+        {
+            return BadRequest(new ApiErrorResponse(false, "MISSING_STATE", "OAuth state parameter is required"));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "INVALID_OAUTH_STATE")
+        {
+            return BadRequest(new ApiErrorResponse(false, "INVALID_STATE", "Invalid or expired OAuth state"));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "OAUTH_PROVIDER_MISMATCH")
+        {
+            return BadRequest(new ApiErrorResponse(false, "PROVIDER_MISMATCH", "OAuth provider mismatch"));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "PROVIDER_ALREADY_LINKED")
+        {
+            return BadRequest(new ApiErrorResponse(false, "PROVIDER_ALREADY_LINKED",
+                $"The {provider} provider is already linked to your account"));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "PROVIDER_LINKED_TO_ANOTHER_USER")
+        {
+            return BadRequest(new ApiErrorResponse(false, "PROVIDER_LINKED_TO_ANOTHER_USER",
+                $"This {provider} account is already linked to a different user"));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "FAILED_TO_GET_USER_INFO")
+        {
+            return BadRequest(new ApiErrorResponse(false, "OAUTH_FAILED", "Failed to retrieve user information from provider"));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Link OAuth provider failed for provider: {Provider}", provider);
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
+        }
+    }
+
+    /// <summary>
+    /// Disconnect an OAuth provider from user account
+    /// </summary>
+    /// <remarks>
+    /// Requires password verification. Cannot disconnect if it would leave the account without any auth method.
+    /// </remarks>
+    [Authorize]
+    [HttpDelete("oauth/{provider}")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> DisconnectOAuth(string provider, [FromBody] DisconnectOAuthRequest request)
+    {
+        try
+        {
+            var userId = GetCurrentUserId();
+            await _authService.DisconnectOAuthAsync(userId, provider, request.Password);
+
+            return Ok(new ApiResponse<object>(true, new
+            {
+                Message = $"{provider} provider disconnected successfully"
+            }));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "PROVIDER_NOT_LINKED")
+        {
+            return BadRequest(new ApiErrorResponse(false, "PROVIDER_NOT_LINKED",
+                $"The {provider} provider is not linked to this account"));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "LAST_AUTH_METHOD")
+        {
+            return BadRequest(new ApiErrorResponse(false, "LAST_AUTH_METHOD",
+                "Cannot disconnect the last authentication method. Set a password or link another provider first."));
+        }
+        catch (UnauthorizedAccessException ex) when (ex.Message == "INVALID_PASSWORD")
+        {
+            return Unauthorized(new ApiErrorResponse(false, "INVALID_PASSWORD", "Password is incorrect"));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Disconnect OAuth failed for provider: {Provider}", provider);
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
+        }
+    }
+
+    /// <summary>
+    /// Disconnect OAuth provider from user account (legacy endpoint)
+    /// </summary>
+    [Authorize]
+    [HttpDelete("oauth")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> DisconnectOAuthLegacy([FromBody] DisconnectOAuthRequest request)
+    {
+        // Redirect to the new endpoint
+        return await DisconnectOAuth(request.Provider, request);
     }
 
     #region Private Methods

@@ -116,6 +116,11 @@ public class ApplicationUser : IdentityUser<Guid>
     [InverseProperty(nameof(NoticeTask.AssignedTo))]
     public ICollection<NoticeTask> AssignedTasks { get; set; } = [];
     public ICollection<UserSession> Sessions { get; set; } = [];
+
+    /// <summary>
+    /// OAuth providers linked to this user (supports multiple providers).
+    /// </summary>
+    public ICollection<UserOAuthProvider> OAuthProviders { get; set; } = [];
 }
 
 public class ApplicationRole : IdentityRole<Guid>

@@ -47,14 +47,30 @@ public class WorkflowsController : ControllerBase
         [FromBody] StartWorkflowRequest request,
         CancellationToken cancellationToken)
     {
-        var result = await _workflowEngine.StartWorkflowAsync(request, GetUserId(), cancellationToken);
-
-        if (!result.Success)
+        try
         {
-            return BadRequest(result);
-        }
+            var userId = GetUserId();
+            _logger.LogInformation("Starting workflow for notice {NoticeId} by user {UserId}", request.NoticeId, userId);
 
-        return Ok(result);
+            var result = await _workflowEngine.StartWorkflowAsync(request, userId, cancellationToken);
+
+            if (!result.Success)
+            {
+                return BadRequest(result);
+            }
+
+            return Ok(result);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to start workflow for notice {NoticeId}", request.NoticeId);
+            return StatusCode(500, new TransitionResult
+            {
+                Success = false,
+                Message = "Internal server error",
+                Errors = [ex.Message]
+            });
+        }
     }
 
     /// <summary>

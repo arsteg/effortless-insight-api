@@ -98,7 +98,35 @@ public record TwoFactorDisableRequest(string Password);
 public record OAuthProviderInfo(string Name, string DisplayName, bool Enabled);
 public record OAuthProvidersResponse(List<OAuthProviderInfo> Providers);
 public record OAuthLoginUrlResponse(string LoginUrl, string Provider);
-public record OAuthCallbackRequest(string Code, string? State);
+public record OAuthCallbackRequest(string Code, string State);
+public record DisconnectOAuthRequest(string Provider, string Password);
+
+/// <summary>
+/// Information about a linked OAuth provider.
+/// </summary>
+public record LinkedOAuthProviderDto(
+    Guid Id,
+    string Provider,
+    string? Email,
+    string? DisplayName,
+    string? AvatarUrl,
+    DateTime LinkedAt,
+    DateTime? LastUsedAt
+);
+
+/// <summary>
+/// Response containing all OAuth providers linked to a user.
+/// </summary>
+public record UserOAuthProvidersResponse(
+    List<LinkedOAuthProviderDto> LinkedProviders,
+    List<string> AvailableProviders,
+    bool HasPassword
+);
+
+/// <summary>
+/// Legacy single-provider response for backward compatibility.
+/// </summary>
+public record UserOAuthInfoResponse(string? Provider, string? ProviderId, bool HasPassword);
 
 // Session DTOs
 public record SessionDto(Guid Id, string? DeviceName, string Platform, string IpAddress, string? Location, DateTime LastActiveAt, DateTime CreatedAt, bool IsCurrent);

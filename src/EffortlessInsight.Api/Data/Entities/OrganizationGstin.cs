@@ -17,9 +17,10 @@ public class OrganizationGstin : BaseEntity
 
     /// <summary>
     /// 15-character GSTIN in format: 2-digit state + 10-char PAN + 1 entity + 1Z + 1 check
+    /// Note: MaxLength is 255 to accommodate encrypted storage (DPDP Act compliance)
     /// </summary>
     [Required]
-    [MaxLength(15)]
+    [MaxLength(255)]
     public string Gstin { get; set; } = string.Empty;
 
     /// <summary>

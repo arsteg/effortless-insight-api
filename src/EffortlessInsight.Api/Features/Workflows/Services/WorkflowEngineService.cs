@@ -45,141 +45,189 @@ public class WorkflowEngineService : IWorkflowEngineService
         Guid userId,
         CancellationToken cancellationToken = default)
     {
-        var notice = await _context.Notices
-            .FirstOrDefaultAsync(n => n.Id == request.NoticeId, cancellationToken);
-
-        if (notice == null)
+        try
         {
+            _logger.LogInformation("StartWorkflowAsync: Step 1 - Looking for notice {NoticeId}", request.NoticeId);
+
+            var notice = await _context.Notices
+                .FirstOrDefaultAsync(n => n.Id == request.NoticeId, cancellationToken);
+
+            if (notice == null)
+            {
+                return new TransitionResult
+                {
+                    Success = false,
+                    Message = "Notice not found",
+                    Errors = ["Notice with the specified ID does not exist"]
+                };
+            }
+
+            _logger.LogInformation("StartWorkflowAsync: Step 2 - Checking for existing workflow");
+
+            // Check if workflow already exists
+            var existingInstance = await _context.NoticeWorkflowInstances
+                .FirstOrDefaultAsync(i => i.NoticeId == request.NoticeId && i.Status == WorkflowInstanceStatuses.Active, cancellationToken);
+
+            if (existingInstance != null)
+            {
+                return new TransitionResult
+                {
+                    Success = false,
+                    Message = "Workflow already exists",
+                    Errors = ["An active workflow already exists for this notice"]
+                };
+            }
+
+            _logger.LogInformation("StartWorkflowAsync: Step 3 - Getting template");
+
+            // Get template (ignore query filters to allow system templates with null OrganizationId)
+            var templateId = request.WorkflowTemplateId ?? WorkflowTemplateSeeder.DefaultTemplateId;
+            var template = await _context.WorkflowTemplates
+                .IgnoreQueryFilters()
+                .Include(t => t.Stages.Where(s => s.DeletedAt == null))
+                .FirstOrDefaultAsync(t => t.Id == templateId && t.IsActive && t.DeletedAt == null, cancellationToken);
+
+            if (template == null)
+            {
+                _logger.LogWarning("StartWorkflowAsync: Template {TemplateId} not found", templateId);
+                return new TransitionResult
+                {
+                    Success = false,
+                    Message = "Workflow template not found",
+                    Errors = ["The specified workflow template does not exist or is not active"]
+                };
+            }
+
+            _logger.LogInformation("StartWorkflowAsync: Step 4 - Found template {TemplateName} with {StageCount} stages",
+                template.Name, template.Stages.Count);
+
+            // Get start stage
+            var startStage = template.Stages.OrderBy(s => s.StageOrder).FirstOrDefault(s => s.StageType == WorkflowStageTypes.Start);
+            if (startStage == null)
+            {
+                _logger.LogWarning("StartWorkflowAsync: No start stage found in template");
+                return new TransitionResult
+                {
+                    Success = false,
+                    Message = "Invalid workflow template",
+                    Errors = ["Workflow template does not have a start stage"]
+                };
+            }
+
+            _logger.LogInformation("StartWorkflowAsync: Step 5 - Creating workflow instance");
+
+            var now = DateTime.UtcNow;
+
+            // Create workflow instance
+            var instance = new NoticeWorkflowInstance
+            {
+                NoticeId = request.NoticeId,
+                WorkflowTemplateId = template.Id,
+                TemplateVersionUsed = template.Version,
+                CurrentStageKey = startStage.StageKey,
+                CurrentStageId = startStage.Id,
+                StageEnteredAt = now,
+                SlaDeadline = startStage.SlaHours.HasValue ? now.AddHours(startStage.SlaHours.Value) : null,
+                SlaStatus = WorkflowSlaStatuses.OnTrack,
+                SlaPercentConsumed = 0,
+                AssignedToId = request.AssignToUserId,
+                AssignedRole = request.AssignToRole,
+                Status = WorkflowInstanceStatuses.Active,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+
+            _context.NoticeWorkflowInstances.Add(instance);
+
+            _logger.LogInformation("StartWorkflowAsync: Step 6 - Creating history entry");
+
+            // Create history entry
+            var historyEntry = new WorkflowHistory
+            {
+                WorkflowInstanceId = instance.Id,
+                NoticeId = request.NoticeId,
+                EventType = WorkflowHistoryEventTypes.WorkflowStarted,
+                ToStageKey = startStage.StageKey,
+                PerformedById = userId,
+                Description = $"Workflow started with template '{template.Name}'",
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+
+            _context.WorkflowHistories.Add(historyEntry);
+
+            _logger.LogInformation("StartWorkflowAsync: Step 7 - Saving to database");
+
+            await _context.SaveChangesAsync(cancellationToken);
+
+            _logger.LogInformation("StartWorkflowAsync: Step 8 - Getting instance DTO");
+
+            var instanceDto = await GetWorkflowInstanceByIdAsync(instance.Id, cancellationToken);
+
+            _logger.LogInformation("StartWorkflowAsync: Success - Workflow started for notice {NoticeId}", request.NoticeId);
+
             return new TransitionResult
             {
-                Success = false,
-                Message = "Notice not found",
-                Errors = ["Notice with the specified ID does not exist"]
+                Success = true,
+                Message = "Workflow started successfully",
+                Instance = instanceDto
             };
         }
-
-        // Check if workflow already exists
-        var existingInstance = await _context.NoticeWorkflowInstances
-            .FirstOrDefaultAsync(i => i.NoticeId == request.NoticeId && i.Status == WorkflowInstanceStatuses.Active, cancellationToken);
-
-        if (existingInstance != null)
+        catch (Exception ex)
         {
-            return new TransitionResult
-            {
-                Success = false,
-                Message = "Workflow already exists",
-                Errors = ["An active workflow already exists for this notice"]
-            };
+            _logger.LogError(ex, "StartWorkflowAsync: Exception occurred for notice {NoticeId}: {Message}",
+                request.NoticeId, ex.Message);
+            throw;
         }
-
-        // Get template
-        var templateId = request.WorkflowTemplateId ?? WorkflowTemplateSeeder.DefaultTemplateId;
-        var template = await _context.WorkflowTemplates
-            .Include(t => t.Stages.OrderBy(s => s.StageOrder))
-            .FirstOrDefaultAsync(t => t.Id == templateId && t.IsActive, cancellationToken);
-
-        if (template == null)
-        {
-            return new TransitionResult
-            {
-                Success = false,
-                Message = "Workflow template not found",
-                Errors = ["The specified workflow template does not exist or is not active"]
-            };
-        }
-
-        // Get start stage
-        var startStage = template.Stages.FirstOrDefault(s => s.StageType == WorkflowStageTypes.Start);
-        if (startStage == null)
-        {
-            return new TransitionResult
-            {
-                Success = false,
-                Message = "Invalid workflow template",
-                Errors = ["Workflow template does not have a start stage"]
-            };
-        }
-
-        var now = DateTime.UtcNow;
-
-        // Create workflow instance
-        var instance = new NoticeWorkflowInstance
-        {
-            NoticeId = request.NoticeId,
-            WorkflowTemplateId = template.Id,
-            TemplateVersionUsed = template.Version,
-            CurrentStageKey = startStage.StageKey,
-            CurrentStageId = startStage.Id,
-            StageEnteredAt = now,
-            SlaDeadline = startStage.SlaHours.HasValue ? now.AddHours(startStage.SlaHours.Value) : null,
-            SlaStatus = WorkflowSlaStatuses.OnTrack,
-            SlaPercentConsumed = 0,
-            AssignedToId = request.AssignToUserId,
-            AssignedRole = request.AssignToRole,
-            Status = WorkflowInstanceStatuses.Active,
-            CreatedAt = now,
-            UpdatedAt = now
-        };
-
-        _context.NoticeWorkflowInstances.Add(instance);
-
-        // Create history entry
-        var historyEntry = new WorkflowHistory
-        {
-            WorkflowInstanceId = instance.Id,
-            NoticeId = request.NoticeId,
-            EventType = WorkflowHistoryEventTypes.WorkflowStarted,
-            ToStageKey = startStage.StageKey,
-            PerformedById = userId,
-            Description = $"Workflow started with template '{template.Name}'",
-            CreatedAt = now,
-            UpdatedAt = now
-        };
-
-        _context.WorkflowHistories.Add(historyEntry);
-
-        await _context.SaveChangesAsync(cancellationToken);
-
-        _logger.LogInformation("Started workflow for notice {NoticeId} with template {TemplateId}",
-            request.NoticeId, template.Id);
-
-        var instanceDto = await GetWorkflowInstanceByIdAsync(instance.Id, cancellationToken);
-
-        return new TransitionResult
-        {
-            Success = true,
-            Message = "Workflow started successfully",
-            Instance = instanceDto
-        };
     }
 
     public async Task<WorkflowInstanceDto?> GetWorkflowInstanceAsync(
         Guid noticeId,
         CancellationToken cancellationToken = default)
     {
+        // First get the instance
         var instance = await _context.NoticeWorkflowInstances
-            .Include(i => i.WorkflowTemplate)
-            .ThenInclude(t => t.Stages)
             .Include(i => i.CurrentStage)
             .Include(i => i.AssignedTo)
             .Where(i => i.NoticeId == noticeId && i.Status == WorkflowInstanceStatuses.Active)
             .FirstOrDefaultAsync(cancellationToken);
 
-        return instance == null ? null : MapToInstanceDto(instance);
+        if (instance == null)
+            return null;
+
+        // Load template separately with IgnoreQueryFilters to support system templates
+        var template = await _context.WorkflowTemplates
+            .IgnoreQueryFilters()
+            .Include(t => t.Stages.Where(s => s.DeletedAt == null))
+            .FirstOrDefaultAsync(t => t.Id == instance.WorkflowTemplateId && t.DeletedAt == null, cancellationToken);
+
+        instance.WorkflowTemplate = template!;
+
+        return MapToInstanceDto(instance);
     }
 
     public async Task<WorkflowInstanceDto?> GetWorkflowInstanceByIdAsync(
         Guid instanceId,
         CancellationToken cancellationToken = default)
     {
+        // First get the instance
         var instance = await _context.NoticeWorkflowInstances
-            .Include(i => i.WorkflowTemplate)
-            .ThenInclude(t => t.Stages)
             .Include(i => i.CurrentStage)
             .Include(i => i.AssignedTo)
             .FirstOrDefaultAsync(i => i.Id == instanceId, cancellationToken);
 
-        return instance == null ? null : MapToInstanceDto(instance);
+        if (instance == null)
+            return null;
+
+        // Load template separately with IgnoreQueryFilters to support system templates
+        var template = await _context.WorkflowTemplates
+            .IgnoreQueryFilters()
+            .Include(t => t.Stages.Where(s => s.DeletedAt == null))
+            .FirstOrDefaultAsync(t => t.Id == instance.WorkflowTemplateId && t.DeletedAt == null, cancellationToken);
+
+        instance.WorkflowTemplate = template!;
+
+        return MapToInstanceDto(instance);
     }
 
     public async Task<Dictionary<Guid, WorkflowInstanceSummaryDto>> GetWorkflowInstancesForNoticesAsync(

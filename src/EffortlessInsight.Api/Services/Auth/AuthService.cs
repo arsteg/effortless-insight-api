@@ -390,7 +390,7 @@ public class AuthService : IAuthService
         // Send reset email
         try
         {
-            var resetLink = $"{_configuration["App:BaseUrl"]}/auth/reset-password?token={resetToken}";
+            var resetLink = $"{_configuration["App:BaseUrl"]}/reset-password?token={resetToken}";
             await _emailService.SendTemplateAsync(
                 user.Email!,
                 "auth_password_reset",
@@ -984,7 +984,7 @@ public class AuthService : IAuthService
         return await Task.FromResult(new OAuthProvidersResponse(providers));
     }
 
-    public async Task<OAuthLoginUrlResponse> GetOAuthLoginUrlAsync(string provider, string? state)
+    public async Task<OAuthLoginUrlResponse> GetOAuthLoginUrlAsync(string provider, string? state, bool forceReauth = false)
     {
         var oauthSection = _configuration.GetSection("OAuth");
         var callbackBaseUrl = oauthSection.GetValue<string>("CallbackBaseUrl") ?? "http://localhost:3000";
@@ -1011,7 +1011,9 @@ public class AuthService : IAuthService
                     throw new InvalidOperationException("GOOGLE_OAUTH_NOT_CONFIGURED");
                 }
                 var googleRedirectUri = Uri.EscapeDataString($"{callbackBaseUrl}/auth/callback/google");
-                loginUrl = $"https://accounts.google.com/o/oauth2/v2/auth?client_id={googleClientId}&redirect_uri={googleRedirectUri}&response_type=code&scope=email%20profile&state={stateToken}&access_type=offline&prompt=consent";
+                // Use prompt=login for forced re-authentication, otherwise prompt=consent for refresh token
+                var googlePrompt = forceReauth ? "login" : "consent";
+                loginUrl = $"https://accounts.google.com/o/oauth2/v2/auth?client_id={googleClientId}&redirect_uri={googleRedirectUri}&response_type=code&scope=email%20profile&state={stateToken}&access_type=offline&prompt={googlePrompt}";
                 break;
 
             case "microsoft":
@@ -1021,7 +1023,10 @@ public class AuthService : IAuthService
                     throw new InvalidOperationException("MICROSOFT_OAUTH_NOT_CONFIGURED");
                 }
                 var microsoftRedirectUri = Uri.EscapeDataString($"{callbackBaseUrl}/auth/callback/microsoft");
-                loginUrl = $"https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id={microsoftClientId}&redirect_uri={microsoftRedirectUri}&response_type=code&scope=openid%20email%20profile&state={stateToken}&response_mode=query";
+                // Include User.Read scope for profile photo access
+                // Use prompt=login for forced re-authentication
+                var microsoftPrompt = forceReauth ? "&prompt=login" : "";
+                loginUrl = $"https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id={microsoftClientId}&redirect_uri={microsoftRedirectUri}&response_type=code&scope=openid%20email%20profile%20User.Read&state={stateToken}&response_mode=query{microsoftPrompt}";
                 break;
 
             default:
@@ -1031,17 +1036,42 @@ public class AuthService : IAuthService
         return new OAuthLoginUrlResponse(loginUrl, provider);
     }
 
-    public async Task<object> HandleOAuthCallbackAsync(string provider, string code, string? state, string ipAddress, string? userAgent)
+    public async Task<object> HandleOAuthCallbackAsync(string provider, string code, string state, string ipAddress, string? userAgent)
     {
-        // Verify state if provided
-        if (!string.IsNullOrEmpty(state))
+        // State is required for CSRF protection
+        if (string.IsNullOrEmpty(state))
         {
-            var stateDataJson = await _cache.GetStringAsync($"oauth_state:{state}");
-            if (string.IsNullOrEmpty(stateDataJson))
-            {
-                throw new InvalidOperationException("INVALID_OAUTH_STATE");
-            }
-            await _cache.RemoveAsync($"oauth_state:{state}");
+            throw new InvalidOperationException("MISSING_OAUTH_STATE");
+        }
+
+        // Verify state token exists and hasn't expired
+        var stateDataJson = await _cache.GetStringAsync($"oauth_state:{state}");
+        if (string.IsNullOrEmpty(stateDataJson))
+        {
+            throw new InvalidOperationException("INVALID_OAUTH_STATE");
+        }
+
+        // Remove state token immediately to prevent replay attacks
+        await _cache.RemoveAsync($"oauth_state:{state}");
+
+        // Verify the provider matches what was requested
+        var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        var stateData = JsonSerializer.Deserialize<OAuthStateData>(stateDataJson, jsonOptions);
+
+        _logger.LogDebug("OAuth state data: {StateJson}, Parsed provider: {ParsedProvider}, Expected provider: {ExpectedProvider}",
+            stateDataJson, stateData?.Provider, provider);
+
+        if (stateData == null || string.IsNullOrEmpty(stateData.Provider))
+        {
+            _logger.LogWarning("OAuth state deserialization failed. Raw JSON: {StateJson}", stateDataJson);
+            throw new InvalidOperationException("OAUTH_PROVIDER_MISMATCH");
+        }
+
+        if (!string.Equals(stateData.Provider, provider, StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogWarning("OAuth provider mismatch. State provider: {StateProvider}, Callback provider: {CallbackProvider}",
+                stateData.Provider, provider);
+            throw new InvalidOperationException("OAUTH_PROVIDER_MISMATCH");
         }
 
         var oauthSection = _configuration.GetSection("OAuth");
@@ -1065,8 +1095,39 @@ public class AuthService : IAuthService
             throw new InvalidOperationException("FAILED_TO_GET_USER_INFO");
         }
 
-        // Find or create user
-        var user = await _userManager.FindByEmailAsync(userInfo.Email);
+        var providerLower = provider.ToLowerInvariant();
+        ApplicationUser? user = null;
+        UserOAuthProvider? oauthLink = null;
+
+        // First, check if this OAuth provider ID is already linked in the new table
+        oauthLink = await _dbContext.UserOAuthProviders
+            .Include(p => p.User)
+            .FirstOrDefaultAsync(p => p.Provider == providerLower && p.ProviderId == userInfo.Id);
+
+        if (oauthLink != null)
+        {
+            user = oauthLink.User;
+            // Update last used timestamp
+            oauthLink.LastUsedAt = DateTime.UtcNow;
+            // Update avatar if changed
+            if (!string.IsNullOrEmpty(userInfo.Picture) && oauthLink.AvatarUrl != userInfo.Picture)
+            {
+                oauthLink.AvatarUrl = userInfo.Picture;
+            }
+        }
+        else
+        {
+            // Check legacy fields for existing users
+            user = await _dbContext.Users
+                .FirstOrDefaultAsync(u =>
+                    u.OAuthProvider == providerLower && u.OAuthProviderId == userInfo.Id && u.DeletedAt == null);
+
+            // If not found by OAuth ID, try by email
+            if (user == null)
+            {
+                user = await _userManager.FindByEmailAsync(userInfo.Email);
+            }
+        }
 
         if (user == null)
         {
@@ -1080,8 +1141,6 @@ public class AuthService : IAuthService
                 IsEmailVerified = true,
                 EmailVerifiedAt = DateTime.UtcNow,
                 Role = "owner",
-                OAuthProvider = provider,
-                OAuthProviderId = userInfo.Id,
                 AvatarUrl = userInfo.Picture,
                 CreatedAt = DateTime.UtcNow
             };
@@ -1094,25 +1153,56 @@ public class AuthService : IAuthService
                 throw new InvalidOperationException($"REGISTRATION_FAILED: {errors}");
             }
 
+            // Create OAuth link in new table
+            oauthLink = new UserOAuthProvider
+            {
+                UserId = user.Id,
+                Provider = providerLower,
+                ProviderId = userInfo.Id!,
+                Email = userInfo.Email,
+                DisplayName = userInfo.Name,
+                AvatarUrl = userInfo.Picture,
+                LinkedAt = DateTime.UtcNow,
+                LastUsedAt = DateTime.UtcNow
+            };
+            _dbContext.UserOAuthProviders.Add(oauthLink);
+
             _logger.LogInformation("Created new user via OAuth: {Email} ({Provider})", userInfo.Email, provider);
         }
-        else
+        else if (oauthLink == null)
         {
-            // Update OAuth info if not already set
-            if (string.IsNullOrEmpty(user.OAuthProvider))
+            // User exists but OAuth provider not linked - check if we should link it
+            var existingLink = await _dbContext.UserOAuthProviders
+                .AnyAsync(p => p.UserId == user.Id && p.Provider == providerLower);
+
+            if (!existingLink)
             {
-                user.OAuthProvider = provider;
-                user.OAuthProviderId = userInfo.Id;
+                // Auto-link this OAuth provider to the existing user
+                oauthLink = new UserOAuthProvider
+                {
+                    UserId = user.Id,
+                    Provider = providerLower,
+                    ProviderId = userInfo.Id!,
+                    Email = userInfo.Email,
+                    DisplayName = userInfo.Name,
+                    AvatarUrl = userInfo.Picture,
+                    LinkedAt = DateTime.UtcNow,
+                    LastUsedAt = DateTime.UtcNow
+                };
+                _dbContext.UserOAuthProviders.Add(oauthLink);
+
+                _logger.LogInformation("Auto-linked OAuth provider to existing user: {Email} ({Provider})", userInfo.Email, provider);
             }
 
             // Update avatar if not set
             if (string.IsNullOrEmpty(user.AvatarUrl) && !string.IsNullOrEmpty(userInfo.Picture))
             {
                 user.AvatarUrl = userInfo.Picture;
+                await _userManager.UpdateAsync(user);
             }
-
-            await _userManager.UpdateAsync(user);
         }
+
+        await _dbContext.SaveChangesAsync();
 
         // Check if account is active
         if (!user.IsActive)
@@ -1230,7 +1320,7 @@ public class AuthService : IAuthService
             ["client_secret"] = clientSecret!,
             ["redirect_uri"] = redirectUri,
             ["grant_type"] = "authorization_code",
-            ["scope"] = "openid email profile"
+            ["scope"] = "openid email profile User.Read"
         };
 
         var tokenResponse = await httpClient.PostAsync(
@@ -1272,13 +1362,296 @@ public class AuthService : IAuthService
             email = upnProp.GetString();
         }
 
+        // Try to fetch profile photo from Microsoft Graph
+        string? pictureUrl = null;
+        try
+        {
+            var photoResponse = await httpClient.GetAsync("https://graph.microsoft.com/v1.0/me/photo/$value");
+            if (photoResponse.IsSuccessStatusCode)
+            {
+                var photoBytes = await photoResponse.Content.ReadAsByteArrayAsync();
+                var contentType = photoResponse.Content.Headers.ContentType?.MediaType ?? "image/jpeg";
+                pictureUrl = $"data:{contentType};base64,{Convert.ToBase64String(photoBytes)}";
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to fetch Microsoft profile photo (non-critical)");
+        }
+
         return new OAuthUserInfo
         {
             Id = userInfo.TryGetProperty("id", out var id) ? id.GetString() : null,
             Email = email,
             Name = userInfo.TryGetProperty("displayName", out var name) ? name.GetString() : null,
-            Picture = null // Microsoft Graph requires separate API call for photo
+            Picture = pictureUrl
         };
+    }
+
+    public async Task DisconnectOAuthAsync(Guid userId, string provider, string password)
+    {
+        var user = await _userManager.FindByIdAsync(userId.ToString());
+        if (user == null)
+        {
+            throw new InvalidOperationException("USER_NOT_FOUND");
+        }
+
+        // Verify password before allowing disconnect
+        var isPasswordValid = await _userManager.CheckPasswordAsync(user, password);
+        if (!isPasswordValid)
+        {
+            throw new UnauthorizedAccessException("INVALID_PASSWORD");
+        }
+
+        // Check if the provider is linked in the new table
+        var oauthProvider = await _dbContext.UserOAuthProviders
+            .FirstOrDefaultAsync(p => p.UserId == userId && p.Provider == provider.ToLowerInvariant());
+
+        // Also check legacy fields
+        var isLegacyProvider = string.Equals(user.OAuthProvider, provider, StringComparison.OrdinalIgnoreCase);
+
+        if (oauthProvider == null && !isLegacyProvider)
+        {
+            throw new InvalidOperationException("PROVIDER_NOT_LINKED");
+        }
+
+        // Count remaining auth methods after disconnect
+        var hasPassword = await _userManager.HasPasswordAsync(user);
+        var otherProvidersCount = await _dbContext.UserOAuthProviders
+            .CountAsync(p => p.UserId == userId && p.Provider != provider.ToLowerInvariant());
+
+        // Check legacy provider isn't the only other method
+        var hasOtherLegacyProvider = !string.IsNullOrEmpty(user.OAuthProvider) &&
+            !string.Equals(user.OAuthProvider, provider, StringComparison.OrdinalIgnoreCase);
+
+        var willHaveAuthMethod = hasPassword || otherProvidersCount > 0 || hasOtherLegacyProvider;
+
+        if (!willHaveAuthMethod)
+        {
+            throw new InvalidOperationException("LAST_AUTH_METHOD");
+        }
+
+        // Remove from new table
+        if (oauthProvider != null)
+        {
+            _dbContext.UserOAuthProviders.Remove(oauthProvider);
+        }
+
+        // Remove legacy fields if they match
+        if (isLegacyProvider)
+        {
+            user.OAuthProvider = null;
+            user.OAuthProviderId = null;
+            user.UpdatedAt = DateTime.UtcNow;
+            await _userManager.UpdateAsync(user);
+        }
+
+        await _dbContext.SaveChangesAsync();
+
+        // Audit log
+        await LogAuthEventAsync(
+            user.Id,
+            user.Email,
+            AuthEventTypes.OAuthDisconnected,
+            true,
+            $"Disconnected OAuth provider: {provider}",
+            null,
+            null);
+
+        _logger.LogInformation("OAuth disconnected for user {UserId}: {Provider}", userId, provider);
+    }
+
+    public async Task<UserOAuthInfoResponse?> GetUserOAuthInfoAsync(Guid userId)
+    {
+        var user = await _userManager.FindByIdAsync(userId.ToString());
+        if (user == null)
+        {
+            return null;
+        }
+
+        var hasPassword = await _userManager.HasPasswordAsync(user);
+
+        // Check new table first, then legacy fields
+        var primaryProvider = await _dbContext.UserOAuthProviders
+            .Where(p => p.UserId == userId)
+            .OrderByDescending(p => p.LastUsedAt ?? p.LinkedAt)
+            .FirstOrDefaultAsync();
+
+        if (primaryProvider != null)
+        {
+            return new UserOAuthInfoResponse(
+                Provider: primaryProvider.Provider,
+                ProviderId: primaryProvider.ProviderId,
+                HasPassword: hasPassword
+            );
+        }
+
+        // Fall back to legacy fields
+        return new UserOAuthInfoResponse(
+            Provider: user.OAuthProvider,
+            ProviderId: user.OAuthProviderId,
+            HasPassword: hasPassword
+        );
+    }
+
+    public async Task<UserOAuthProvidersResponse> GetUserOAuthProvidersAsync(Guid userId)
+    {
+        var user = await _userManager.FindByIdAsync(userId.ToString());
+        if (user == null)
+        {
+            throw new InvalidOperationException("USER_NOT_FOUND");
+        }
+
+        var hasPassword = await _userManager.HasPasswordAsync(user);
+
+        // Get all linked providers from new table
+        var linkedProviders = await _dbContext.UserOAuthProviders
+            .Where(p => p.UserId == userId)
+            .OrderByDescending(p => p.LastUsedAt ?? p.LinkedAt)
+            .Select(p => new LinkedOAuthProviderDto(
+                p.Id,
+                p.Provider,
+                p.Email,
+                p.DisplayName,
+                p.AvatarUrl,
+                p.LinkedAt,
+                p.LastUsedAt
+            ))
+            .ToListAsync();
+
+        // Also include legacy provider if not already in the list
+        if (!string.IsNullOrEmpty(user.OAuthProvider) &&
+            !linkedProviders.Any(p => string.Equals(p.Provider, user.OAuthProvider, StringComparison.OrdinalIgnoreCase)))
+        {
+            linkedProviders.Add(new LinkedOAuthProviderDto(
+                Id: Guid.Empty, // Legacy provider has no ID
+                Provider: user.OAuthProvider,
+                Email: user.Email,
+                DisplayName: user.Name,
+                AvatarUrl: user.AvatarUrl,
+                LinkedAt: user.CreatedAt,
+                LastUsedAt: user.LastLoginAt
+            ));
+        }
+
+        // Determine available providers (ones not yet linked)
+        var linkedProviderNames = linkedProviders.Select(p => p.Provider.ToLowerInvariant()).ToHashSet();
+        var allProviders = new[] { "google", "microsoft" };
+        var availableProviders = allProviders.Where(p => !linkedProviderNames.Contains(p)).ToList();
+
+        return new UserOAuthProvidersResponse(
+            LinkedProviders: linkedProviders,
+            AvailableProviders: availableProviders,
+            HasPassword: hasPassword
+        );
+    }
+
+    public async Task<LinkedOAuthProviderDto> LinkOAuthProviderAsync(Guid userId, string provider, string code, string state)
+    {
+        var user = await _userManager.FindByIdAsync(userId.ToString());
+        if (user == null)
+        {
+            throw new InvalidOperationException("USER_NOT_FOUND");
+        }
+
+        // Verify state
+        if (string.IsNullOrEmpty(state))
+        {
+            throw new InvalidOperationException("MISSING_OAUTH_STATE");
+        }
+
+        var stateDataJson = await _cache.GetStringAsync($"oauth_state:{state}");
+        if (string.IsNullOrEmpty(stateDataJson))
+        {
+            throw new InvalidOperationException("INVALID_OAUTH_STATE");
+        }
+
+        await _cache.RemoveAsync($"oauth_state:{state}");
+
+        var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        var stateData = JsonSerializer.Deserialize<OAuthStateData>(stateDataJson, jsonOptions);
+        if (stateData == null || string.IsNullOrEmpty(stateData.Provider) ||
+            !string.Equals(stateData.Provider, provider, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("OAUTH_PROVIDER_MISMATCH");
+        }
+
+        // Check if provider is already linked
+        var existingLink = await _dbContext.UserOAuthProviders
+            .AnyAsync(p => p.UserId == userId && p.Provider == provider.ToLowerInvariant());
+
+        if (existingLink || string.Equals(user.OAuthProvider, provider, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("PROVIDER_ALREADY_LINKED");
+        }
+
+        // Exchange code for user info
+        var oauthSection = _configuration.GetSection("OAuth");
+        var callbackBaseUrl = oauthSection.GetValue<string>("CallbackBaseUrl") ?? "http://localhost:3000";
+
+        OAuthUserInfo? userInfo;
+        switch (provider.ToLowerInvariant())
+        {
+            case "google":
+                userInfo = await ExchangeGoogleCodeAsync(code, callbackBaseUrl);
+                break;
+            case "microsoft":
+                userInfo = await ExchangeMicrosoftCodeAsync(code, callbackBaseUrl);
+                break;
+            default:
+                throw new ArgumentException($"Unsupported OAuth provider: {provider}");
+        }
+
+        if (userInfo == null || string.IsNullOrEmpty(userInfo.Id))
+        {
+            throw new InvalidOperationException("FAILED_TO_GET_USER_INFO");
+        }
+
+        // Check if this provider ID is already linked to another user
+        var existingUserWithProvider = await _dbContext.UserOAuthProviders
+            .AnyAsync(p => p.Provider == provider.ToLowerInvariant() && p.ProviderId == userInfo.Id && p.UserId != userId);
+
+        if (existingUserWithProvider)
+        {
+            throw new InvalidOperationException("PROVIDER_LINKED_TO_ANOTHER_USER");
+        }
+
+        // Create the link
+        var oauthLink = new UserOAuthProvider
+        {
+            UserId = userId,
+            Provider = provider.ToLowerInvariant(),
+            ProviderId = userInfo.Id,
+            Email = userInfo.Email,
+            DisplayName = userInfo.Name,
+            AvatarUrl = userInfo.Picture,
+            LinkedAt = DateTime.UtcNow
+        };
+
+        _dbContext.UserOAuthProviders.Add(oauthLink);
+        await _dbContext.SaveChangesAsync();
+
+        // Audit log
+        await LogAuthEventAsync(
+            user.Id,
+            user.Email,
+            AuthEventTypes.OAuthLinked,
+            true,
+            $"Linked OAuth provider: {provider}",
+            null,
+            null);
+
+        _logger.LogInformation("OAuth provider linked for user {UserId}: {Provider}", userId, provider);
+
+        return new LinkedOAuthProviderDto(
+            Id: oauthLink.Id,
+            Provider: oauthLink.Provider,
+            Email: oauthLink.Email,
+            DisplayName: oauthLink.DisplayName,
+            AvatarUrl: oauthLink.AvatarUrl,
+            LinkedAt: oauthLink.LinkedAt,
+            LastUsedAt: null
+        );
     }
 
     #endregion
@@ -1572,7 +1945,10 @@ internal class TwoFactorSetupData
 
 internal class OAuthStateData
 {
+    [System.Text.Json.Serialization.JsonPropertyName("provider")]
     public string Provider { get; set; } = string.Empty;
+
+    [System.Text.Json.Serialization.JsonPropertyName("createdAt")]
     public DateTime CreatedAt { get; set; }
 }
 

@@ -82,6 +82,7 @@ public static class AuthEventTypes
     // OAuth events
     public const string OAuthLogin = "oauth_login";
     public const string OAuthLinked = "oauth_linked";
+    public const string OAuthDisconnected = "oauth_disconnected";
 
     // Account status events
     public const string AccountLocked = "account_locked";
