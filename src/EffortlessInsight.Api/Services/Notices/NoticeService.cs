@@ -988,32 +988,30 @@ public class NoticeServiceImpl : INoticeServiceExtended
             query = query.Where(n => n.ResponseDeadline <= filter.DeadlineTo.Value);
         }
 
-        // Full-text search with WebSearchToTsQuery for advanced query syntax
-        // Supports: "exact phrase", -excluded, OR operator, prefix:*
+        // Search: Direct matches on NoticeNumber and GSTIN (identifiers),
+        // plus pattern matching on other text fields
         if (!string.IsNullOrEmpty(filter.Search))
         {
             var searchTerm = filter.Search.Trim();
+            var searchPattern = $"%{searchTerm}%";
 
-            // Build comprehensive search vector from multiple fields
-            // Weighted: A (highest) = notice identifiers, B = metadata, C = content, D = tags
+            // Use ILike for case-insensitive pattern matching on all relevant fields
+            // This is simpler and more reliable than full-text search for identifier-like queries
             query = query.Where(n =>
-                EF.Functions.ToTsVector("english",
-                    // Primary identifiers (high relevance)
-                    (n.NoticeNumber ?? "") + " " +
-                    (n.Gstin ?? "") + " " +
-                    // Notice metadata
-                    (n.NoticeType ?? "") + " " +
-                    (n.NoticeCategory ?? "") + " " +
-                    (n.NoticeSubCategory ?? "") + " " +
-                    (n.IssuingAuthority ?? "") + " " +
-                    (n.IssuingOfficer ?? "") + " " +
-                    (n.Jurisdiction ?? "") + " " +
-                    // Content
-                    (n.OcrText ?? "") + " " +
-                    (n.Notes ?? "") + " " +
-                    // Tags (joined as space-separated)
-                    (n.Tags != null ? string.Join(" ", n.Tags) : ""))
-                .Matches(EF.Functions.WebSearchToTsQuery("english", searchTerm)));
+                // Direct match on Notice Number
+                (n.NoticeNumber != null && EF.Functions.ILike(n.NoticeNumber, searchPattern)) ||
+                // Direct match on GSTIN
+                (n.Gstin != null && EF.Functions.ILike(n.Gstin, searchPattern)) ||
+                // Match on Notice Type
+                (n.NoticeType != null && EF.Functions.ILike(n.NoticeType, searchPattern)) ||
+                // Match on Notice Category
+                (n.NoticeCategory != null && EF.Functions.ILike(n.NoticeCategory, searchPattern)) ||
+                // Match on Issuing Authority
+                (n.IssuingAuthority != null && EF.Functions.ILike(n.IssuingAuthority, searchPattern)) ||
+                // Match on Issuing Officer
+                (n.IssuingOfficer != null && EF.Functions.ILike(n.IssuingOfficer, searchPattern)) ||
+                // Match on Notes
+                (n.Notes != null && EF.Functions.ILike(n.Notes, searchPattern)));
         }
 
         // Get total count before pagination
