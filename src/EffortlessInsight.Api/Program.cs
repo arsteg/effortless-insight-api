@@ -222,6 +222,9 @@ EffortlessInsight.Api.Jobs.DataRetentionJobsExtensions.ConfigureDataRetentionJob
 // Configure scheduled report jobs
 EffortlessInsight.Api.Jobs.ReportingJobsExtensions.ConfigureReportingJobs(app);
 
+// Configure GSTN integration jobs (token refresh, notice sync, cleanup)
+EffortlessInsight.Api.Jobs.GstnJobsExtensions.ConfigureGstnJobs(app);
+
 // Apply migrations and seed data on startup in development
 if (app.Environment.IsDevelopment())
 {

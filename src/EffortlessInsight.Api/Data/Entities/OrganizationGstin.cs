@@ -110,4 +110,18 @@ public class OrganizationGstin : BaseEntity
     /// Whether this is the primary GSTIN for the organization
     /// </summary>
     public bool IsPrimary { get; set; }
+
+    // ============================================================================
+    // GSTN Portal Integration
+    // ============================================================================
+
+    /// <summary>
+    /// When notices were last synced from the GST portal for this GSTIN.
+    /// </summary>
+    public DateTime? LastSyncedAt { get; set; }
+
+    /// <summary>
+    /// Navigation property to the GSTN portal connection.
+    /// </summary>
+    public GstnConnection? GstnConnection { get; set; }
 }

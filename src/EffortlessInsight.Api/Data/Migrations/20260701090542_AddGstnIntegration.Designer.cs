@@ -6,18 +6,21 @@ using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.Data.Entities.Billing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using Pgvector;
 
 #nullable disable
 
-namespace EffortlessInsight.Api.Migrations
+namespace EffortlessInsight.Api.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260701090542_AddGstnIntegration")]
+    partial class AddGstnIntegration
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -4386,10 +4389,6 @@ namespace EffortlessInsight.Api.Migrations
                         .HasFilter("\"DeletedAt\" IS NULL");
 
                     b.HasIndex("UploadedById");
-
-                    b.HasIndex("OrganizationId", "GstnNoticeId")
-                        .HasDatabaseName("IX_Notices_Org_GstnNoticeId")
-                        .HasFilter("\"DeletedAt\" IS NULL AND \"GstnNoticeId\" IS NOT NULL");
 
                     b.HasIndex("OrganizationId", "Status", "ResponseDeadline")
                         .HasDatabaseName("IX_Notices_Org_Status_Deadline")

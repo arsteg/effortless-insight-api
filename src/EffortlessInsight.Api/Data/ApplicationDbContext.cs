@@ -142,6 +142,11 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
     // Data Export entities
     public DbSet<DataExport> DataExports => Set<DataExport>();
 
+    // GSTN Integration entities
+    public DbSet<GstnConnection> GstnConnections => Set<GstnConnection>();
+    public DbSet<GstnOtpSession> GstnOtpSessions => Set<GstnOtpSession>();
+    public DbSet<GstnSyncLog> GstnSyncLogs => Set<GstnSyncLog>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -549,6 +554,11 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
                 .HasFilter("\"DeletedAt\" IS NULL");
             entity.HasIndex(n => n.FileHash)
                 .HasFilter("\"DeletedAt\" IS NULL");
+
+            // Index for GSTN portal duplicate detection
+            entity.HasIndex(n => new { n.OrganizationId, n.GstnNoticeId })
+                .HasFilter("\"DeletedAt\" IS NULL AND \"GstnNoticeId\" IS NOT NULL")
+                .HasDatabaseName("IX_Notices_Org_GstnNoticeId");
 
             // Composite index for common queries
             entity.HasIndex(n => new { n.OrganizationId, n.Status, n.ResponseDeadline })
@@ -2433,6 +2443,79 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
                 .WithMany()
                 .HasForeignKey(e => e.RequestedById)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // GSTN Integration entities
+        modelBuilder.Entity<GstnConnection>(entity =>
+        {
+            // One connection per GSTIN
+            entity.HasIndex(e => e.OrganizationGstinId)
+                .IsUnique();
+
+            // Query optimization indexes
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => e.NextScheduledSyncAt)
+                .HasFilter("\"Status\" = 'connected' AND \"AutoSyncEnabled\" = true");
+            entity.HasIndex(e => e.TokenExpiresAt)
+                .HasFilter("\"Status\" = 'connected'");
+
+            entity.HasOne(e => e.OrganizationGstin)
+                .WithOne(g => g.GstnConnection)
+                .HasForeignKey<GstnConnection>(e => e.OrganizationGstinId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.ConnectedBy)
+                .WithMany()
+                .HasForeignKey(e => e.ConnectedById)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(e => e.DisconnectedBy)
+                .WithMany()
+                .HasForeignKey(e => e.DisconnectedById)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<GstnOtpSession>(entity =>
+        {
+            // Soft delete pattern with unique constraint
+            entity.HasIndex(e => new { e.OrganizationGstinId, e.Status })
+                .HasFilter("\"Status\" = 'pending'");
+
+            entity.HasIndex(e => e.ExpiresAt);
+
+            entity.HasOne(e => e.OrganizationGstin)
+                .WithMany()
+                .HasForeignKey(e => e.OrganizationGstinId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.InitiatedBy)
+                .WithMany()
+                .HasForeignKey(e => e.InitiatedById)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<GstnSyncLog>(entity =>
+        {
+            entity.HasIndex(e => e.GstnConnectionId);
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => e.StartedAt);
+            entity.HasIndex(e => e.CreatedAt);
+
+            // JSON columns
+            entity.Property(e => e.ImportedNoticeIds)
+                .HasColumnType("jsonb");
+            entity.Property(e => e.Metadata)
+                .HasColumnType("jsonb");
+
+            entity.HasOne(e => e.GstnConnection)
+                .WithMany(c => c.SyncLogs)
+                .HasForeignKey(e => e.GstnConnectionId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.TriggeredBy)
+                .WithMany()
+                .HasForeignKey(e => e.TriggeredById)
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         // Seed initial data

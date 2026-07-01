@@ -64,6 +64,12 @@ public static class ServiceExtensions
         services.AddScoped<IOrganizationManagementService, OrganizationManagementService>();
         services.AddScoped<IOrganizationDataMigrationService, OrganizationDataMigrationService>();
 
+        // Register GSTN integration services
+        services.AddScoped<Services.GstnIntegration.IGstnConnectionService, Services.GstnIntegration.GstnConnectionService>();
+        services.AddScoped<Services.GstnIntegration.IGstnAuthService, Services.GstnIntegration.GstnAuthService>();
+        services.AddScoped<Services.GstnIntegration.IGstnNoticeService, Services.GstnIntegration.GstnNoticeService>();
+        services.AddScoped<Services.GstnIntegration.IGspClient, Services.GstnIntegration.WhiteBooksGspClient>();
+
         // Register notice services
         services.AddScoped<IFileValidationService, FileValidationService>();
         services.AddScoped<INoticeWorkflowService, NoticeWorkflowService>();
@@ -90,6 +96,7 @@ public static class ServiceExtensions
         services.AddScoped<Jobs.OverdueNotificationJob>();
         services.AddScoped<Jobs.DataRetentionJob>();
         services.AddScoped<Jobs.ScheduledReportJob>();
+        services.AddScoped<Jobs.GstnJobs>();
 
         // Register billing services
         services.AddScoped<IPlanService, PlanService>();
@@ -396,6 +403,29 @@ public static class ServiceExtensions
         services.AddHttpClient("GeoLocation", client =>
         {
             client.Timeout = TimeSpan.FromSeconds(5);
+            client.DefaultRequestHeaders.Add("Accept", "application/json");
+            client.DefaultRequestHeaders.Add("User-Agent", "EffortlessInsight-API/1.0");
+        });
+
+        // Configure GSTN integration options
+        services.Configure<GstnOptions>(configuration.GetSection(GstnOptions.SectionName));
+        services.Configure<GspOptions>(configuration.GetSection(GspOptions.SectionName));
+
+        // WhiteBooks GSP HTTP Client for GSTN portal integration
+        var gspOptions = configuration.GetSection(GspOptions.SectionName).Get<GspOptions>()
+            ?? new GspOptions();
+
+        services.AddHttpClient<Services.GstnIntegration.WhiteBooksGspClient>(client =>
+        {
+            var whiteBooksConfig = gspOptions.WhiteBooks;
+            var baseUrl = whiteBooksConfig.EffectiveBaseUrl;
+
+            if (!string.IsNullOrEmpty(baseUrl))
+            {
+                client.BaseAddress = new Uri(baseUrl);
+            }
+
+            client.Timeout = TimeSpan.FromSeconds(whiteBooksConfig.TimeoutSeconds);
             client.DefaultRequestHeaders.Add("Accept", "application/json");
             client.DefaultRequestHeaders.Add("User-Agent", "EffortlessInsight-API/1.0");
         });

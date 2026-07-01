@@ -481,6 +481,13 @@ public class TestableApplicationDbContext : ApplicationDbContext
             entity.Property(e => e.Metadata).HasConversion(jsonConverterNullable);
         });
 
+        // Fix GstnSyncLog List and Dictionary properties for InMemory
+        modelBuilder.Entity<GstnSyncLog>(entity =>
+        {
+            entity.Property(e => e.ImportedNoticeIds).HasConversion(guidListNullableConverter);
+            entity.Property(e => e.Metadata).HasConversion(jsonConverterNullable);
+        });
+
         // Ignore value object types that are serialized as JSON (not separate tables)
         modelBuilder.Ignore<WorkflowAction>();
         modelBuilder.Ignore<AutoTransitionRule>();

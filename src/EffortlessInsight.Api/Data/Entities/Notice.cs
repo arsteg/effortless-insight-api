@@ -218,6 +218,45 @@ public class Notice : BaseEntity
     public string? Notes { get; set; }
 
     // ============================================================================
+    // GSTN Portal Integration
+    // ============================================================================
+
+    /// <summary>
+    /// Source of the notice: upload, manual, gstn_portal.
+    /// </summary>
+    [Required]
+    [MaxLength(30)]
+    public string Source { get; set; } = NoticeSource.Upload;
+
+    /// <summary>
+    /// Unique notice identifier from the GST portal.
+    /// </summary>
+    [MaxLength(100)]
+    public string? GstnNoticeId { get; set; }
+
+    /// <summary>
+    /// GST portal reference number for tracking.
+    /// </summary>
+    [MaxLength(100)]
+    public string? GstnReferenceNumber { get; set; }
+
+    /// <summary>
+    /// When this notice was fetched from the GST portal.
+    /// </summary>
+    public DateTime? FetchedFromGstnAt { get; set; }
+
+    /// <summary>
+    /// Whether the notice document has been archived from the portal.
+    /// </summary>
+    public bool IsDocumentArchived { get; set; }
+
+    /// <summary>
+    /// GSP correlation ID for the sync that imported this notice.
+    /// </summary>
+    [MaxLength(100)]
+    public string? GspCorrelationId { get; set; }
+
+    // ============================================================================
     // Soft Delete
     // ============================================================================
 
@@ -334,4 +373,29 @@ public static class DocumentType
     [
         Gstr2a, Gstr3b, PurchaseRegister, Invoices, BankStatement, Other
     ];
+}
+
+/// <summary>
+/// Notice source constants indicating how the notice was added to the system.
+/// </summary>
+public static class NoticeSource
+{
+    /// <summary>
+    /// Notice uploaded manually by user.
+    /// </summary>
+    public const string Upload = "upload";
+
+    /// <summary>
+    /// Notice created manually without document.
+    /// </summary>
+    public const string Manual = "manual";
+
+    /// <summary>
+    /// Notice fetched automatically from GST portal.
+    /// </summary>
+    public const string GstnPortal = "gstn_portal";
+
+    public static readonly string[] All = [Upload, Manual, GstnPortal];
+
+    public static bool IsValid(string source) => All.Contains(source);
 }
