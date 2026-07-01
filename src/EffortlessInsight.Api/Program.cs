@@ -108,6 +108,7 @@ builder.Services.AddNotificationServices(builder.Configuration);
 builder.Services.AddBillingServices(builder.Configuration);
 builder.Services.AddAdminServices(builder.Configuration);
 builder.Services.AddAdminAuthentication(builder.Configuration);
+builder.Services.AddWhatsAppServices(builder.Configuration);
 
 // Add Database Seeders
 builder.Services.AddScoped<WorkflowTemplateSeeder>();
@@ -133,7 +134,11 @@ builder.Services.Configure<IpRateLimitOptions>(options =>
         new() { Endpoint = "POST:/api/v1/auth/login", Period = "1m", Limit = 10 },
         new() { Endpoint = "POST:/api/v1/auth/otp/request", Period = "1h", Limit = 15 },
         new() { Endpoint = "POST:/api/v1/auth/forgot-password", Period = "1h", Limit = 10 },
-        new() { Endpoint = "POST:/api/v1/auth/2fa/login", Period = "5m", Limit = 10 }
+        new() { Endpoint = "POST:/api/v1/auth/2fa/login", Period = "5m", Limit = 10 },
+        // WhatsApp rate limits
+        new() { Endpoint = "POST:/api/v1/whatsapp/link/request", Period = "1h", Limit = 5 },
+        new() { Endpoint = "POST:/api/v1/whatsapp/link/verify", Period = "5m", Limit = 10 },
+        new() { Endpoint = "POST:/api/v1/whatsapp/webhook", Period = "1s", Limit = 100 }
     };
     // Add admin rate limit rules
     AdminServiceExtensions.AddAdminRateLimitRules(options);
@@ -224,6 +229,9 @@ EffortlessInsight.Api.Jobs.ReportingJobsExtensions.ConfigureReportingJobs(app);
 
 // Configure GSTN integration jobs (token refresh, notice sync, cleanup)
 EffortlessInsight.Api.Jobs.GstnJobsExtensions.ConfigureGstnJobs(app);
+
+// Configure WhatsApp bot jobs (cleanup, template sync, daily digest, reminders)
+EffortlessInsight.Api.Jobs.WhatsAppJobsExtensions.ConfigureWhatsAppJobs(app);
 
 // Apply migrations and seed data on startup in development
 if (app.Environment.IsDevelopment())

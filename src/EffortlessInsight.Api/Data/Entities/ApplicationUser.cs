@@ -68,6 +68,38 @@ public class ApplicationUser : IdentityUser<Guid>
     [MaxLength(255)]
     public string? MicrosoftId { get; set; }
 
+    // WhatsApp Integration
+    /// <summary>
+    /// WhatsApp phone number in E.164 format (e.g., 919876543210).
+    /// </summary>
+    [MaxLength(20)]
+    public string? WhatsAppPhoneNumber { get; set; }
+
+    /// <summary>
+    /// Whether WhatsApp number is verified.
+    /// </summary>
+    public bool WhatsAppVerified { get; set; }
+
+    /// <summary>
+    /// When WhatsApp was verified.
+    /// </summary>
+    public DateTime? WhatsAppVerifiedAt { get; set; }
+
+    /// <summary>
+    /// Whether user has opted in for WhatsApp notifications.
+    /// </summary>
+    public bool WhatsAppOptedIn { get; set; }
+
+    /// <summary>
+    /// When user opted in for WhatsApp notifications.
+    /// </summary>
+    public DateTime? WhatsAppOptedInAt { get; set; }
+
+    /// <summary>
+    /// Last WhatsApp message timestamp (for 24h window tracking).
+    /// </summary>
+    public DateTime? WhatsAppLastMessageAt { get; set; }
+
     // Activity tracking
     public DateTime? LastLoginAt { get; set; }
 
@@ -121,6 +153,16 @@ public class ApplicationUser : IdentityUser<Guid>
     /// OAuth providers linked to this user (supports multiple providers).
     /// </summary>
     public ICollection<UserOAuthProvider> OAuthProviders { get; set; } = [];
+
+    /// <summary>
+    /// WhatsApp verifications for this user.
+    /// </summary>
+    public ICollection<WhatsAppVerification> WhatsAppVerifications { get; set; } = [];
+
+    /// <summary>
+    /// WhatsApp sessions for this user.
+    /// </summary>
+    public ICollection<WhatsAppSession> WhatsAppSessions { get; set; } = [];
 }
 
 public class ApplicationRole : IdentityRole<Guid>

@@ -1,6 +1,7 @@
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.DTOs;
+using EffortlessInsight.Api.Jobs;
 using EffortlessInsight.Api.Services.Organizations;
 using Microsoft.EntityFrameworkCore;
 
@@ -168,6 +169,19 @@ public class TaskService : ITaskService
 
             // Send notification to assignees (fire and forget)
             _ = _notificationService.NotifyTaskAssignedAsync(task, otherAssignees, userId);
+
+            // Queue WhatsApp notifications for assignees
+            foreach (var assigneeId in otherAssignees)
+            {
+                try
+                {
+                    WhatsAppJobsExtensions.QueueTaskAssignmentNotification(task.Id, userId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to queue WhatsApp task assignment notification for task {TaskId}", task.Id);
+                }
+            }
         }
 
         return await GetTaskByIdAsync(task.Id, userId);
@@ -416,6 +430,19 @@ public class TaskService : ITaskService
             if (toAdd.Any())
             {
                 changes["newAssignees"] = toAdd;
+
+                // Queue WhatsApp notifications for new assignees
+                foreach (var assigneeId in toAdd)
+                {
+                    try
+                    {
+                        WhatsAppJobsExtensions.QueueTaskAssignmentNotification(task.Id, userId);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to queue WhatsApp task assignment notification for task {TaskId}", task.Id);
+                    }
+                }
             }
         }
 

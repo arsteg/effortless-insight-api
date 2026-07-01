@@ -147,6 +147,12 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
     public DbSet<GstnOtpSession> GstnOtpSessions => Set<GstnOtpSession>();
     public DbSet<GstnSyncLog> GstnSyncLogs => Set<GstnSyncLog>();
 
+    // WhatsApp Bot entities
+    public DbSet<WhatsAppVerification> WhatsAppVerifications => Set<WhatsAppVerification>();
+    public DbSet<WhatsAppSession> WhatsAppSessions => Set<WhatsAppSession>();
+    public DbSet<WhatsAppMessageLog> WhatsAppMessageLogs => Set<WhatsAppMessageLog>();
+    public DbSet<WhatsAppTemplate> WhatsAppTemplates => Set<WhatsAppTemplate>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -2516,6 +2522,121 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
                 .WithMany()
                 .HasForeignKey(e => e.TriggeredById)
                 .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ============================================================================
+        // WhatsApp Bot Entity Configurations
+        // ============================================================================
+
+        // WhatsApp Verification Configuration
+        modelBuilder.Entity<WhatsAppVerification>(entity =>
+        {
+            // Soft delete filter
+            entity.HasQueryFilter(v => v.DeletedAt == null);
+
+            // Performance indexes
+            entity.HasIndex(e => e.UserId);
+            entity.HasIndex(e => e.PhoneNumber);
+            entity.HasIndex(e => new { e.PhoneNumber, e.IsVerified, e.DeletedAt })
+                .HasDatabaseName("IX_WhatsAppVerifications_Phone_Active");
+            entity.HasIndex(e => e.ExpiresAt)
+                .HasFilter("\"IsVerified\" = false AND \"DeletedAt\" IS NULL");
+
+            // Relationship
+            entity.HasOne(e => e.User)
+                .WithMany(u => u.WhatsAppVerifications)
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // WhatsApp Session Configuration
+        modelBuilder.Entity<WhatsAppSession>(entity =>
+        {
+            // Soft delete filter
+            entity.HasQueryFilter(s => s.DeletedAt == null);
+
+            // Unique active session per phone number
+            entity.HasIndex(e => e.PhoneNumber)
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .IsUnique()
+                .HasDatabaseName("IX_WhatsAppSessions_Phone_Unique");
+
+            // Performance indexes
+            entity.HasIndex(e => e.UserId);
+            entity.HasIndex(e => e.SessionExpiresAt)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.LastInteractionAt);
+
+            // JSON columns
+            entity.Property(e => e.Context)
+                .HasColumnType("jsonb");
+
+            // Relationships
+            entity.HasOne(e => e.User)
+                .WithMany(u => u.WhatsAppSessions)
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            // Note: PendingVerificationId is intentionally not a FK
+            // to avoid circular dependency issues during verification flow
+        });
+
+        // WhatsApp Message Log Configuration
+        modelBuilder.Entity<WhatsAppMessageLog>(entity =>
+        {
+            // Soft delete filter
+            entity.HasQueryFilter(l => l.DeletedAt == null);
+
+            // Unique WAM ID (Meta's message ID)
+            entity.HasIndex(e => e.WamId)
+                .IsUnique()
+                .HasFilter("\"WamId\" IS NOT NULL AND \"WamId\" != ''")
+                .HasDatabaseName("IX_WhatsAppMessageLogs_WamId_Unique");
+
+            // Performance indexes
+            entity.HasIndex(e => e.UserId);
+            entity.HasIndex(e => e.OrganizationId);
+            entity.HasIndex(e => e.PhoneNumber);
+            entity.HasIndex(e => e.CreatedAt);
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => new { e.Status, e.RetryCount, e.CreatedAt })
+                .HasFilter("\"Direction\" = 'outbound' AND \"Status\" = 'failed'")
+                .HasDatabaseName("IX_WhatsAppMessageLogs_FailedRetry");
+
+            // Relationships
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(e => e.Organization)
+                .WithMany()
+                .HasForeignKey(e => e.OrganizationId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // WhatsApp Template Configuration
+        modelBuilder.Entity<WhatsAppTemplate>(entity =>
+        {
+            // Soft delete filter
+            entity.HasQueryFilter(t => t.DeletedAt == null);
+
+            // Unique template name per language
+            entity.HasIndex(e => new { e.Name, e.Language })
+                .IsUnique()
+                .HasDatabaseName("IX_WhatsAppTemplates_Name_Language_Unique");
+
+            // Performance indexes
+            entity.HasIndex(e => e.TemplateId);
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => e.IsActive)
+                .HasFilter("\"IsActive\" = true");
+
+            // JSON columns
+            entity.Property(e => e.Variables)
+                .HasColumnType("jsonb");
+            entity.Property(e => e.Buttons)
+                .HasColumnType("jsonb");
         });
 
         // Seed initial data

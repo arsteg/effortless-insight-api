@@ -269,6 +269,23 @@ public class NoticeProcessingJob : INoticeProcessingJob
             // Don't fail the job if notification fails
             _logger.LogWarning(ex, "Failed to send processing complete notification for notice {NoticeId}", notice.Id);
         }
+
+        // Send WhatsApp alert for high-risk notices
+        if (notice.Priority?.ToLower() == "high" || report.RiskLevel?.ToLower() == "high")
+        {
+            try
+            {
+                WhatsAppJobsExtensions.QueueHighRiskAlert(notice.Id);
+                _logger.LogInformation(
+                    "Queued WhatsApp high-risk alert for notice {NoticeId}",
+                    notice.Id);
+            }
+            catch (Exception ex)
+            {
+                // Don't fail the job if WhatsApp notification fails
+                _logger.LogWarning(ex, "Failed to queue WhatsApp high-risk alert for notice {NoticeId}", notice.Id);
+            }
+        }
     }
 
     private async Task HandleFailureAsync(
