@@ -984,18 +984,33 @@ public class AuthService : IAuthService
         return await Task.FromResult(new OAuthProvidersResponse(providers));
     }
 
-    public async Task<OAuthLoginUrlResponse> GetOAuthLoginUrlAsync(string provider, string? state, bool forceReauth = false)
+    public async Task<OAuthLoginUrlResponse> GetOAuthLoginUrlAsync(string provider, string? state, bool forceReauth = false, string? redirectUri = null, string? platform = null)
     {
         var oauthSection = _configuration.GetSection("OAuth");
         var callbackBaseUrl = oauthSection.GetValue<string>("CallbackBaseUrl") ?? "http://localhost:3000";
 
+        // For mobile apps, use a special API callback endpoint that returns JSON
+        // The mobile app will handle the callback and exchange the code for tokens
+        var isMobile = platform == "ios" || platform == "android" || !string.IsNullOrEmpty(redirectUri);
+        var effectiveCallbackBase = isMobile
+            ? oauthSection.GetValue<string>("MobileCallbackBaseUrl") ?? callbackBaseUrl
+            : callbackBaseUrl;
+
         // Generate state token for CSRF protection if not provided
         var stateToken = state ?? GenerateSecureToken();
 
-        // Store state in cache for verification on callback
+        // Store state in cache for verification on callback, including mobile redirect info
+        var stateData = new OAuthStateData
+        {
+            CreatedAt = DateTime.UtcNow,
+            Provider = provider,
+            RedirectUri = redirectUri,
+            Platform = platform
+        };
+
         await _cache.SetStringAsync(
             $"oauth_state:{stateToken}",
-            JsonSerializer.Serialize(new OAuthStateData { CreatedAt = DateTime.UtcNow, Provider = provider }),
+            JsonSerializer.Serialize(stateData),
             new DistributedCacheEntryOptions
             {
                 AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(10)
@@ -1010,7 +1025,7 @@ public class AuthService : IAuthService
                 {
                     throw new InvalidOperationException("GOOGLE_OAUTH_NOT_CONFIGURED");
                 }
-                var googleRedirectUri = Uri.EscapeDataString($"{callbackBaseUrl}/auth/callback/google");
+                var googleRedirectUri = Uri.EscapeDataString($"{effectiveCallbackBase}/auth/callback/google");
                 // Use prompt=login for forced re-authentication, otherwise prompt=consent for refresh token
                 var googlePrompt = forceReauth ? "login" : "consent";
                 loginUrl = $"https://accounts.google.com/o/oauth2/v2/auth?client_id={googleClientId}&redirect_uri={googleRedirectUri}&response_type=code&scope=email%20profile&state={stateToken}&access_type=offline&prompt={googlePrompt}";
@@ -1022,7 +1037,7 @@ public class AuthService : IAuthService
                 {
                     throw new InvalidOperationException("MICROSOFT_OAUTH_NOT_CONFIGURED");
                 }
-                var microsoftRedirectUri = Uri.EscapeDataString($"{callbackBaseUrl}/auth/callback/microsoft");
+                var microsoftRedirectUri = Uri.EscapeDataString($"{effectiveCallbackBase}/auth/callback/microsoft");
                 // Include User.Read scope for profile photo access
                 // Use prompt=login for forced re-authentication
                 var microsoftPrompt = forceReauth ? "&prompt=login" : "";
@@ -1033,7 +1048,7 @@ public class AuthService : IAuthService
                 throw new ArgumentException($"Unsupported OAuth provider: {provider}");
         }
 
-        return new OAuthLoginUrlResponse(loginUrl, provider);
+        return new OAuthLoginUrlResponse(loginUrl, stateToken);
     }
 
     public async Task<object> HandleOAuthCallbackAsync(string provider, string code, string state, string ipAddress, string? userAgent)
@@ -1243,6 +1258,19 @@ public class AuthService : IAuthService
         var loginResponse = await CreateLoginSessionAsync(user, false, null, ipAddress, userAgent);
 
         await LogLoginAuditAsync(user.Id, user.Email, true, null, ipAddress, userAgent, $"oauth_{provider}");
+
+        // If this is a mobile OAuth request, include the redirect URI in the response
+        if (!string.IsNullOrEmpty(stateData.RedirectUri))
+        {
+            return new LoginResponse(
+                loginResponse.AccessToken,
+                loginResponse.RefreshToken,
+                loginResponse.TokenType,
+                loginResponse.ExpiresIn,
+                loginResponse.User,
+                stateData.RedirectUri
+            );
+        }
 
         return loginResponse;
     }
@@ -1950,6 +1978,12 @@ internal class OAuthStateData
 
     [System.Text.Json.Serialization.JsonPropertyName("createdAt")]
     public DateTime CreatedAt { get; set; }
+
+    [System.Text.Json.Serialization.JsonPropertyName("redirectUri")]
+    public string? RedirectUri { get; set; }
+
+    [System.Text.Json.Serialization.JsonPropertyName("platform")]
+    public string? Platform { get; set; }
 }
 
 internal class OAuthUserInfo

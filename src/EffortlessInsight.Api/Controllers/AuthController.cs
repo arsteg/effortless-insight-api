@@ -764,14 +764,21 @@ public class AuthController : ControllerBase
     /// <param name="provider">OAuth provider (google, microsoft)</param>
     /// <param name="state">Optional custom state token</param>
     /// <param name="forceReauth">If true, forces re-authentication even if user is already signed in to provider</param>
+    /// <param name="redirectUri">Optional redirect URI for mobile apps (deep link scheme)</param>
+    /// <param name="platform">Optional platform identifier (web, ios, android)</param>
     [HttpGet("oauth/{provider}/login")]
     [ProducesResponseType(typeof(ApiResponse<OAuthLoginUrlResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
-    public async Task<IActionResult> GetOAuthLoginUrl(string provider, [FromQuery] string? state, [FromQuery] bool forceReauth = false)
+    public async Task<IActionResult> GetOAuthLoginUrl(
+        string provider,
+        [FromQuery] string? state,
+        [FromQuery] bool forceReauth = false,
+        [FromQuery] string? redirectUri = null,
+        [FromQuery] string? platform = null)
     {
         try
         {
-            var result = await _authService.GetOAuthLoginUrlAsync(provider, state, forceReauth);
+            var result = await _authService.GetOAuthLoginUrlAsync(provider, state, forceReauth, redirectUri, platform);
             return Ok(new ApiResponse<OAuthLoginUrlResponse>(true, result));
         }
         catch (InvalidOperationException ex) when (ex.Message.EndsWith("_NOT_CONFIGURED"))

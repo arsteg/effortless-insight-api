@@ -40,7 +40,8 @@ public record LoginResponse(
     string RefreshToken,
     string TokenType,
     int ExpiresIn,
-    UserDto User
+    UserDto User,
+    string? MobileRedirectUri = null
 );
 
 public record TwoFactorRequiredResponse(
@@ -97,8 +98,8 @@ public record TwoFactorDisableRequest(string Password);
 // OAuth DTOs
 public record OAuthProviderInfo(string Name, string DisplayName, bool Enabled);
 public record OAuthProvidersResponse(List<OAuthProviderInfo> Providers);
-public record OAuthLoginUrlResponse(string LoginUrl, string Provider);
-public record OAuthCallbackRequest(string Code, string State);
+public record OAuthLoginUrlResponse(string LoginUrl, string State);
+public record OAuthCallbackRequest(string Code, string State, DeviceInfo? DeviceInfo = null);
 public record DisconnectOAuthRequest(string Provider, string Password);
 
 /// <summary>

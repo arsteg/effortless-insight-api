@@ -38,7 +38,9 @@ public interface IAuthService
     /// <param name="provider">The OAuth provider (google, microsoft)</param>
     /// <param name="state">Optional custom state token (one will be generated if not provided)</param>
     /// <param name="forceReauth">If true, forces the user to re-authenticate even if already signed in</param>
-    Task<OAuthLoginUrlResponse> GetOAuthLoginUrlAsync(string provider, string? state, bool forceReauth = false);
+    /// <param name="redirectUri">Optional custom redirect URI for mobile apps (deep link)</param>
+    /// <param name="platform">Optional platform identifier (web, ios, android)</param>
+    Task<OAuthLoginUrlResponse> GetOAuthLoginUrlAsync(string provider, string? state, bool forceReauth = false, string? redirectUri = null, string? platform = null);
 
     /// <summary>
     /// Handle OAuth callback from provider. State is required for CSRF protection.
