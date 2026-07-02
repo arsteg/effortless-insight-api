@@ -16,8 +16,8 @@ using Pgvector;
 namespace EffortlessInsight.Api.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    [Migration("20260627083429_Initial")]
-    partial class Initial
+    [Migration("20260702082724_InitialMigration")]
+    partial class InitialMigration
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -175,6 +175,29 @@ namespace EffortlessInsight.Api.Data.Migrations
                         .HasDatabaseName("IX_AdminAuditLogs_Target");
 
                     b.ToTable("AdminAuditLogs");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Admin.AdminPasswordHistory", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("AdminUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PasswordHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AdminUserId");
+
+                    b.ToTable("AdminPasswordHistory");
                 });
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Admin.AdminSession", b =>
@@ -1167,6 +1190,25 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Property<string>("UserName")
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
+
+                    b.Property<DateTime?>("WhatsAppLastMessageAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("WhatsAppOptedIn")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("WhatsAppOptedInAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("WhatsAppPhoneNumber")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<bool>("WhatsAppVerified")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("WhatsAppVerifiedAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.HasKey("Id");
 
@@ -3418,7 +3460,7 @@ namespace EffortlessInsight.Api.Data.Migrations
 
                     b.Property<Vector>("Vector")
                         .IsRequired()
-                        .HasColumnType("vector(3072)");
+                        .HasColumnType("vector(1536)");
 
                     b.HasKey("Id");
 
@@ -3729,6 +3771,275 @@ namespace EffortlessInsight.Api.Data.Migrations
                         });
                 });
 
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.GstnConnection", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("AutoSyncEnabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("ConnectedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ConnectedById")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("ConsecutiveFailures")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DisconnectedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("DisconnectedById")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("DisconnectionReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("EncryptedAccessToken")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<string>("EncryptedRefreshToken")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<string>("GspProvider")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("GspSessionId")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<DateTime?>("LastSyncAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LastSyncError")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("NextScheduledSyncAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("OrganizationGstinId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("RefreshTokenExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<int>("SyncIntervalHours")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("TokenExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ConnectedById");
+
+                    b.HasIndex("DisconnectedById");
+
+                    b.HasIndex("NextScheduledSyncAt")
+                        .HasFilter("\"Status\" = 'connected' AND \"AutoSyncEnabled\" = true");
+
+                    b.HasIndex("OrganizationGstinId")
+                        .IsUnique();
+
+                    b.HasIndex("Status");
+
+                    b.HasIndex("TokenExpiresAt")
+                        .HasFilter("\"Status\" = 'connected'");
+
+                    b.ToTable("GstnConnections");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.GstnOtpSession", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("GspSessionId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<Guid>("InitiatedById")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("MaxAttempts")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("OrganizationGstinId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("OtpDestination")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("OtpDestinationType")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("RequestIpAddress")
+                        .HasMaxLength(45)
+                        .HasColumnType("character varying(45)");
+
+                    b.Property<string>("RequestUserAgent")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("VerifiedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.HasIndex("InitiatedById");
+
+                    b.HasIndex("OrganizationGstinId", "Status")
+                        .HasFilter("\"Status\" = 'pending'");
+
+                    b.ToTable("GstnOtpSessions");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.GstnSyncLog", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long?>("DurationMs")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("ErrorDetails")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasColumnType("text");
+
+                    b.Property<string>("GspCorrelationId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<Guid>("GstnConnectionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<List<Guid>>("ImportedNoticeIds")
+                        .HasColumnType("jsonb");
+
+                    b.Property<Dictionary<string, object>>("Metadata")
+                        .HasColumnType("jsonb");
+
+                    b.Property<int>("NoticesFailed")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("NoticesFound")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("NoticesImported")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("NoticesSkipped")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("StartedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<DateTime?>("SyncPeriodFrom")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("SyncPeriodTo")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("SyncType")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<string>("TriggerSource")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<Guid?>("TriggeredById")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAt");
+
+                    b.HasIndex("GstnConnectionId");
+
+                    b.HasIndex("StartedAt");
+
+                    b.HasIndex("Status");
+
+                    b.HasIndex("TriggeredById");
+
+                    b.ToTable("GstnSyncLogs");
+                });
+
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.KnowledgeBase", b =>
                 {
                     b.Property<Guid>("Id")
@@ -3876,6 +4187,9 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Property<DateOnly?>("ExtendedDeadline")
                         .HasColumnType("date");
 
+                    b.Property<DateTime?>("FetchedFromGstnAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("FileHash")
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
@@ -3901,6 +4215,10 @@ namespace EffortlessInsight.Api.Data.Migrations
                         .HasMaxLength(10)
                         .HasColumnType("character varying(10)");
 
+                    b.Property<string>("GspCorrelationId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
                     b.Property<string>("Gstin")
                         .HasMaxLength(15)
                         .HasColumnType("character varying(15)");
@@ -3908,11 +4226,22 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Property<Guid?>("GstinId")
                         .HasColumnType("uuid");
 
+                    b.Property<string>("GstnNoticeId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("GstnReferenceNumber")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
                     b.Property<DateOnly?>("HearingDate")
                         .HasColumnType("date");
 
                     b.Property<decimal?>("InterestAmount")
                         .HasColumnType("decimal(15,2)");
+
+                    b.Property<bool>("IsDocumentArchived")
+                        .HasColumnType("boolean");
 
                     b.Property<bool>("IsManualEntry")
                         .HasColumnType("boolean");
@@ -4012,6 +4341,11 @@ namespace EffortlessInsight.Api.Data.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)");
 
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(30)
@@ -4057,6 +4391,10 @@ namespace EffortlessInsight.Api.Data.Migrations
 
                     b.HasIndex("GstinId");
 
+                    b.HasIndex("NoticeNumber")
+                        .HasDatabaseName("IX_Notices_Number_Search")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
                     b.HasIndex("OrganizationId")
                         .HasFilter("\"DeletedAt\" IS NULL");
 
@@ -4070,6 +4408,10 @@ namespace EffortlessInsight.Api.Data.Migrations
                         .HasFilter("\"DeletedAt\" IS NULL");
 
                     b.HasIndex("UploadedById");
+
+                    b.HasIndex("OrganizationId", "GstnNoticeId")
+                        .HasDatabaseName("IX_Notices_Org_GstnNoticeId")
+                        .HasFilter("\"DeletedAt\" IS NULL AND \"GstnNoticeId\" IS NOT NULL");
 
                     b.HasIndex("OrganizationId", "Status", "ResponseDeadline")
                         .HasDatabaseName("IX_Notices_Org_Status_Deadline")
@@ -5162,14 +5504,17 @@ namespace EffortlessInsight.Api.Data.Migrations
 
                     b.Property<string>("Gstin")
                         .IsRequired()
-                        .HasMaxLength(15)
-                        .HasColumnType("character varying(15)");
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
 
                     b.Property<bool>("IsPrimary")
                         .HasColumnType("boolean");
 
                     b.Property<bool>("IsVerified")
                         .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("LastSyncedAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("LegalName")
                         .HasMaxLength(255)
@@ -5228,7 +5573,7 @@ namespace EffortlessInsight.Api.Data.Migrations
 
                     b.ToTable("OrganizationGstins", t =>
                         {
-                            t.HasCheckConstraint("CK_OrganizationGstins_Gstin_Format", "\"Gstin\" ~ '^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[A-Z0-9]{1}Z[A-Z0-9]{1}$'");
+                            t.HasCheckConstraint("CK_OrganizationGstins_Gstin_Format", "\"Gstin\" ~ '^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[A-Z0-9]{1}Z[A-Z0-9]{1}$' OR \"Gstin\" LIKE 'ENC:%'");
                         });
                 });
 
@@ -5726,6 +6071,155 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.HasIndex("UserId");
 
                     b.ToTable("RefreshTokens");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.ReportSchedule", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("ConsecutiveFailures")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CreatedById")
+                        .HasColumnType("uuid");
+
+                    b.Property<int?>("DayOfMonth")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("DayOfWeek")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ExportFormat")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("Frequency")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("LastRunAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LastRunError")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("LastRunStatus")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<DateTime?>("NextRunAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.PrimitiveCollection<List<string>>("Recipients")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<Guid>("SavedReportId")
+                        .HasColumnType("uuid");
+
+                    b.Property<TimeOnly>("TimeOfDay")
+                        .HasColumnType("time without time zone");
+
+                    b.Property<string>("TimeZone")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedById")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("SavedReportId")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("IsActive", "NextRunAt")
+                        .HasDatabaseName("IX_ReportSchedules_Active_NextRun")
+                        .HasFilter("\"DeletedAt\" IS NULL AND \"IsActive\" = true AND \"NextRunAt\" IS NOT NULL");
+
+                    b.ToTable("ReportSchedules");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.SavedReport", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<ReportConfiguration>("Configuration")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CreatedById")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<bool>("IsPublic")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("LastRunAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ReportType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<int>("RunCount")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedById")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("IsPublic")
+                        .HasFilter("\"DeletedAt\" IS NULL AND \"IsPublic\" = true");
+
+                    b.HasIndex("OrganizationId")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("ReportType")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.ToTable("SavedReports");
                 });
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.ScheduledNotification", b =>
@@ -6269,6 +6763,74 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.ToTable("UserNotificationPreferences");
                 });
 
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.UserOAuthProvider", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AccessTokenEncrypted")
+                        .HasColumnType("text");
+
+                    b.Property<string>("AvatarUrl")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("DisplayName")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<string>("Email")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<DateTime?>("LastUsedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("LinkedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Metadata")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("ProviderId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<string>("RefreshTokenEncrypted")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Scopes")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<DateTime?>("TokenExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("Provider", "ProviderId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_UserOAuthProviders_Provider_ProviderId");
+
+                    b.HasIndex("UserId", "Provider")
+                        .IsUnique()
+                        .HasDatabaseName("IX_UserOAuthProviders_UserId_Provider");
+
+                    b.ToTable("UserOAuthProviders");
+                });
+
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.UserSession", b =>
                 {
                     b.Property<Guid>("Id")
@@ -6343,6 +6905,338 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.HasIndex("UserId");
 
                     b.ToTable("UserSessions");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.WhatsAppMessageLog", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Command")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("Content")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DeliveredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Direction")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<string>("ErrorCode")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTime?>("LastRetryAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("MessageType")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<Guid?>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PhoneNumber")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<int?>("ProcessingTimeMs")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("ReadAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("RetryCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("TemplateName")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("WamId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAt");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.HasIndex("PhoneNumber");
+
+                    b.HasIndex("Status");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("WamId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_WhatsAppMessageLogs_WamId_Unique")
+                        .HasFilter("\"WamId\" IS NOT NULL AND \"WamId\" != ''");
+
+                    b.HasIndex("Status", "RetryCount", "CreatedAt")
+                        .HasDatabaseName("IX_WhatsAppMessageLogs_FailedRetry")
+                        .HasFilter("\"Direction\" = 'outbound' AND \"Status\" = 'failed'");
+
+                    b.ToTable("WhatsAppMessageLogs");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.WhatsAppSession", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Dictionary<string, object>>("Context")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("CurrentPage")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("CurrentState")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("LastInteractionAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("MessageCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("PendingEmail")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<Guid?>("PendingVerificationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PhoneNumber")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<DateTime>("SessionExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LastInteractionAt");
+
+                    b.HasIndex("PhoneNumber")
+                        .IsUnique()
+                        .HasDatabaseName("IX_WhatsAppSessions_Phone_Unique")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("SessionExpiresAt")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("WhatsAppSessions");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.WhatsAppTemplate", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("BodyText")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<List<WhatsAppTemplateButton>>("Buttons")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("FooterText")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("HeaderFormat")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("HeaderText")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Language")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<DateTime?>("LastUsedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("RejectionReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<DateTime>("SyncedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("TemplateId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("UsageCount")
+                        .HasColumnType("integer");
+
+                    b.Property<List<string>>("Variables")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IsActive")
+                        .HasFilter("\"IsActive\" = true");
+
+                    b.HasIndex("Status");
+
+                    b.HasIndex("TemplateId");
+
+                    b.HasIndex("Name", "Language")
+                        .IsUnique()
+                        .HasDatabaseName("IX_WhatsAppTemplates_Name_Language_Unique");
+
+                    b.ToTable("WhatsAppTemplates");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.WhatsAppVerification", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("InitiatedFrom")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<bool>("IsVerified")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("MaxAttempts")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("PhoneNumber")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("VerificationCode")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<DateTime?>("VerifiedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAt")
+                        .HasFilter("\"IsVerified\" = false AND \"DeletedAt\" IS NULL");
+
+                    b.HasIndex("PhoneNumber");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("PhoneNumber", "IsVerified", "DeletedAt")
+                        .HasDatabaseName("IX_WhatsAppVerifications_Phone_Active");
+
+                    b.ToTable("WhatsAppVerifications");
                 });
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.WorkflowAssignmentRule", b =>
@@ -7072,6 +7966,17 @@ namespace EffortlessInsight.Api.Data.Migrations
                 {
                     b.HasOne("EffortlessInsight.Api.Data.Entities.Admin.AdminUser", "AdminUser")
                         .WithMany("AuditLogs")
+                        .HasForeignKey("AdminUserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("AdminUser");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Admin.AdminPasswordHistory", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Admin.AdminUser", "AdminUser")
+                        .WithMany()
                         .HasForeignKey("AdminUserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
@@ -7839,6 +8744,68 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Navigation("ParentFolder");
                 });
 
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.GstnConnection", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "ConnectedBy")
+                        .WithMany()
+                        .HasForeignKey("ConnectedById")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "DisconnectedBy")
+                        .WithMany()
+                        .HasForeignKey("DisconnectedById")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.OrganizationGstin", "OrganizationGstin")
+                        .WithOne("GstnConnection")
+                        .HasForeignKey("EffortlessInsight.Api.Data.Entities.GstnConnection", "OrganizationGstinId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("ConnectedBy");
+
+                    b.Navigation("DisconnectedBy");
+
+                    b.Navigation("OrganizationGstin");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.GstnOtpSession", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "InitiatedBy")
+                        .WithMany()
+                        .HasForeignKey("InitiatedById")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.OrganizationGstin", "OrganizationGstin")
+                        .WithMany()
+                        .HasForeignKey("OrganizationGstinId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("InitiatedBy");
+
+                    b.Navigation("OrganizationGstin");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.GstnSyncLog", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.GstnConnection", "GstnConnection")
+                        .WithMany("SyncLogs")
+                        .HasForeignKey("GstnConnectionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "TriggeredBy")
+                        .WithMany()
+                        .HasForeignKey("TriggeredById")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("GstnConnection");
+
+                    b.Navigation("TriggeredBy");
+                });
+
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.LoginAudit", b =>
                 {
                     b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "User")
@@ -8290,6 +9257,44 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.ReportSchedule", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "CreatedBy")
+                        .WithMany()
+                        .HasForeignKey("CreatedById")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.SavedReport", "SavedReport")
+                        .WithMany("Schedules")
+                        .HasForeignKey("SavedReportId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("CreatedBy");
+
+                    b.Navigation("SavedReport");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.SavedReport", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "CreatedBy")
+                        .WithMany()
+                        .HasForeignKey("CreatedById")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Organization", "Organization")
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("CreatedBy");
+
+                    b.Navigation("Organization");
+                });
+
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.ScheduledNotification", b =>
                 {
                     b.HasOne("EffortlessInsight.Api.Data.Entities.Notification", "SentNotification")
@@ -8488,10 +9493,59 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.UserOAuthProvider", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "User")
+                        .WithMany("OAuthProviders")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.UserSession", b =>
                 {
                     b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "User")
                         .WithMany("Sessions")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.WhatsAppMessageLog", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Organization", "Organization")
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("Organization");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.WhatsAppSession", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "User")
+                        .WithMany("WhatsAppSessions")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.WhatsAppVerification", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "User")
+                        .WithMany("WhatsAppVerifications")
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
@@ -8708,9 +9762,15 @@ namespace EffortlessInsight.Api.Data.Migrations
 
                     b.Navigation("CreatedTasks");
 
+                    b.Navigation("OAuthProviders");
+
                     b.Navigation("Sessions");
 
                     b.Navigation("UploadedNotices");
+
+                    b.Navigation("WhatsAppSessions");
+
+                    b.Navigation("WhatsAppVerifications");
                 });
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.ApprovalChain", b =>
@@ -8770,6 +9830,11 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Navigation("Files");
 
                     b.Navigation("SubFolders");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.GstnConnection", b =>
+                {
+                    b.Navigation("SyncLogs");
                 });
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Notice", b =>
@@ -8855,6 +9920,16 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Navigation("Teams");
 
                     b.Navigation("Users");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.OrganizationGstin", b =>
+                {
+                    b.Navigation("GstnConnection");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.SavedReport", b =>
+                {
+                    b.Navigation("Schedules");
                 });
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Team", b =>

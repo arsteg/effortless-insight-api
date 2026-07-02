@@ -2643,6 +2643,76 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
                 .HasColumnType("jsonb");
         });
 
+        // ============================================================================
+        // REPORTING ENTITIES (GAP-RPT-006)
+        // ============================================================================
+
+        // SavedReport Configuration
+        modelBuilder.Entity<SavedReport>(entity =>
+        {
+            // Soft delete and tenant filtering
+            entity.HasQueryFilter(r =>
+                r.DeletedAt == null &&
+                (BypassTenantFilter || CurrentOrganizationId == null || r.OrganizationId == CurrentOrganizationId));
+
+            // Indexes
+            entity.HasIndex(e => e.OrganizationId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.CreatedById)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.ReportType)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.IsPublic)
+                .HasFilter("\"DeletedAt\" IS NULL AND \"IsPublic\" = true");
+
+            // Store Configuration as JSONB
+            entity.Property(e => e.Configuration)
+                .HasColumnType("jsonb");
+
+            // Relationships
+            entity.HasOne(e => e.Organization)
+                .WithMany()
+                .HasForeignKey(e => e.OrganizationId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.CreatedBy)
+                .WithMany()
+                .HasForeignKey(e => e.CreatedById)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // ReportSchedule Configuration
+        modelBuilder.Entity<ReportSchedule>(entity =>
+        {
+            // Soft delete filter
+            entity.HasQueryFilter(s => s.DeletedAt == null);
+
+            // Indexes for scheduled job queries
+            entity.HasIndex(e => new { e.IsActive, e.NextRunAt })
+                .HasFilter("\"DeletedAt\" IS NULL AND \"IsActive\" = true AND \"NextRunAt\" IS NOT NULL")
+                .HasDatabaseName("IX_ReportSchedules_Active_NextRun");
+
+            entity.HasIndex(e => e.SavedReportId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.CreatedById)
+                .HasFilter("\"DeletedAt\" IS NULL");
+
+            // Store Recipients list as JSONB
+            entity.Property(e => e.Recipients)
+                .HasColumnType("jsonb");
+
+            // Relationships
+            entity.HasOne(e => e.SavedReport)
+                .WithMany(r => r.Schedules)
+                .HasForeignKey(e => e.SavedReportId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.CreatedBy)
+                .WithMany()
+                .HasForeignKey(e => e.CreatedById)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
         // Seed initial data
         SeedData(modelBuilder);
     }
