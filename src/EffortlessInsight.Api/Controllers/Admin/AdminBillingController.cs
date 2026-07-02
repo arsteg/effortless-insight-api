@@ -2,6 +2,7 @@ using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities.Admin;
 using EffortlessInsight.Api.Data.Entities.Billing;
 using EffortlessInsight.Api.Services.Admin;
+using EffortlessInsight.Api.Services.Billing;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -17,15 +18,18 @@ public class AdminBillingController : AdminControllerBase
 {
     private readonly ApplicationDbContext _dbContext;
     private readonly IAdminAuditService _auditService;
+    private readonly IRazorpayService _razorpayService;
 
     public AdminBillingController(
         ApplicationDbContext dbContext,
         IAdminAuditService auditService,
+        IRazorpayService razorpayService,
         ILogger<AdminBillingController> logger)
         : base(logger)
     {
         _dbContext = dbContext;
         _auditService = auditService;
+        _razorpayService = razorpayService;
     }
 
     /// <summary>
@@ -325,48 +329,88 @@ public class AdminBillingController : AdminControllerBase
             return NotFoundResponse("Payment not found");
         }
 
-        if (payment.Status != "captured")
+        if (payment.Status != PaymentStatus.Captured && payment.Status != PaymentStatus.PartialRefund)
         {
             return Error("Payment cannot be refunded", "INVALID_PAYMENT_STATUS");
         }
 
-        var refundAmount = request.Amount ?? payment.Amount;
+        var refundAmountInPaise = request.Amount.HasValue ? (int)(request.Amount.Value * 100) : payment.Amount;
         var currentRefunded = payment.RefundAmount ?? 0;
-        if (refundAmount > payment.Amount - currentRefunded)
+        var availableForRefund = payment.Amount - currentRefunded;
+
+        if (refundAmountInPaise > availableForRefund)
         {
-            return Error("Refund amount exceeds available amount", "REFUND_EXCEEDS_AVAILABLE");
+            return Error(
+                $"Refund amount (₹{refundAmountInPaise / 100m:N2}) exceeds available amount (₹{availableForRefund / 100m:N2})",
+                "REFUND_EXCEEDS_AVAILABLE");
         }
 
-        // In production, call Razorpay refund API
-        // For now, update payment record
-
-        payment.RefundAmount = currentRefunded + (int)refundAmount;
-        payment.Status = payment.RefundAmount >= payment.Amount ? "refunded" : "partially_refunded";
-        payment.UpdatedAt = DateTime.UtcNow;
-        await _dbContext.SaveChangesAsync();
-
-        await _auditService.LogAsync(
-            CurrentAdminId,
-            AdminAuditActions.RefundProcessed,
-            AuditTargetTypes.Payment,
-            paymentId.ToString(),
-            $"Refund processed: ₹{refundAmount}",
-            new Dictionary<string, object>
-            {
-                ["amount"] = refundAmount,
-                ["reason"] = request.Reason,
-                ["original_amount"] = payment.Amount
-            },
-            ClientIpAddress,
-            ClientUserAgent,
-            CurrentSessionId);
-
-        return Success(new RefundResponse
+        // Check if we have the Razorpay payment ID
+        if (string.IsNullOrEmpty(payment.RazorpayPaymentId))
         {
-            RefundId = Guid.NewGuid().ToString(),
-            Amount = refundAmount,
-            Status = "processed"
-        });
+            return Error("Cannot process refund: No Razorpay payment ID found", "NO_RAZORPAY_PAYMENT_ID");
+        }
+
+        try
+        {
+            // Call actual Razorpay refund API
+            var refundResult = await _razorpayService.CreateRefundAsync(
+                payment.RazorpayPaymentId,
+                refundAmountInPaise,
+                request.Reason);
+
+            // Update payment record with refund details
+            payment.RefundId = refundResult.RefundId;
+            payment.RefundAmount = currentRefunded + refundResult.Amount;
+            payment.RefundReason = request.Reason;
+            payment.RefundedAt = DateTime.UtcNow;
+            payment.Status = payment.RefundAmount >= payment.Amount
+                ? PaymentStatus.Refunded
+                : PaymentStatus.PartialRefund;
+            payment.UpdatedAt = DateTime.UtcNow;
+
+            await _dbContext.SaveChangesAsync();
+
+            _logger.LogInformation(
+                "Admin refund processed: RefundId={RefundId}, PaymentId={PaymentId}, Amount={Amount}, AdminId={AdminId}",
+                refundResult.RefundId, paymentId, refundResult.Amount, CurrentAdminId);
+
+            await _auditService.LogAsync(
+                CurrentAdminId,
+                AdminAuditActions.RefundProcessed,
+                AuditTargetTypes.Payment,
+                paymentId.ToString(),
+                $"Refund processed: ₹{refundResult.Amount / 100m:N2}",
+                new Dictionary<string, object>
+                {
+                    ["refund_id"] = refundResult.RefundId,
+                    ["razorpay_payment_id"] = payment.RazorpayPaymentId,
+                    ["amount_paise"] = refundResult.Amount,
+                    ["amount_inr"] = refundResult.Amount / 100m,
+                    ["reason"] = request.Reason ?? "Admin refund",
+                    ["original_amount_paise"] = payment.Amount,
+                    ["total_refunded_paise"] = payment.RefundAmount,
+                    ["refund_status"] = refundResult.Status
+                },
+                ClientIpAddress,
+                ClientUserAgent,
+                CurrentSessionId);
+
+            return Success(new RefundResponse
+            {
+                RefundId = refundResult.RefundId,
+                Amount = refundResult.Amount / 100m, // Return in rupees for consistency
+                Status = refundResult.Status
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogError(ex,
+                "Failed to process Razorpay refund for payment {PaymentId}. RazorpayPaymentId: {RazorpayPaymentId}",
+                paymentId, payment.RazorpayPaymentId);
+
+            return Error($"Razorpay refund failed: {ex.Message}", "RAZORPAY_REFUND_FAILED");
+        }
     }
 
     /// <summary>

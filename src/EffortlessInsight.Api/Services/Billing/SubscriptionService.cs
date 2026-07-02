@@ -671,23 +671,28 @@ public class SubscriptionService : ISubscriptionService
                     org.SubscriptionStatus = "active";
                 }
 
-                // Create payment record
+                // Create payment record with actual Razorpay details
                 var paymentRecord = new Payment
                 {
                     OrganizationId = subscription.OrganizationId,
                     SubscriptionId = subscription.Id,
                     InvoiceId = invoice?.Id,
-                    Amount = renewalAmount,
+                    Amount = chargeResult.AmountCharged > 0 ? chargeResult.AmountCharged : renewalAmount,
                     Currency = plan.Currency,
                     Status = PaymentStatus.Captured,
-                    PaymentMethod = paymentMethod.Type,
+                    PaymentMethod = chargeResult.PaymentMethod ?? paymentMethod.Type,
                     PaymentMethodDetails = paymentMethod.Type == PaymentMethodType.Card
                         ? $"{paymentMethod.CardBrand} **** {paymentMethod.CardLast4}"
                         : paymentMethod.UpiId,
                     RazorpayPaymentId = chargeResult.PaymentId,
-                    CapturedAt = DateTime.UtcNow
+                    RazorpayOrderId = chargeResult.OrderId,
+                    CapturedAt = DateTime.UtcNow,
+                    ReceiptNumber = $"REC-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString()[..8].ToUpper()}"
                 };
                 _dbContext.Payments.Add(paymentRecord);
+
+                // Update payment method last used timestamp
+                paymentMethod.LastUsedAt = DateTime.UtcNow;
 
                 await _dbContext.SaveChangesAsync();
 
@@ -701,12 +706,19 @@ public class SubscriptionService : ISubscriptionService
                 await SendRenewalSuccessNotificationAsync(subscription, plan, renewalAmount, invoice);
 
                 _logger.LogInformation(
-                    "Renewal processed successfully for subscription {SubscriptionId}. Period: {Start} to {End}",
-                    subscriptionId, newPeriodStart, newPeriodEnd);
+                    "Renewal processed successfully for subscription {SubscriptionId}. " +
+                    "PaymentId: {PaymentId}, OrderId: {OrderId}, Period: {Start} to {End}",
+                    subscriptionId, chargeResult.PaymentId, chargeResult.OrderId, newPeriodStart, newPeriodEnd);
             }
             else
             {
-                await HandleRenewalFailureAsync(subscription, invoice, chargeResult.ErrorMessage ?? "Payment failed");
+                // Log detailed failure reason
+                _logger.LogWarning(
+                    "Renewal payment failed for subscription {SubscriptionId}. ErrorCode: {ErrorCode}, Error: {Error}",
+                    subscriptionId, chargeResult.ErrorCode, chargeResult.ErrorMessage);
+
+                await HandleRenewalFailureAsync(subscription, invoice,
+                    chargeResult.ErrorMessage ?? chargeResult.ErrorCode ?? "Payment failed");
             }
         }
         catch (Exception ex)
@@ -862,6 +874,7 @@ public class SubscriptionService : ISubscriptionService
 
     /// <summary>
     /// Charges the customer using their saved payment method.
+    /// Uses Razorpay's recurring payment API to charge the saved token.
     /// </summary>
     private async Task<ChargeResult> ChargeWithSavedPaymentMethodAsync(
         BillingSubscription subscription,
@@ -871,51 +884,152 @@ public class SubscriptionService : ISubscriptionService
     {
         try
         {
-            // If subscription has a Razorpay subscription ID, payments are handled automatically
-            if (!string.IsNullOrEmpty(subscription.RazorpaySubscriptionId))
+            // Validate payment method has required Razorpay tokens
+            if (string.IsNullOrEmpty(paymentMethod.RazorpayTokenId))
             {
+                _logger.LogWarning(
+                    "Payment method {PaymentMethodId} for subscription {SubscriptionId} has no Razorpay token",
+                    paymentMethod.Id, subscription.Id);
+
                 return new ChargeResult
                 {
-                    Success = true,
-                    PaymentId = $"auto_{DateTime.UtcNow:yyyyMMddHHmmss}"
+                    Success = false,
+                    ErrorCode = "NO_TOKEN",
+                    ErrorMessage = "Payment method does not have a valid token for recurring payments"
                 };
             }
 
-            // For one-time charges with saved payment method, create an order
-            var order = await _razorpayService.CreateOrderAsync(new CreateOrderRequest
+            if (string.IsNullOrEmpty(paymentMethod.RazorpayCustomerId))
             {
-                AmountInPaise = amountInPaise,
-                Currency = currency,
-                Receipt = $"renewal_{subscription.Id:N}_{DateTime.UtcNow:yyyyMMdd}",
-                OrganizationId = subscription.OrganizationId,
-                PlanCode = subscription.PlanCode,
-                SubscriptionId = subscription.Id
-            });
+                _logger.LogWarning(
+                    "Payment method {PaymentMethodId} for subscription {SubscriptionId} has no Razorpay customer ID",
+                    paymentMethod.Id, subscription.Id);
 
-            // Note: In production, you would use Razorpay's recurring payment API
-            // with the saved token to auto-charge. For now, we simulate success
-            // if the payment method is valid and active.
-            if (paymentMethod.IsActive && !string.IsNullOrEmpty(paymentMethod.RazorpayTokenId))
+                return new ChargeResult
+                {
+                    Success = false,
+                    ErrorCode = "NO_CUSTOMER",
+                    ErrorMessage = "Payment method does not have a valid customer ID for recurring payments"
+                };
+            }
+
+            if (!paymentMethod.IsActive)
             {
                 return new ChargeResult
                 {
-                    Success = true,
-                    PaymentId = $"pay_{order.Id}"
+                    Success = false,
+                    ErrorCode = "INACTIVE_PAYMENT_METHOD",
+                    ErrorMessage = "Payment method is not active"
                 };
+            }
+
+            // Check if card is expired (for card payments)
+            if (paymentMethod.Type == PaymentMethodType.Card &&
+                paymentMethod.CardExpiryYear.HasValue &&
+                paymentMethod.CardExpiryMonth.HasValue)
+            {
+                var expiryDate = new DateTime(
+                    paymentMethod.CardExpiryYear.Value,
+                    paymentMethod.CardExpiryMonth.Value,
+                    1).AddMonths(1).AddDays(-1); // End of expiry month
+
+                if (expiryDate < DateTime.UtcNow)
+                {
+                    _logger.LogWarning(
+                        "Card payment method {PaymentMethodId} has expired (expiry: {ExpiryMonth}/{ExpiryYear})",
+                        paymentMethod.Id, paymentMethod.CardExpiryMonth, paymentMethod.CardExpiryYear);
+
+                    return new ChargeResult
+                    {
+                        Success = false,
+                        ErrorCode = "CARD_EXPIRED",
+                        ErrorMessage = "The saved card has expired. Please update your payment method."
+                    };
+                }
+            }
+
+            // Get owner's contact details for payment notifications
+            var owner = await _dbContext.Users
+                .AsNoTracking()
+                .Where(u => u.OrganizationId == subscription.OrganizationId && u.Role == "owner")
+                .Select(u => new { u.Email, u.Mobile })
+                .FirstOrDefaultAsync();
+
+            // Get organization and plan for description
+            var org = subscription.Organization ?? await _dbContext.Organizations
+                .AsNoTracking()
+                .FirstOrDefaultAsync(o => o.Id == subscription.OrganizationId);
+
+            var plan = subscription.Plan ?? await _dbContext.SubscriptionPlans
+                .AsNoTracking()
+                .FirstOrDefaultAsync(p => p.Code == subscription.PlanCode);
+
+            var description = $"Subscription renewal - {plan?.DisplayName ?? subscription.PlanCode} ({subscription.BillingCycle})";
+
+            _logger.LogInformation(
+                "Initiating recurring payment for subscription {SubscriptionId}. Amount: {Amount} paise, Customer: {CustomerId}",
+                subscription.Id, amountInPaise, paymentMethod.RazorpayCustomerId);
+
+            // Create recurring payment using Razorpay API
+            var result = await _razorpayService.CreateRecurringPaymentAsync(new CreateRecurringPaymentRequest
+            {
+                CustomerId = paymentMethod.RazorpayCustomerId,
+                TokenId = paymentMethod.RazorpayTokenId,
+                AmountInPaise = amountInPaise,
+                Currency = currency,
+                Receipt = $"renewal_{subscription.Id:N}_{DateTime.UtcNow:yyyyMMddHHmmss}",
+                Description = description,
+                Email = owner?.Email,
+                Contact = owner?.Mobile,
+                Notes = new Dictionary<string, string>
+                {
+                    ["subscription_id"] = subscription.Id.ToString(),
+                    ["organization_id"] = subscription.OrganizationId.ToString(),
+                    ["organization_name"] = org?.Name ?? "Unknown",
+                    ["plan_code"] = subscription.PlanCode,
+                    ["billing_cycle"] = subscription.BillingCycle,
+                    ["type"] = "subscription_renewal"
+                }
+            });
+
+            if (result.Success)
+            {
+                _logger.LogInformation(
+                    "Recurring payment successful for subscription {SubscriptionId}. PaymentId: {PaymentId}, OrderId: {OrderId}",
+                    subscription.Id, result.PaymentId, result.OrderId);
+
+                // Update payment method last used timestamp
+                paymentMethod.LastUsedAt = DateTime.UtcNow;
+                // Note: We don't save here as the caller will save changes
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "Recurring payment failed for subscription {SubscriptionId}. Error: {ErrorCode} - {ErrorDescription}",
+                    subscription.Id, result.ErrorCode, result.ErrorDescription);
             }
 
             return new ChargeResult
             {
-                Success = false,
-                ErrorMessage = "Payment method is not valid for recurring charges"
+                Success = result.Success,
+                PaymentId = result.PaymentId,
+                OrderId = result.OrderId,
+                ErrorCode = result.ErrorCode,
+                ErrorMessage = result.ErrorDescription,
+                PaymentMethod = result.Method,
+                AmountCharged = result.Amount
             };
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to charge payment method for subscription {SubscriptionId}", subscription.Id);
+            _logger.LogError(ex,
+                "Exception while charging payment method for subscription {SubscriptionId}",
+                subscription.Id);
+
             return new ChargeResult
             {
                 Success = false,
+                ErrorCode = "INTERNAL_ERROR",
                 ErrorMessage = ex.Message
             };
         }
@@ -1079,19 +1193,27 @@ public class SubscriptionService : ISubscriptionService
                     org.SubscriptionStatus = "active";
                 }
 
-                // Create payment record
+                // Create payment record with actual Razorpay details
                 var paymentRecord = new Payment
                 {
                     OrganizationId = organizationId,
                     SubscriptionId = subscription.Id,
-                    Amount = renewalAmount,
+                    Amount = chargeResult.AmountCharged > 0 ? chargeResult.AmountCharged : renewalAmount,
                     Currency = plan.Currency,
                     Status = PaymentStatus.Captured,
-                    PaymentMethod = paymentMethod.Type,
+                    PaymentMethod = chargeResult.PaymentMethod ?? paymentMethod.Type,
+                    PaymentMethodDetails = paymentMethod.Type == PaymentMethodType.Card
+                        ? $"{paymentMethod.CardBrand} **** {paymentMethod.CardLast4}"
+                        : paymentMethod.UpiId,
                     RazorpayPaymentId = chargeResult.PaymentId,
-                    CapturedAt = DateTime.UtcNow
+                    RazorpayOrderId = chargeResult.OrderId,
+                    CapturedAt = DateTime.UtcNow,
+                    ReceiptNumber = $"REC-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString()[..8].ToUpper()}"
                 };
                 _dbContext.Payments.Add(paymentRecord);
+
+                // Update payment method last used timestamp
+                paymentMethod.LastUsedAt = DateTime.UtcNow;
 
                 await _dbContext.SaveChangesAsync();
 
@@ -1239,7 +1361,11 @@ public class SubscriptionService : ISubscriptionService
     {
         public bool Success { get; init; }
         public string? PaymentId { get; init; }
+        public string? OrderId { get; init; }
+        public string? ErrorCode { get; init; }
         public string? ErrorMessage { get; init; }
+        public string? PaymentMethod { get; init; }
+        public int AmountCharged { get; init; }
     }
 
     public async Task HandlePaymentFailureAsync(Guid subscriptionId, string failureReason)

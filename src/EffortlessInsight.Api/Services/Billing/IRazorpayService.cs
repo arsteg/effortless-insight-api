@@ -48,6 +48,12 @@ public interface IRazorpayService
     Task<RefundResult> CreateRefundAsync(string paymentId, int? amount = null, string? reason = null);
 
     /// <summary>
+    /// Creates a recurring payment using a saved token.
+    /// This uses Razorpay's second recurring payment flow.
+    /// </summary>
+    Task<RecurringPaymentResult> CreateRecurringPaymentAsync(CreateRecurringPaymentRequest request);
+
+    /// <summary>
     /// Verifies webhook signature.
     /// </summary>
     bool VerifyWebhookSignature(string payload, string signature);
@@ -147,4 +153,101 @@ public record RefundResult
     public string Status { get; init; } = string.Empty;
     public int Amount { get; init; }
     public string PaymentId { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// Request for creating a recurring payment with a saved token.
+/// </summary>
+public record CreateRecurringPaymentRequest
+{
+    /// <summary>
+    /// Razorpay customer ID.
+    /// </summary>
+    public string CustomerId { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Razorpay token ID from saved payment method.
+    /// </summary>
+    public string TokenId { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Amount to charge in paise.
+    /// </summary>
+    public int AmountInPaise { get; init; }
+
+    /// <summary>
+    /// Currency code (default INR).
+    /// </summary>
+    public string Currency { get; init; } = "INR";
+
+    /// <summary>
+    /// Receipt/reference for this payment.
+    /// </summary>
+    public string Receipt { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Description for the payment.
+    /// </summary>
+    public string Description { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Email for notifications.
+    /// </summary>
+    public string? Email { get; init; }
+
+    /// <summary>
+    /// Contact number for notifications.
+    /// </summary>
+    public string? Contact { get; init; }
+
+    /// <summary>
+    /// Additional notes/metadata.
+    /// </summary>
+    public Dictionary<string, string>? Notes { get; init; }
+}
+
+/// <summary>
+/// Result of a recurring payment operation.
+/// </summary>
+public record RecurringPaymentResult
+{
+    /// <summary>
+    /// Whether the payment was successful.
+    /// </summary>
+    public bool Success { get; init; }
+
+    /// <summary>
+    /// Razorpay payment ID (if successful).
+    /// </summary>
+    public string? PaymentId { get; init; }
+
+    /// <summary>
+    /// Razorpay order ID.
+    /// </summary>
+    public string? OrderId { get; init; }
+
+    /// <summary>
+    /// Payment status from Razorpay.
+    /// </summary>
+    public string Status { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Amount charged in paise.
+    /// </summary>
+    public int Amount { get; init; }
+
+    /// <summary>
+    /// Error code if payment failed.
+    /// </summary>
+    public string? ErrorCode { get; init; }
+
+    /// <summary>
+    /// Error description if payment failed.
+    /// </summary>
+    public string? ErrorDescription { get; init; }
+
+    /// <summary>
+    /// Payment method used (card, upi, etc.).
+    /// </summary>
+    public string? Method { get; init; }
 }

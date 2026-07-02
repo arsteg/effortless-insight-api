@@ -274,6 +274,133 @@ public class RazorpayService : IRazorpayService
         }
     }
 
+    public async Task<RecurringPaymentResult> CreateRecurringPaymentAsync(CreateRecurringPaymentRequest request)
+    {
+        try
+        {
+            _logger.LogInformation(
+                "Creating recurring payment for customer {CustomerId}, amount {Amount} paise",
+                request.CustomerId, request.AmountInPaise);
+
+            // Step 1: Create an order for the recurring payment
+            var orderOptions = new Dictionary<string, object>
+            {
+                { "amount", request.AmountInPaise },
+                { "currency", request.Currency },
+                { "receipt", request.Receipt },
+                { "payment_capture", 1 } // Auto-capture the payment
+            };
+
+            if (request.Notes != null && request.Notes.Count > 0)
+            {
+                orderOptions["notes"] = request.Notes;
+            }
+
+            Order order = await Task.Run(() => _client.Order.Create(orderOptions));
+            var orderId = (string)order["id"];
+
+            _logger.LogInformation("Created order {OrderId} for recurring payment", orderId);
+
+            // Step 2: Create payment using the saved token (recurring payment)
+            // This uses Razorpay's "Subsequent Recurring Payments" API
+            var paymentOptions = new Dictionary<string, object>
+            {
+                { "amount", request.AmountInPaise },
+                { "currency", request.Currency },
+                { "order_id", orderId },
+                { "customer_id", request.CustomerId },
+                { "token", request.TokenId },
+                { "recurring", "1" },
+                { "description", request.Description }
+            };
+
+            if (!string.IsNullOrEmpty(request.Email))
+            {
+                paymentOptions["email"] = request.Email;
+            }
+
+            if (!string.IsNullOrEmpty(request.Contact))
+            {
+                paymentOptions["contact"] = request.Contact;
+            }
+
+            if (request.Notes != null && request.Notes.Count > 0)
+            {
+                paymentOptions["notes"] = request.Notes;
+            }
+
+            // Create the recurring payment
+            Payment payment = await Task.Run(() => _client.Payment.CreateRecurringPayment(paymentOptions));
+
+            var paymentId = (string)payment["id"];
+            var status = (string)payment["status"];
+
+            _logger.LogInformation(
+                "Created recurring payment {PaymentId} with status {Status} for order {OrderId}",
+                paymentId, status, orderId);
+
+            // Check if payment was successful
+            var isSuccess = status == "captured" || status == "authorized";
+
+            return new RecurringPaymentResult
+            {
+                Success = isSuccess,
+                PaymentId = paymentId,
+                OrderId = orderId,
+                Status = status,
+                Amount = Convert.ToInt32(payment["amount"]),
+                Method = payment["method"]?.ToString(),
+                ErrorCode = !isSuccess ? payment["error_code"]?.ToString() : null,
+                ErrorDescription = !isSuccess ? payment["error_description"]?.ToString() : null
+            };
+        }
+        catch (Razorpay.Api.Errors.BadRequestError ex)
+        {
+            _logger.LogWarning(ex,
+                "Razorpay bad request for recurring payment. Customer: {CustomerId}, Token: {TokenId}",
+                request.CustomerId, request.TokenId);
+
+            return new RecurringPaymentResult
+            {
+                Success = false,
+                Status = "failed",
+                Amount = request.AmountInPaise,
+                ErrorCode = "BAD_REQUEST",
+                ErrorDescription = ex.Message
+            };
+        }
+        catch (Razorpay.Api.Errors.GatewayError ex)
+        {
+            _logger.LogWarning(ex,
+                "Payment gateway error for recurring payment. Customer: {CustomerId}",
+                request.CustomerId);
+
+            return new RecurringPaymentResult
+            {
+                Success = false,
+                Status = "failed",
+                Amount = request.AmountInPaise,
+                ErrorCode = "GATEWAY_ERROR",
+                ErrorDescription = ex.Message
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Failed to create recurring payment for customer {CustomerId}",
+                request.CustomerId);
+
+            return new RecurringPaymentResult
+            {
+                Success = false,
+                Status = "failed",
+                Amount = request.AmountInPaise,
+                ErrorCode = "INTERNAL_ERROR",
+                ErrorDescription = ex.Message
+            };
+        }
+    }
+
     public bool VerifyWebhookSignature(string payload, string signature)
     {
         try
