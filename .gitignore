@@ -484,3 +484,6 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+src/EffortlessInsight.Api/appsettings.json
+src/EffortlessInsight.Api/appsettings.json
+src/EffortlessInsight.Api/appsettings.Production.json

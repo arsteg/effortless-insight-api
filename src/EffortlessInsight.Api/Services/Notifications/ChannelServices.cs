@@ -9,9 +9,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Options;
 using Resend;
-using Twilio;
-using Twilio.Rest.Api.V2010.Account;
-using Twilio.Types;
 using FcmNotification = FirebaseAdmin.Messaging.Notification;
 
 namespace EffortlessInsight.Api.Services.Notifications;
@@ -119,106 +116,39 @@ public class ResendEmailService : IEmailChannelService
 
 #endregion
 
-#region SMS Channel Service (Twilio)
+#region SMS Channel Service (Disabled)
 
 /// <summary>
-/// Twilio SMS channel service implementation
+/// No-op SMS channel service implementation.
+/// SMS functionality is disabled. To enable, integrate with a provider (e.g., Twilio, AWS SNS).
 /// </summary>
-public class TwilioSmsService : ISmsChannelService
+public class DisabledSmsService : ISmsChannelService
 {
-    private readonly TwilioOptions _options;
-    private readonly ILogger<TwilioSmsService> _logger;
-    private bool _initialized;
+    private readonly ILogger<DisabledSmsService> _logger;
 
-    public TwilioSmsService(
-        IOptions<TwilioOptions> options,
-        ILogger<TwilioSmsService> logger)
+    public DisabledSmsService(ILogger<DisabledSmsService> logger)
     {
-        _options = options.Value;
         _logger = logger;
-        InitializeTwilio();
-    }
-
-    private void InitializeTwilio()
-    {
-        if (_initialized || string.IsNullOrEmpty(_options.AccountSid))
-            return;
-
-        TwilioClient.Init(_options.AccountSid, _options.AuthToken);
-        _initialized = true;
     }
 
     /// <inheritdoc />
-    public async Task<ChannelSendResult> SendAsync(SmsNotificationMessage message, CancellationToken cancellationToken = default)
+    public Task<ChannelSendResult> SendAsync(SmsNotificationMessage message, CancellationToken cancellationToken = default)
     {
-        try
-        {
-            InitializeTwilio();
-
-            var formattedPhone = FormatPhoneNumber(message.ToPhone);
-
-            var createOptions = new CreateMessageOptions(new PhoneNumber(formattedPhone))
-            {
-                Body = message.Body
-            };
-
-            // Use messaging service if configured, otherwise use from number
-            if (!string.IsNullOrEmpty(_options.MessagingServiceSid))
-            {
-                createOptions.MessagingServiceSid = _options.MessagingServiceSid;
-            }
-            else
-            {
-                createOptions.From = new PhoneNumber(_options.SmsFromNumber);
-            }
-
-            // Set up status callback
-            if (!string.IsNullOrEmpty(_options.WebhookBaseUrl))
-            {
-                createOptions.StatusCallback = new Uri($"{_options.WebhookBaseUrl}/webhooks/twilio/sms/status");
-            }
-
-            var twilioMessage = await MessageResource.CreateAsync(createOptions);
-
-            if (twilioMessage.Status == MessageResource.StatusEnum.Failed ||
-                twilioMessage.Status == MessageResource.StatusEnum.Undelivered)
-            {
-                _logger.LogError("SMS send failed: {ErrorCode} - {ErrorMessage}",
-                    twilioMessage.ErrorCode, twilioMessage.ErrorMessage);
-                return new ChannelSendResult(false, twilioMessage.Sid, twilioMessage.ErrorCode?.ToString(), twilioMessage.ErrorMessage);
-            }
-
-            _logger.LogInformation("SMS sent successfully to {Phone}, SID: {Sid}", formattedPhone, twilioMessage.Sid);
-            return new ChannelSendResult(true, twilioMessage.Sid, null, null);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to send SMS to {Phone}", message.ToPhone);
-            return new ChannelSendResult(false, null, "EXCEPTION", ex.Message);
-        }
+        _logger.LogWarning("SMS channel is disabled. Message to {Phone} was not sent.", message.ToPhone);
+        return Task.FromResult(new ChannelSendResult(false, null, "DISABLED", "SMS channel is not configured"));
     }
 
     /// <inheritdoc />
-    public async Task<ChannelSendResult> SendOtpAsync(string phone, string code, int expiryMinutes = 10, CancellationToken cancellationToken = default)
+    public Task<ChannelSendResult> SendOtpAsync(string phone, string code, int expiryMinutes = 10, CancellationToken cancellationToken = default)
     {
-        var body = $"Your EffortlessInsight OTP is {code}. Valid for {expiryMinutes} minutes. Do not share this code.";
-        return await SendAsync(new SmsNotificationMessage(phone, body, null, true), cancellationToken);
+        _logger.LogWarning("SMS channel is disabled. OTP to {Phone} was not sent.", phone);
+        return Task.FromResult(new ChannelSendResult(false, null, "DISABLED", "SMS channel is not configured"));
     }
 
     /// <inheritdoc />
-    public async Task<bool> VerifyConfigurationAsync(CancellationToken cancellationToken = default)
+    public Task<bool> VerifyConfigurationAsync(CancellationToken cancellationToken = default)
     {
-        try
-        {
-            InitializeTwilio();
-            var account = await Twilio.Rest.Api.V2010.AccountResource.FetchAsync(_options.AccountSid);
-            return account != null;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Twilio configuration verification failed");
-            return false;
-        }
+        return Task.FromResult(false);
     }
 
     /// <inheritdoc />
@@ -251,87 +181,74 @@ public class TwilioSmsService : ISmsChannelService
 
 #endregion
 
-#region WhatsApp Channel Service (Twilio)
+#region WhatsApp Channel Service (Meta WhatsApp Business API)
 
 /// <summary>
-/// Twilio WhatsApp channel service implementation with conversation tracking.
-/// Tracks the 24-hour conversation window for WhatsApp Business API compliance.
+/// Meta WhatsApp Business API channel service implementation.
+/// Uses the Graph API for sending WhatsApp messages.
 /// </summary>
-public class TwilioWhatsAppService : IWhatsAppChannelService
+public class MetaWhatsAppChannelService : IWhatsAppChannelService
 {
-    private readonly TwilioOptions _options;
-    private readonly ILogger<TwilioWhatsAppService> _logger;
+    private readonly WhatsApp.IMetaWhatsAppClient _client;
+    private readonly Options.MetaWhatsAppOptions _options;
     private readonly IDistributedCache _cache;
-    private bool _initialized;
+    private readonly ILogger<MetaWhatsAppChannelService> _logger;
 
     // WhatsApp conversation window is 24 hours
     private const string ConversationKeyPrefix = "whatsapp:conversation:";
-    private static readonly TimeSpan ConversationWindowDuration = TimeSpan.FromHours(24);
 
-    public TwilioWhatsAppService(
-        IOptions<TwilioOptions> options,
-        ILogger<TwilioWhatsAppService> logger,
-        IDistributedCache cache)
+    public MetaWhatsAppChannelService(
+        WhatsApp.IMetaWhatsAppClient client,
+        IOptions<Options.MetaWhatsAppOptions> options,
+        IDistributedCache cache,
+        ILogger<MetaWhatsAppChannelService> logger)
     {
+        _client = client;
         _options = options.Value;
-        _logger = logger;
         _cache = cache;
-        InitializeTwilio();
-    }
-
-    private void InitializeTwilio()
-    {
-        if (_initialized || string.IsNullOrEmpty(_options.AccountSid))
-            return;
-
-        TwilioClient.Init(_options.AccountSid, _options.AuthToken);
-        _initialized = true;
+        _logger = logger;
     }
 
     /// <inheritdoc />
     public async Task<ChannelSendResult> SendTemplateAsync(WhatsAppTemplateMessage message, CancellationToken cancellationToken = default)
     {
+        if (!_options.Enabled)
+        {
+            _logger.LogWarning("WhatsApp channel is disabled. Template message to {Phone} was not sent.", message.ToPhone);
+            return new ChannelSendResult(false, null, "DISABLED", "WhatsApp channel is not enabled");
+        }
+
         try
         {
-            InitializeTwilio();
+            var formattedPhone = _client.FormatPhoneNumber(message.ToPhone);
 
-            var formattedPhone = FormatWhatsAppNumber(message.ToPhone);
+            // Convert variables dictionary to template parameters
+            var bodyParameters = message.Variables
+                .Select(v => new DTOs.TemplateParameter("text", v.Value))
+                .ToList();
 
-            // For WhatsApp templates, we need to use content templates
-            var createOptions = new CreateMessageOptions(new PhoneNumber(formattedPhone))
+            var result = await _client.SendTemplateMessageAsync(
+                formattedPhone,
+                message.TemplateSid, // TemplateSid is used as template name
+                message.Language,
+                bodyParameters,
+                null,
+                cancellationToken);
+
+            if (result.Success)
             {
-                From = new PhoneNumber(_options.WhatsAppFromNumber),
-                ContentSid = message.TemplateSid
-            };
-
-            // Add template variables
-            if (message.Variables.Any())
-            {
-                createOptions.ContentVariables = System.Text.Json.JsonSerializer.Serialize(message.Variables);
+                _logger.LogInformation("WhatsApp template sent successfully to {Phone}, MessageId: {MessageId}",
+                    _client.MaskPhoneNumber(formattedPhone), result.MessageId);
+                return new ChannelSendResult(true, result.MessageId, null, null);
             }
 
-            // Set up status callback
-            if (!string.IsNullOrEmpty(_options.WebhookBaseUrl))
-            {
-                createOptions.StatusCallback = new Uri($"{_options.WebhookBaseUrl}/webhooks/twilio/whatsapp/status");
-            }
-
-            var twilioMessage = await MessageResource.CreateAsync(createOptions);
-
-            if (twilioMessage.Status == MessageResource.StatusEnum.Failed ||
-                twilioMessage.Status == MessageResource.StatusEnum.Undelivered)
-            {
-                _logger.LogError("WhatsApp send failed: {ErrorCode} - {ErrorMessage}",
-                    twilioMessage.ErrorCode, twilioMessage.ErrorMessage);
-                return new ChannelSendResult(false, twilioMessage.Sid, twilioMessage.ErrorCode?.ToString(), twilioMessage.ErrorMessage);
-            }
-
-            _logger.LogInformation("WhatsApp sent successfully to {Phone}, SID: {Sid}", formattedPhone, twilioMessage.Sid);
-            return new ChannelSendResult(true, twilioMessage.Sid, null, null);
+            _logger.LogError("WhatsApp template send failed: {ErrorCode} - {ErrorMessage}",
+                result.ErrorCode, result.ErrorMessage);
+            return new ChannelSendResult(false, null, result.ErrorCode, result.ErrorMessage);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to send WhatsApp to {Phone}", message.ToPhone);
+            _logger.LogError(ex, "Failed to send WhatsApp template to {Phone}", message.ToPhone);
             return new ChannelSendResult(false, null, "EXCEPTION", ex.Message);
         }
     }
@@ -339,23 +256,32 @@ public class TwilioWhatsAppService : IWhatsAppChannelService
     /// <inheritdoc />
     public async Task<ChannelSendResult> SendTextAsync(string toPhone, string text, string? notificationId = null, CancellationToken cancellationToken = default)
     {
+        if (!_options.Enabled)
+        {
+            _logger.LogWarning("WhatsApp channel is disabled. Text message to {Phone} was not sent.", toPhone);
+            return new ChannelSendResult(false, null, "DISABLED", "WhatsApp channel is not enabled");
+        }
+
         try
         {
-            InitializeTwilio();
+            var formattedPhone = _client.FormatPhoneNumber(toPhone);
 
-            var formattedPhone = FormatWhatsAppNumber(toPhone);
+            var result = await _client.SendTextMessageAsync(
+                formattedPhone,
+                text,
+                false,
+                cancellationToken);
 
-            var createOptions = new CreateMessageOptions(new PhoneNumber(formattedPhone))
+            if (result.Success)
             {
-                From = new PhoneNumber(_options.WhatsAppFromNumber),
-                Body = text
-            };
+                _logger.LogInformation("WhatsApp text sent successfully to {Phone}, MessageId: {MessageId}",
+                    _client.MaskPhoneNumber(formattedPhone), result.MessageId);
+                return new ChannelSendResult(true, result.MessageId, null, null);
+            }
 
-            var twilioMessage = await MessageResource.CreateAsync(createOptions);
-
-            return twilioMessage.Status == MessageResource.StatusEnum.Failed
-                ? new ChannelSendResult(false, twilioMessage.Sid, twilioMessage.ErrorCode?.ToString(), twilioMessage.ErrorMessage)
-                : new ChannelSendResult(true, twilioMessage.Sid, null, null);
+            _logger.LogError("WhatsApp text send failed: {ErrorCode} - {ErrorMessage}",
+                result.ErrorCode, result.ErrorMessage);
+            return new ChannelSendResult(false, null, result.ErrorCode, result.ErrorMessage);
         }
         catch (Exception ex)
         {
@@ -378,10 +304,11 @@ public class TwilioWhatsAppService : IWhatsAppChannelService
                 return false;
             }
 
-            // Check if within 24-hour window
+            // Check if within conversation window
             if (DateTime.TryParse(lastInteraction, out var interactionTime))
             {
-                var isActive = DateTime.UtcNow - interactionTime < ConversationWindowDuration;
+                var windowDuration = TimeSpan.FromHours(_options.ConversationWindowHours);
+                var isActive = DateTime.UtcNow - interactionTime < windowDuration;
                 _logger.LogDebug(
                     "WhatsApp conversation check for {Phone}: active={IsActive}, lastInteraction={LastInteraction}",
                     normalizedPhone, isActive, interactionTime);
@@ -393,117 +320,33 @@ public class TwilioWhatsAppService : IWhatsAppChannelService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to check WhatsApp conversation status for {Phone}", phone);
-            // Return true to allow template messages as fallback
-            return true;
+            // Return false to fall back to template messages
+            return false;
         }
     }
 
-    /// <summary>
-    /// Records user interaction to start/extend the 24-hour conversation window.
-    /// Call this when receiving an incoming message from the user.
-    /// </summary>
-    public async Task RecordUserInteractionAsync(string phone, CancellationToken cancellationToken = default)
+    /// <inheritdoc />
+    public string FormatWhatsAppNumber(string phone)
     {
-        try
-        {
-            var normalizedPhone = NormalizePhoneForCache(phone);
-            var cacheKey = $"{ConversationKeyPrefix}{normalizedPhone}";
-
-            await _cache.SetStringAsync(
-                cacheKey,
-                DateTime.UtcNow.ToString("O"),
-                new DistributedCacheEntryOptions
-                {
-                    AbsoluteExpirationRelativeToNow = ConversationWindowDuration
-                },
-                cancellationToken);
-
-            _logger.LogInformation("WhatsApp conversation window opened/extended for {Phone}", normalizedPhone);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to record WhatsApp interaction for {Phone}", phone);
-        }
+        return _client.FormatPhoneNumber(phone);
     }
 
-    /// <summary>
-    /// Gets the remaining time in the conversation window.
-    /// </summary>
-    public async Task<TimeSpan?> GetConversationTimeRemainingAsync(string phone, CancellationToken cancellationToken = default)
+    /// <inheritdoc />
+    public Task<bool> VerifyConfigurationAsync(CancellationToken cancellationToken = default)
     {
-        try
-        {
-            var normalizedPhone = NormalizePhoneForCache(phone);
-            var cacheKey = $"{ConversationKeyPrefix}{normalizedPhone}";
-            var lastInteraction = await _cache.GetStringAsync(cacheKey, cancellationToken);
+        // Check if required configuration is present
+        var isConfigured = _options.Enabled &&
+                          !string.IsNullOrEmpty(_options.AccessToken) &&
+                          !string.IsNullOrEmpty(_options.PhoneNumberId) &&
+                          !string.IsNullOrEmpty(_options.WabaId);
 
-            if (!string.IsNullOrEmpty(lastInteraction) && DateTime.TryParse(lastInteraction, out var interactionTime))
-            {
-                var elapsed = DateTime.UtcNow - interactionTime;
-                if (elapsed < ConversationWindowDuration)
-                {
-                    return ConversationWindowDuration - elapsed;
-                }
-            }
-
-            return null;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to get WhatsApp conversation time remaining for {Phone}", phone);
-            return null;
-        }
+        return Task.FromResult(isConfigured);
     }
 
     private static string NormalizePhoneForCache(string phone)
     {
         // Extract just the digits for consistent cache keys
         return new string(phone.Where(char.IsDigit).ToArray());
-    }
-
-    /// <inheritdoc />
-    public string FormatWhatsAppNumber(string phone)
-    {
-        var digits = new string(phone.Where(char.IsDigit).ToArray());
-
-        // Indian phone numbers
-        if (digits.Length == 10)
-        {
-            return $"whatsapp:+91{digits}";
-        }
-
-        if (digits.Length == 12 && digits.StartsWith("91"))
-        {
-            return $"whatsapp:+{digits}";
-        }
-
-        if (phone.StartsWith("whatsapp:"))
-        {
-            return phone;
-        }
-
-        if (phone.StartsWith("+"))
-        {
-            return $"whatsapp:{phone}";
-        }
-
-        return $"whatsapp:+{digits}";
-    }
-
-    /// <inheritdoc />
-    public async Task<bool> VerifyConfigurationAsync(CancellationToken cancellationToken = default)
-    {
-        try
-        {
-            InitializeTwilio();
-            var account = await Twilio.Rest.Api.V2010.AccountResource.FetchAsync(_options.AccountSid);
-            return account != null;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Twilio WhatsApp configuration verification failed");
-            return false;
-        }
     }
 }
 
@@ -531,21 +374,50 @@ public class FirebasePushService : IPushChannelService
 
     private void InitializeFirebase()
     {
-        if (_initialized || string.IsNullOrEmpty(_options.CredentialsJson))
+        if (_initialized)
             return;
+
+        // Check if Firebase is configured
+        if (!_options.IsConfigured)
+        {
+            _logger.LogWarning("Firebase is not configured. Push notifications will not work.");
+            return;
+        }
 
         try
         {
             if (FirebaseApp.DefaultInstance == null)
             {
-                var credential = GoogleCredential.FromJson(_options.CredentialsJson);
+                GoogleCredential credential;
+
+                // Try to load from credentials file path first
+                if (!string.IsNullOrEmpty(_options.CredentialsPath) && System.IO.File.Exists(_options.CredentialsPath))
+                {
+                    credential = GoogleCredential.FromFile(_options.CredentialsPath);
+                    _logger.LogInformation("Firebase initialized from credentials file: {Path}", _options.CredentialsPath);
+                }
+                else
+                {
+                    // Generate credentials JSON from individual fields
+                    var credentialsJson = _options.GetCredentialsJson();
+                    if (string.IsNullOrEmpty(credentialsJson))
+                    {
+                        _logger.LogWarning("Firebase credentials could not be generated. Check ProjectId, PrivateKey, and ClientEmail configuration.");
+                        return;
+                    }
+
+                    credential = GoogleCredential.FromJson(credentialsJson);
+                    _logger.LogInformation("Firebase initialized from individual credential fields for project: {ProjectId}", _options.ProjectId);
+                }
+
                 FirebaseApp.Create(new AppOptions { Credential = credential, ProjectId = _options.ProjectId });
             }
             _initialized = true;
+            _logger.LogInformation("Firebase Admin SDK initialized successfully");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to initialize Firebase");
+            _logger.LogError(ex, "Failed to initialize Firebase Admin SDK");
         }
     }
 

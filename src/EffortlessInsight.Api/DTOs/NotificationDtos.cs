@@ -385,33 +385,6 @@ public record SendGridEvent
     public string? Status { get; init; }
 }
 
-/// <summary>
-/// Twilio SMS status callback
-/// </summary>
-public record TwilioSmsStatusCallback
-{
-    public string? MessageSid { get; init; }
-    public string? MessageStatus { get; init; }
-    public string? ErrorCode { get; init; }
-    public string? ErrorMessage { get; init; }
-    public string? To { get; init; }
-    public string? From { get; init; }
-}
-
-/// <summary>
-/// Twilio WhatsApp status callback
-/// </summary>
-public record TwilioWhatsAppStatusCallback
-{
-    public string? MessageSid { get; init; }
-    public string? MessageStatus { get; init; }
-    public string? ErrorCode { get; init; }
-    public string? ErrorMessage { get; init; }
-    public string? To { get; init; }
-    public string? From { get; init; }
-    public string? ChannelPrefix { get; init; }
-}
-
 #endregion
 
 #region Template DTOs

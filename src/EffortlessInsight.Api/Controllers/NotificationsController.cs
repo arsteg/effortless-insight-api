@@ -341,64 +341,6 @@ public class NotificationWebhooksController : ControllerBase
     }
 
     /// <summary>
-    /// Twilio SMS status webhook
-    /// </summary>
-    [HttpPost("twilio/sms/status")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    public async Task<IActionResult> TwilioSmsStatus([FromForm] TwilioSmsStatusCallback callback)
-    {
-        try
-        {
-            if (string.IsNullOrEmpty(callback.MessageSid))
-                return Ok();
-
-            var status = MapTwilioStatus(callback.MessageStatus);
-
-            await _deliveryService.UpdateStatusAsync(
-                "sms",
-                callback.MessageSid,
-                status,
-                DateTime.UtcNow,
-                callback.ErrorMessage);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error processing Twilio SMS callback: {MessageSid}", callback.MessageSid);
-        }
-
-        return Ok();
-    }
-
-    /// <summary>
-    /// Twilio WhatsApp status webhook
-    /// </summary>
-    [HttpPost("twilio/whatsapp/status")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    public async Task<IActionResult> TwilioWhatsAppStatus([FromForm] TwilioWhatsAppStatusCallback callback)
-    {
-        try
-        {
-            if (string.IsNullOrEmpty(callback.MessageSid))
-                return Ok();
-
-            var status = MapTwilioStatus(callback.MessageStatus);
-
-            await _deliveryService.UpdateStatusAsync(
-                "whatsapp",
-                callback.MessageSid,
-                status,
-                DateTime.UtcNow,
-                callback.ErrorMessage);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error processing Twilio WhatsApp callback: {MessageSid}", callback.MessageSid);
-        }
-
-        return Ok();
-    }
-
-    /// <summary>
     /// Email unsubscribe endpoint
     /// </summary>
     [AllowAnonymous]
@@ -448,18 +390,6 @@ public class NotificationWebhooksController : ControllerBase
         "dropped" => "failed",
         "deferred" => "pending",
         "processed" => "sent",
-        _ => "pending"
-    };
-
-    private static string MapTwilioStatus(string? status) => status?.ToLower() switch
-    {
-        "delivered" => "delivered",
-        "sent" => "sent",
-        "failed" => "failed",
-        "undelivered" => "failed",
-        "read" => "opened",
-        "queued" => "queued",
-        "sending" => "pending",
         _ => "pending"
     };
 }

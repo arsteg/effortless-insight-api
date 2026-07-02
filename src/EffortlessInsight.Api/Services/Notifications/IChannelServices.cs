@@ -262,25 +262,6 @@ public class ResendOptions
     public string? ReplyTo { get; set; }
 }
 
-/// <summary>
-/// Twilio configuration options
-/// </summary>
-public class TwilioOptions
-{
-    public const string SectionName = "Twilio";
-
-    public string AccountSid { get; set; } = string.Empty;
-    public string AuthToken { get; set; } = string.Empty;
-    public string SmsFromNumber { get; set; } = string.Empty;
-    public string? MessagingServiceSid { get; set; }
-    public string WhatsAppFromNumber { get; set; } = string.Empty;
-    public string WebhookBaseUrl { get; set; } = string.Empty;
-
-    /// <summary>
-    /// WhatsApp template SIDs
-    /// </summary>
-    public Dictionary<string, string> WhatsAppTemplates { get; set; } = new();
-}
 
 /// <summary>
 /// Firebase configuration options
@@ -290,7 +271,13 @@ public class FirebaseOptions
     public const string SectionName = "Firebase";
 
     public string ProjectId { get; set; } = string.Empty;
-    public string CredentialsJson { get; set; } = string.Empty;
+    public string PrivateKey { get; set; } = string.Empty;
+    public string ClientEmail { get; set; } = string.Empty;
+    public string? CredentialsPath { get; set; }
+
+    /// <summary>
+    /// Web Push VAPID keys for browser push notifications
+    /// </summary>
     public string? VapidPublicKey { get; set; }
     public string? VapidPrivateKey { get; set; }
 
@@ -298,6 +285,40 @@ public class FirebaseOptions
     /// Android notification channel configurations
     /// </summary>
     public Dictionary<string, AndroidChannelConfig> AndroidChannels { get; set; } = new();
+
+    /// <summary>
+    /// Generate credentials JSON from individual fields for Firebase Admin SDK
+    /// </summary>
+    public string GetCredentialsJson()
+    {
+        if (string.IsNullOrEmpty(ProjectId) || string.IsNullOrEmpty(PrivateKey) || string.IsNullOrEmpty(ClientEmail))
+            return string.Empty;
+
+        // Handle escaped newlines in private key (common when passed via environment variables)
+        var normalizedPrivateKey = PrivateKey.Replace("\\n", "\n");
+
+        return System.Text.Json.JsonSerializer.Serialize(new
+        {
+            type = "service_account",
+            project_id = ProjectId,
+            private_key_id = "firebase-admin-key",
+            private_key = normalizedPrivateKey,
+            client_email = ClientEmail,
+            client_id = "",
+            auth_uri = "https://accounts.google.com/o/oauth2/auth",
+            token_uri = "https://oauth2.googleapis.com/token",
+            auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs",
+            client_x509_cert_url = $"https://www.googleapis.com/robot/v1/metadata/x509/{Uri.EscapeDataString(ClientEmail)}"
+        });
+    }
+
+    /// <summary>
+    /// Check if Firebase is properly configured
+    /// </summary>
+    public bool IsConfigured =>
+        !string.IsNullOrEmpty(ProjectId) &&
+        !string.IsNullOrEmpty(PrivateKey) &&
+        !string.IsNullOrEmpty(ClientEmail);
 }
 
 /// <summary>

@@ -16,7 +16,6 @@ public static class NotificationServiceExtensions
     {
         // Configure options
         services.Configure<ResendOptions>(configuration.GetSection(ResendOptions.SectionName));
-        services.Configure<TwilioOptions>(configuration.GetSection(TwilioOptions.SectionName));
         services.Configure<FirebaseOptions>(configuration.GetSection(FirebaseOptions.SectionName));
 
         // Register Resend client
@@ -40,9 +39,9 @@ public static class NotificationServiceExtensions
 
         // Channel services
         services.AddScoped<IEmailChannelService, ResendEmailService>();
-        services.AddScoped<ISmsChannelService, TwilioSmsService>();
+        services.AddScoped<ISmsChannelService, DisabledSmsService>();
         services.AddScoped<IPushChannelService, FirebasePushService>();
-        services.AddScoped<IWhatsAppChannelService, TwilioWhatsAppService>();
+        services.AddScoped<IWhatsAppChannelService, MetaWhatsAppChannelService>();
         services.AddScoped<IInAppChannelService, InAppNotificationService>();
 
         // SignalR connection manager (singleton for shared state)
