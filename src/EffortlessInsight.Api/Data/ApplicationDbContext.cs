@@ -153,6 +153,10 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
     public DbSet<WhatsAppMessageLog> WhatsAppMessageLogs => Set<WhatsAppMessageLog>();
     public DbSet<WhatsAppTemplate> WhatsAppTemplates => Set<WhatsAppTemplate>();
 
+    // Reporting entities (GAP-RPT-006)
+    public DbSet<SavedReport> SavedReports => Set<SavedReport>();
+    public DbSet<ReportSchedule> ReportSchedules => Set<ReportSchedule>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
