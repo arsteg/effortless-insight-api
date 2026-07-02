@@ -171,12 +171,12 @@ var encryptionService = app.Services.GetRequiredService<EffortlessInsight.Api.Se
 EffortlessInsight.Api.Services.Encryption.FieldEncryptionServiceAccessor.SetInstance(encryptionService);
 
 // Configure the HTTP request pipeline
-if (app.Environment.IsDevelopment())
-{
-    app.UseDeveloperExceptionPage(); // Show detailed errors
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+//if (app.Environment.IsDevelopment())
+//{
+app.UseDeveloperExceptionPage(); // Show detailed errors
+app.UseSwagger();
+app.UseSwaggerUI();
+//}
 
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseMiddleware<RequestLoggingMiddleware>();
@@ -234,24 +234,24 @@ EffortlessInsight.Api.Jobs.GstnJobsExtensions.ConfigureGstnJobs(app);
 EffortlessInsight.Api.Jobs.WhatsAppJobsExtensions.ConfigureWhatsAppJobs(app);
 
 // Apply migrations and seed data on startup in development
-if (app.Environment.IsDevelopment())
-{
-    using var scope = app.Services.CreateScope();
-    var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-    await dbContext.Database.MigrateAsync();
+//if (app.Environment.IsDevelopment())
+//{
+using var scope = app.Services.CreateScope();
+var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+await dbContext.Database.MigrateAsync();
 
-    // Seed default workflow template
-    var workflowSeeder = scope.ServiceProvider.GetRequiredService<WorkflowTemplateSeeder>();
-    await workflowSeeder.SeedAsync();
+// Seed default workflow template
+var workflowSeeder = scope.ServiceProvider.GetRequiredService<WorkflowTemplateSeeder>();
+await workflowSeeder.SeedAsync();
 
-    // Seed initial admin user (from environment variables)
-    var adminSeeder = scope.ServiceProvider.GetRequiredService<AdminUserSeeder>();
-    await adminSeeder.SeedAsync();
+// Seed initial admin user (from environment variables)
+var adminSeeder = scope.ServiceProvider.GetRequiredService<AdminUserSeeder>();
+await adminSeeder.SeedAsync();
 
-    // Seed default notification templates
-    var templateService = scope.ServiceProvider.GetRequiredService<EffortlessInsight.Api.Services.Notifications.INotificationTemplateService>();
-    await templateService.SeedDefaultTemplatesAsync();
-}
+// Seed default notification templates
+var templateService = scope.ServiceProvider.GetRequiredService<EffortlessInsight.Api.Services.Notifications.INotificationTemplateService>();
+await templateService.SeedDefaultTemplatesAsync();
+//}
 
 Log.Information("EffortlessInsight API starting...");
 
