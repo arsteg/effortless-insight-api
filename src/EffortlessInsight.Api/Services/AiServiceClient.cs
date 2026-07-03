@@ -100,18 +100,40 @@ public class AiServiceClientImpl : IAiServiceClient
     }
 
     /// <summary>
-    /// Generate a draft response for a notice.
+    /// Generate a draft response for a notice (simple version).
     /// </summary>
     /// <param name="noticeId">The notice ID to generate a response for.</param>
     /// <returns>Generated draft response text.</returns>
     public async Task<string> GenerateResponseDraftAsync(Guid noticeId)
     {
-        _logger.LogInformation("Requesting response draft for notice {NoticeId}", noticeId);
+        var result = await GenerateResponseDraftAsync(noticeId, new GenerateResponseOptions());
+        if (!result.Success)
+        {
+            throw new InvalidOperationException($"Failed to generate response: {result.Error}");
+        }
+        return result.Draft ?? string.Empty;
+    }
+
+    /// <summary>
+    /// Generate a draft response for a notice with options.
+    /// </summary>
+    /// <param name="noticeId">The notice ID to generate a response for.</param>
+    /// <param name="options">Options for response generation.</param>
+    /// <returns>Generated draft response with metadata.</returns>
+    public async Task<GenerateResponseResult> GenerateResponseDraftAsync(Guid noticeId, GenerateResponseOptions options)
+    {
+        _logger.LogInformation(
+            "Requesting response draft for notice {NoticeId}. Tone: {Tone}, Language: {Language}",
+            noticeId, options.Tone, options.Language);
 
         var request = new GenerateResponseRequest
         {
             NoticeId = noticeId,
-            Tone = "formal",
+            Tone = options.Tone,
+            Language = options.Language,
+            PointsToAddress = options.PointsToAddress,
+            AdditionalInstructions = options.AdditionalInstructions,
+            Context = options.Context,
             IncludeCaseLaw = true
         };
 
@@ -122,20 +144,53 @@ public class AiServiceClientImpl : IAiServiceClient
                 "/api/v1/process/generate-response",
                 request);
 
-            if (response == null || !response.Success)
+            if (response == null)
             {
-                var error = response?.Error ?? "Empty response from AI service";
-                _logger.LogWarning("Response generation failed for notice {NoticeId}: {Error}", noticeId, error);
-                throw new InvalidOperationException($"Failed to generate response: {error}");
+                _logger.LogWarning("Response generation returned null for notice {NoticeId}", noticeId);
+                return new GenerateResponseResult
+                {
+                    Success = false,
+                    Error = "Empty response from AI service"
+                };
             }
 
-            _logger.LogInformation("Response draft generated for notice {NoticeId}", noticeId);
-            return response.Draft ?? string.Empty;
+            if (!response.Success)
+            {
+                _logger.LogWarning("Response generation failed for notice {NoticeId}: {Error}", noticeId, response.Error);
+                return new GenerateResponseResult
+                {
+                    Success = false,
+                    Error = response.Error ?? "Unknown error"
+                };
+            }
+
+            _logger.LogInformation(
+                "Response draft generated for notice {NoticeId}. Tokens: {InputTokens}/{OutputTokens}, Time: {Time}ms",
+                noticeId, response.Metadata?.InputTokens, response.Metadata?.OutputTokens, response.Metadata?.ProcessingTimeMs);
+
+            return new GenerateResponseResult
+            {
+                Success = true,
+                Draft = response.Draft,
+                Metadata = response.Metadata != null
+                    ? new GenerateResponseMetadata
+                    {
+                        Model = response.Metadata.Model,
+                        InputTokens = response.Metadata.InputTokens,
+                        OutputTokens = response.Metadata.OutputTokens,
+                        ProcessingTimeMs = response.Metadata.ProcessingTimeMs
+                    }
+                    : null
+            };
         }
-        catch (Exception ex) when (ex is not InvalidOperationException)
+        catch (Exception ex)
         {
             _logger.LogError(ex, "Exception generating response for notice {NoticeId}", noticeId);
-            throw new InvalidOperationException($"Failed to generate response: {ex.Message}", ex);
+            return new GenerateResponseResult
+            {
+                Success = false,
+                Error = $"AI service error: {ex.Message}"
+            };
         }
     }
 
@@ -398,7 +453,10 @@ public class AiServiceClientImpl : IAiServiceClient
         public Guid NoticeId { get; init; }
         public Dictionary<string, object>? Context { get; init; }
         public string Tone { get; init; } = "formal";
+        public string Language { get; init; } = "en";
         public bool IncludeCaseLaw { get; init; } = true;
+        public List<string>? PointsToAddress { get; init; }
+        public string? AdditionalInstructions { get; init; }
     }
 
     private record SimilarNoticesRequest
@@ -471,6 +529,15 @@ public class AiServiceClientImpl : IAiServiceClient
         public bool Success { get; init; }
         public string? Error { get; init; }
         public string? Draft { get; init; }
+        public GenerateResponseMetadataResponse? Metadata { get; init; }
+    }
+
+    private record GenerateResponseMetadataResponse
+    {
+        public string Model { get; init; } = "unknown";
+        public int InputTokens { get; init; }
+        public int OutputTokens { get; init; }
+        public int ProcessingTimeMs { get; init; }
     }
 
     private record SimilarNoticesResponse

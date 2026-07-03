@@ -1,3 +1,4 @@
+using EffortlessInsight.Api.Hubs;
 using EffortlessInsight.Api.Jobs;
 using EffortlessInsight.Api.Services.Notifications;
 using Resend;
@@ -81,6 +82,15 @@ public static class NotificationServiceExtensions
     public static IEndpointRouteBuilder MapNotificationEndpoints(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapHub<NotificationHub>("/hubs/notifications");
+        return endpoints;
+    }
+
+    /// <summary>
+    /// Map AI chat endpoints (SignalR hub)
+    /// </summary>
+    public static IEndpointRouteBuilder MapAIChatEndpoints(this IEndpointRouteBuilder endpoints)
+    {
+        endpoints.MapHub<Hubs.ChatHub>("/hubs/chat");
         return endpoints;
     }
 }

@@ -45,7 +45,42 @@ public interface IAiServiceClient
 {
     Task<AiProcessingResult> ProcessNoticeAsync(Guid noticeId, string fileUrl);
     Task<string> GenerateResponseDraftAsync(Guid noticeId);
+    Task<GenerateResponseResult> GenerateResponseDraftAsync(Guid noticeId, GenerateResponseOptions options);
     Task<List<SimilarNotice>> FindSimilarNoticesAsync(Guid noticeId, int limit = 5);
+}
+
+/// <summary>
+/// Options for generating a response draft.
+/// </summary>
+public record GenerateResponseOptions
+{
+    public string Tone { get; init; } = "formal";
+    public string Language { get; init; } = "en";
+    public List<string>? PointsToAddress { get; init; }
+    public string? AdditionalInstructions { get; init; }
+    public Dictionary<string, object>? Context { get; init; }
+}
+
+/// <summary>
+/// Result of response generation including metadata.
+/// </summary>
+public record GenerateResponseResult
+{
+    public bool Success { get; init; }
+    public string? Draft { get; init; }
+    public string? Error { get; init; }
+    public GenerateResponseMetadata? Metadata { get; init; }
+}
+
+/// <summary>
+/// Metadata about the response generation.
+/// </summary>
+public record GenerateResponseMetadata
+{
+    public string Model { get; init; } = "unknown";
+    public int InputTokens { get; init; }
+    public int OutputTokens { get; init; }
+    public int ProcessingTimeMs { get; init; }
 }
 
 public interface IFileStorageService

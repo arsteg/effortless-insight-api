@@ -74,6 +74,7 @@ public static class ServiceExtensions
         services.AddScoped<IFileValidationService, FileValidationService>();
         services.AddScoped<INoticeWorkflowService, NoticeWorkflowService>();
         services.AddScoped<IZipProcessingService, ZipProcessingService>();
+        services.AddScoped<INoticeResponseDraftService, NoticeResponseDraftService>();
 
         // Register workflow engine services
         services.AddScoped<IWorkflowEngineService, WorkflowEngineService>();
@@ -139,6 +140,14 @@ public static class ServiceExtensions
         services.AddScoped<INoticeAnalyticsService, NoticeAnalyticsService>();
         services.AddScoped<IUserPerformanceService, UserPerformanceService>();
 
+        // Register AI Chat services
+        services.AddScoped<Services.AIChat.IPromptBuilderService, Services.AIChat.PromptBuilderService>();
+        services.AddScoped<Services.AIChat.IConversationService, Services.AIChat.ConversationService>();
+        services.AddScoped<Services.AIChat.IContextRetrievalService, Services.AIChat.ContextRetrievalService>();
+        services.AddScoped<Services.AIChat.IConversationMemoryService, Services.AIChat.ConversationMemoryService>();
+        services.AddScoped<Services.AIChat.IAIChatService, Services.AIChat.AIChatService>();
+        services.AddScoped<Services.AIChat.Providers.IAIProvider, Services.AIChat.Providers.OpenAIProvider>();
+
         return services;
     }
 
@@ -153,6 +162,9 @@ public static class ServiceExtensions
         // Configure Data Retention options
         services.Configure<Jobs.DataRetentionOptions>(
             configuration.GetSection(Jobs.DataRetentionOptions.SectionName));
+
+        // Configure AI Chat options
+        services.Configure<AIChatOptions>(configuration.GetSection(AIChatOptions.SectionName));
 
         return services;
     }
@@ -406,6 +418,23 @@ public static class ServiceExtensions
             client.DefaultRequestHeaders.Add("Accept", "application/json");
             client.DefaultRequestHeaders.Add("User-Agent", "EffortlessInsight-API/1.0");
         });
+
+        // OpenAI HTTP Client for AI Chat
+        var aiChatOptions = configuration.GetSection(AIChatOptions.SectionName).Get<AIChatOptions>()
+            ?? new AIChatOptions();
+
+        services.AddHttpClient("OpenAI", client =>
+        {
+            client.BaseAddress = new Uri(aiChatOptions.OpenAI.BaseUrl);
+            client.Timeout = TimeSpan.FromMinutes(5); // AI responses can take time
+            client.DefaultRequestHeaders.Add("Authorization", $"Bearer {aiChatOptions.OpenAI.ApiKey}");
+            client.DefaultRequestHeaders.Add("Accept", "application/json");
+            client.DefaultRequestHeaders.Add("User-Agent", "EffortlessInsight-API/1.0");
+        })
+        .AddPolicyHandler(HttpPolicyExtensions
+            .HandleTransientHttpError()
+            .OrResult(msg => msg.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+            .WaitAndRetryAsync(3, retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt))));
 
         // Configure GSTN integration options
         services.Configure<GstnOptions>(configuration.GetSection(GstnOptions.SectionName));

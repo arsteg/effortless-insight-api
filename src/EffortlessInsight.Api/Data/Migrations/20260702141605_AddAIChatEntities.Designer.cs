@@ -6,6 +6,7 @@ using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.Data.Entities.Billing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using Pgvector;
@@ -15,9 +16,11 @@ using Pgvector;
 namespace EffortlessInsight.Api.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260702141605_AddAIChatEntities")]
+    partial class AddAIChatEntities
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -92,29 +95,13 @@ namespace EffortlessInsight.Api.Data.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("ConversationId")
-                        .HasFilter("\"DeletedAt\" IS NULL");
-
-                    b.HasIndex("CreatedAt")
-                        .HasFilter("\"DeletedAt\" IS NULL");
+                    b.HasIndex("ConversationId");
 
                     b.HasIndex("MessageId");
 
-                    b.HasIndex("ModelId")
-                        .HasFilter("\"DeletedAt\" IS NULL");
+                    b.HasIndex("OrganizationId");
 
-                    b.HasIndex("OrganizationId")
-                        .HasFilter("\"DeletedAt\" IS NULL");
-
-                    b.HasIndex("Status")
-                        .HasFilter("\"DeletedAt\" IS NULL");
-
-                    b.HasIndex("UserId")
-                        .HasFilter("\"DeletedAt\" IS NULL");
-
-                    b.HasIndex("OrganizationId", "CreatedAt")
-                        .HasDatabaseName("IX_AIAuditLogs_Organization_CreatedAt")
-                        .HasFilter("\"DeletedAt\" IS NULL");
+                    b.HasIndex("UserId");
 
                     b.ToTable("AIAuditLogs");
                 });
@@ -3017,17 +3004,9 @@ namespace EffortlessInsight.Api.Data.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("ConversationId")
-                        .HasFilter("\"DeletedAt\" IS NULL");
-
-                    b.HasIndex("CreatedAt")
-                        .HasFilter("\"DeletedAt\" IS NULL");
+                    b.HasIndex("ConversationId");
 
                     b.HasIndex("LastMessageId");
-
-                    b.HasIndex("ConversationId", "CreatedAt")
-                        .HasDatabaseName("IX_ConversationSummaries_Conversation_CreatedAt")
-                        .HasFilter("\"DeletedAt\" IS NULL");
 
                     b.ToTable("ConversationSummaries");
                 });
@@ -4317,18 +4296,9 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("MessageId")
-                        .HasFilter("\"DeletedAt\" IS NULL");
+                        .IsUnique();
 
-                    b.HasIndex("Rating")
-                        .HasFilter("\"DeletedAt\" IS NULL");
-
-                    b.HasIndex("UserId")
-                        .HasFilter("\"DeletedAt\" IS NULL");
-
-                    b.HasIndex("MessageId", "UserId")
-                        .IsUnique()
-                        .HasDatabaseName("IX_MessageFeedbacks_Message_User_Unique")
-                        .HasFilter("\"DeletedAt\" IS NULL");
+                    b.HasIndex("UserId");
 
                     b.ToTable("MessageFeedbacks");
                 });
@@ -4719,24 +4689,11 @@ namespace EffortlessInsight.Api.Data.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("CreatedAt")
-                        .HasFilter("\"DeletedAt\" IS NULL");
+                    b.HasIndex("NoticeId");
 
-                    b.HasIndex("LastMessageAt")
-                        .HasFilter("\"DeletedAt\" IS NULL");
+                    b.HasIndex("OrganizationId");
 
-                    b.HasIndex("NoticeId")
-                        .HasFilter("\"DeletedAt\" IS NULL");
-
-                    b.HasIndex("OrganizationId")
-                        .HasFilter("\"DeletedAt\" IS NULL");
-
-                    b.HasIndex("UserId")
-                        .HasFilter("\"DeletedAt\" IS NULL");
-
-                    b.HasIndex("NoticeId", "UserId", "LastMessageAt")
-                        .HasDatabaseName("IX_NoticeConversations_Notice_User_LastMessage")
-                        .HasFilter("\"DeletedAt\" IS NULL");
+                    b.HasIndex("UserId");
 
                     b.ToTable("NoticeConversations");
                 });
@@ -4977,18 +4934,7 @@ namespace EffortlessInsight.Api.Data.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("ConversationId")
-                        .HasFilter("\"DeletedAt\" IS NULL");
-
-                    b.HasIndex("CreatedAt")
-                        .HasFilter("\"DeletedAt\" IS NULL");
-
-                    b.HasIndex("Role")
-                        .HasFilter("\"DeletedAt\" IS NULL");
-
-                    b.HasIndex("ConversationId", "CreatedAt")
-                        .HasDatabaseName("IX_NoticeMessages_Conversation_CreatedAt")
-                        .HasFilter("\"DeletedAt\" IS NULL");
+                    b.HasIndex("ConversationId");
 
                     b.ToTable("NoticeMessages");
                 });
@@ -8266,8 +8212,7 @@ namespace EffortlessInsight.Api.Data.Migrations
                 {
                     b.HasOne("EffortlessInsight.Api.Data.Entities.NoticeConversation", "Conversation")
                         .WithMany()
-                        .HasForeignKey("ConversationId")
-                        .OnDelete(DeleteBehavior.Cascade);
+                        .HasForeignKey("ConversationId");
 
                     b.HasOne("EffortlessInsight.Api.Data.Entities.NoticeMessage", "Message")
                         .WithMany()
@@ -9194,8 +9139,8 @@ namespace EffortlessInsight.Api.Data.Migrations
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.MessageFeedback", b =>
                 {
                     b.HasOne("EffortlessInsight.Api.Data.Entities.NoticeMessage", "Message")
-                        .WithMany("Feedbacks")
-                        .HasForeignKey("MessageId")
+                        .WithOne("Feedback")
+                        .HasForeignKey("EffortlessInsight.Api.Data.Entities.MessageFeedback", "MessageId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
@@ -10313,7 +10258,7 @@ namespace EffortlessInsight.Api.Data.Migrations
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.NoticeMessage", b =>
                 {
-                    b.Navigation("Feedbacks");
+                    b.Navigation("Feedback");
                 });
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.NoticeResponse", b =>

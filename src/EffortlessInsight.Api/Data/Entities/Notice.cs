@@ -286,6 +286,7 @@ public class Notice : BaseEntity
     public ICollection<NoticeFile> Files { get; set; } = [];
     public ICollection<FileFolder> Folders { get; set; } = [];
     public ICollection<ActivityLog> ActivityLogs { get; set; } = [];
+    public ICollection<NoticeConversation> Conversations { get; set; } = [];
 
     /// <summary>
     /// Relationships where this notice is the source.

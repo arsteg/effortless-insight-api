@@ -17,6 +17,7 @@ public class NoticesController : ControllerBase
     private readonly INoticeServiceExtended _noticeService;
     private readonly IZipProcessingService _zipProcessingService;
     private readonly INoticeWorkflowService _workflowService;
+    private readonly INoticeResponseDraftService _responseDraftService;
     private readonly ICurrentOrganizationService _currentOrg;
     private readonly ILogger<NoticesController> _logger;
 
@@ -24,12 +25,14 @@ public class NoticesController : ControllerBase
         INoticeServiceExtended noticeService,
         IZipProcessingService zipProcessingService,
         INoticeWorkflowService workflowService,
+        INoticeResponseDraftService responseDraftService,
         ICurrentOrganizationService currentOrg,
         ILogger<NoticesController> logger)
     {
         _noticeService = noticeService;
         _zipProcessingService = zipProcessingService;
         _workflowService = workflowService;
+        _responseDraftService = responseDraftService;
         _currentOrg = currentOrg;
         _logger = logger;
     }
@@ -1492,6 +1495,98 @@ public class NoticesController : ControllerBase
     }
 
     /// <summary>
+    /// Generate an AI-powered auto-draft response for a notice.
+    /// Uses the notice content and AI analysis to generate a professional response draft.
+    /// </summary>
+    /// <remarks>
+    /// Rate limited to 10 requests per minute per organization.
+    /// The draft is generated based on:
+    /// - Notice metadata (type, dates, amounts)
+    /// - OCR extracted content
+    /// - AI analysis report (if available)
+    /// - User-specified tone and language preferences
+    /// </remarks>
+    [HttpPost("{noticeId:guid}/responses/auto-draft")]
+    [ProducesResponseType(typeof(ApiResponse<AutoDraftResponseDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status429TooManyRequests)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> GenerateAutoDraft(
+        Guid noticeId,
+        [FromBody] AutoDraftRequest? request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var orgId = GetCurrentOrganizationId();
+            var userId = GetCurrentUserId();
+
+            if (!_currentOrg.HasPermission("notices.edit"))
+            {
+                return StatusCode(StatusCodes.Status403Forbidden,
+                    new ApiErrorResponse(false, "FORBIDDEN", "You don't have permission to generate auto-drafts"));
+            }
+
+            // Build options from request (service will sanitize and validate)
+            var options = request != null
+                ? new AutoDraftOptions
+                {
+                    Tone = request.Tone ?? AutoDraftTone.Formal,
+                    Language = request.Language ?? AutoDraftLanguage.English,
+                    PointsToAddress = request.PointsToAddress,
+                    AdditionalInstructions = request.AdditionalInstructions
+                }
+                : null;
+
+            var result = await _responseDraftService.GenerateAutoDraftAsync(
+                noticeId, orgId, userId, options, cancellationToken);
+
+            if (!result.Success)
+            {
+                return result.ErrorCode switch
+                {
+                    "NOTICE_NOT_FOUND" => NotFound(new ApiErrorResponse(false, result.ErrorCode, result.ErrorMessage!)),
+                    "RATE_LIMIT_EXCEEDED" => StatusCode(StatusCodes.Status429TooManyRequests,
+                        new ApiErrorResponse(false, result.ErrorCode, result.ErrorMessage!)),
+                    "TIMEOUT" => StatusCode(StatusCodes.Status504GatewayTimeout,
+                        new ApiErrorResponse(false, result.ErrorCode, result.ErrorMessage!)),
+                    "NO_CONTENT" or "VALIDATION_ERROR" or "EMPTY_RESPONSE" =>
+                        BadRequest(new ApiErrorResponse(false, result.ErrorCode, result.ErrorMessage!)),
+                    _ => StatusCode(StatusCodes.Status500InternalServerError,
+                        new ApiErrorResponse(false, result.ErrorCode ?? "INTERNAL_ERROR", result.ErrorMessage ?? "An unexpected error occurred"))
+                };
+            }
+
+            var response = new AutoDraftResponseDto(
+                DraftContent: result.DraftContent!,
+                Metadata: new AutoDraftMetadataDto(
+                    Model: result.Metadata!.Model,
+                    ProcessingTimeMs: result.Metadata.ProcessingTimeMs,
+                    NoticeType: result.Metadata.NoticeType,
+                    InputTokens: result.Metadata.InputTokens,
+                    OutputTokens: result.Metadata.OutputTokens,
+                    EstimatedCost: result.Metadata.EstimatedCost
+                )
+            );
+
+            return Ok(new ApiResponse<AutoDraftResponseDto>(true, response));
+        }
+        catch (OperationCanceledException)
+        {
+            // Request was cancelled by client
+            return StatusCode(499, new ApiErrorResponse(false, "REQUEST_CANCELLED", "Request was cancelled"));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to generate auto-draft for notice {NoticeId}", noticeId);
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
+        }
+    }
+
+    /// <summary>
     /// Submit a response for review
     /// </summary>
     [HttpPost("{noticeId:guid}/responses/{responseId:guid}/submit-for-review")]
@@ -2617,6 +2712,8 @@ public record NoticeResponseDto(
     DateTime? UpdatedAt);
 
 public record SaveDraftRequest(string DraftContent);
+
+// AutoDraftRequest, AutoDraftResponseDto, AutoDraftMetadataDto moved to DTOs/NoticeDtos.cs
 
 public record MarkSubmittedRequest(
     string? SubmissionReference = null,

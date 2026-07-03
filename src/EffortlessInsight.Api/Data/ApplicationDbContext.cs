@@ -157,12 +157,22 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
     public DbSet<SavedReport> SavedReports => Set<SavedReport>();
     public DbSet<ReportSchedule> ReportSchedules => Set<ReportSchedule>();
 
+    // AI Chat entities
+    public DbSet<NoticeConversation> NoticeConversations => Set<NoticeConversation>();
+    public DbSet<NoticeMessage> NoticeMessages => Set<NoticeMessage>();
+    public DbSet<ConversationSummary> ConversationSummaries => Set<ConversationSummary>();
+    public DbSet<MessageFeedback> MessageFeedbacks => Set<MessageFeedback>();
+    public DbSet<AIAuditLog> AIAuditLogs => Set<AIAuditLog>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
 
         // Enable pgvector extension
         modelBuilder.HasPostgresExtension("vector");
+
+        // Ignore value types that are stored as JSON (not entities)
+        modelBuilder.Ignore<Citation>();
 
         // Configure entities
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(ApplicationDbContext).Assembly);
@@ -374,6 +384,11 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
             .HasColumnType("jsonb");
         modelBuilder.Entity<ApprovalRequest>()
             .Property(r => r.Metadata)
+            .HasColumnType("jsonb");
+
+        // AI Chat JSON columns
+        modelBuilder.Entity<NoticeMessage>()
+            .Property(m => m.Citations)
             .HasColumnType("jsonb");
 
         // Configure vector column for text-embedding-ada-002 (1536 dimensions)
