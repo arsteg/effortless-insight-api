@@ -303,44 +303,6 @@ public class NotificationWebhooksController : ControllerBase
     }
 
     /// <summary>
-    /// SendGrid delivery status webhook
-    /// </summary>
-    [HttpPost("sendgrid")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    public async Task<IActionResult> SendGridWebhook([FromBody] List<SendGridEvent> events)
-    {
-        foreach (var evt in events)
-        {
-            try
-            {
-                if (string.IsNullOrEmpty(evt.SgMessageId))
-                    continue;
-
-                var status = MapSendGridStatus(evt.Event);
-                var timestamp = DateTimeOffset.FromUnixTimeSeconds(evt.Timestamp).UtcDateTime;
-
-                await _deliveryService.UpdateStatusAsync(
-                    "email",
-                    evt.SgMessageId,
-                    status,
-                    timestamp,
-                    evt.Reason);
-
-                if (evt.Event == "click" && !string.IsNullOrEmpty(evt.Url))
-                {
-                    await _deliveryService.RecordClickAsync("email", evt.SgMessageId, evt.Url);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error processing SendGrid event: {MessageId}", evt.SgMessageId);
-            }
-        }
-
-        return Ok();
-    }
-
-    /// <summary>
     /// Email unsubscribe endpoint
     /// </summary>
     [AllowAnonymous]
@@ -380,16 +342,4 @@ public class NotificationWebhooksController : ControllerBase
             return BadRequest(new UnsubscribeResponse(false, "An error occurred while processing your request."));
         }
     }
-
-    private static string MapSendGridStatus(string? eventType) => eventType switch
-    {
-        "delivered" => "delivered",
-        "open" => "opened",
-        "click" => "clicked",
-        "bounce" => "bounced",
-        "dropped" => "failed",
-        "deferred" => "pending",
-        "processed" => "sent",
-        _ => "pending"
-    };
 }

@@ -147,15 +147,39 @@ builder.Services.AddInMemoryRateLimiting();
 builder.Services.AddSingleton<IRateLimitConfiguration, RateLimitConfiguration>();
 
 // Add CORS
+var corsOrigins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>() ?? [];
+var isDevelopment = builder.Environment.IsDevelopment();
+Log.Information("CORS origins configured: {Origins}, IsDevelopment: {IsDev}", string.Join(", ", corsOrigins), isDevelopment);
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowedOrigins", policy =>
     {
-        var origins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>() ?? [];
-        policy.WithOrigins(origins)
-              .AllowAnyHeader()
-              .AllowAnyMethod()
-              .AllowCredentials();
+        if (isDevelopment)
+        {
+            // In development, allow any localhost origin
+            policy.SetIsOriginAllowed(origin =>
+                {
+                    var uri = new Uri(origin);
+                    var isAllowed = uri.Host == "localhost" || uri.Host == "127.0.0.1";
+                    Log.Debug("CORS check for origin {Origin}: {IsAllowed}", origin, isAllowed);
+                    return isAllowed;
+                })
+                  .AllowAnyHeader()
+                  .AllowAnyMethod()
+                  .AllowCredentials();
+        }
+        else if (corsOrigins.Length > 0)
+        {
+            policy.WithOrigins(corsOrigins)
+                  .AllowAnyHeader()
+                  .AllowAnyMethod()
+                  .AllowCredentials();
+        }
+        else
+        {
+            Log.Warning("No CORS origins configured for production!");
+        }
     });
 });
 
@@ -178,6 +202,9 @@ app.UseSwagger();
 app.UseSwaggerUI();
 //}
 
+// CORS must be early in pipeline so all responses (including errors) have CORS headers
+app.UseCors("AllowedOrigins");
+
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseMiddleware<RequestLoggingMiddleware>();
 
@@ -189,7 +216,6 @@ app.UseIpRateLimiting();
 app.UseSerilogRequestLogging();
 
 app.UseHttpsRedirection();
-app.UseCors("AllowedOrigins");
 
 app.UseAuthentication();
 app.UseAuthorization();

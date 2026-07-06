@@ -356,37 +356,6 @@ public record BulkResultItemDto(
 
 #endregion
 
-#region Webhook DTOs
-
-/// <summary>
-/// SendGrid webhook event
-/// </summary>
-public record SendGridEvent
-{
-    [JsonPropertyName("sg_message_id")]
-    public string? SgMessageId { get; init; }
-
-    [JsonPropertyName("event")]
-    public string? Event { get; init; }
-
-    [JsonPropertyName("timestamp")]
-    public long Timestamp { get; init; }
-
-    [JsonPropertyName("email")]
-    public string? Email { get; init; }
-
-    [JsonPropertyName("url")]
-    public string? Url { get; init; }
-
-    [JsonPropertyName("reason")]
-    public string? Reason { get; init; }
-
-    [JsonPropertyName("status")]
-    public string? Status { get; init; }
-}
-
-#endregion
-
 #region Template DTOs
 
 /// <summary>

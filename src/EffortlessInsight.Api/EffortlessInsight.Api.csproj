@@ -47,7 +47,6 @@
     <!-- Mapping -->
     <PackageReference Include="AutoMapper.Extensions.Microsoft.DependencyInjection" Version="12.0.1" />
     <PackageReference Include="Resend" Version="0.5.1" />
-    <PackageReference Include="SendGrid" Version="9.29.3" />
 
     <!-- API Documentation -->
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.5.0" />
