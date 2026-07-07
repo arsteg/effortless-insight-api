@@ -12,6 +12,9 @@ using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Add Local configuration as optional overlay (for personal developer settings)
+builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
+
 // Configure Kestrel for TLS 1.3 enforcement in production
 if (!builder.Environment.IsDevelopment())
 {
@@ -74,6 +77,32 @@ builder.Services.AddSwaggerGen(options =>
         var actionName = apiDesc.ActionDescriptor.RouteValues["action"];
         var method = apiDesc.HttpMethod?.ToLower() ?? "get";
         return $"{controllerName}_{actionName}_{method}";
+    });
+
+    // Add JWT Bearer authentication to Swagger
+    options.AddSecurityDefinition("Bearer", new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+    {
+        Description = "JWT Authorization header using the Bearer scheme. Enter 'Bearer' [space] and then your token in the text input below.\n\nExample: 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...'",
+        Name = "Authorization",
+        In = Microsoft.OpenApi.Models.ParameterLocation.Header,
+        Type = Microsoft.OpenApi.Models.SecuritySchemeType.ApiKey,
+        Scheme = "Bearer",
+        BearerFormat = "JWT"
+    });
+
+    options.AddSecurityRequirement(new Microsoft.OpenApi.Models.OpenApiSecurityRequirement
+    {
+        {
+            new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+            {
+                Reference = new Microsoft.OpenApi.Models.OpenApiReference
+                {
+                    Type = Microsoft.OpenApi.Models.ReferenceType.SecurityScheme,
+                    Id = "Bearer"
+                }
+            },
+            Array.Empty<string>()
+        }
     });
 });
 
