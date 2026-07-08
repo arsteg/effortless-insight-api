@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using Microsoft.AspNetCore.Http;
 
 namespace EffortlessInsight.Api.DTOs;
@@ -7,10 +8,10 @@ namespace EffortlessInsight.Api.DTOs;
 // ============================================================================
 
 public record RegisterRequest(
-    string Email,
-    string Password,
-    string Name,
-    string? Mobile,
+    [MaxLength(255)] string Email,
+    [MaxLength(128)] string Password,
+    [MaxLength(100)] string Name,
+    [MaxLength(20)] string? Mobile,
     bool AcceptTerms
 );
 
@@ -23,16 +24,16 @@ public record RegisterResponse(
 );
 
 public record LoginRequest(
-    string Email,
-    string Password,
+    [MaxLength(255)] string Email,
+    [MaxLength(128)] string Password,
     bool RememberMe = false,
     DeviceInfo? DeviceInfo = null
 );
 
 public record DeviceInfo(
-    string? DeviceId,
-    string? DeviceName,
-    string Platform // web, ios, android
+    [MaxLength(100)] string? DeviceId,
+    [MaxLength(100)] string? DeviceName,
+    [MaxLength(20)] string Platform // web, ios, android
 );
 
 public record LoginResponse(
@@ -51,9 +52,9 @@ public record TwoFactorRequiredResponse(
     List<string> Methods
 );
 
-public record VerifyEmailRequest(string Token);
+public record VerifyEmailRequest([MaxLength(500)] string Token);
 
-public record RefreshTokenRequest(string RefreshToken);
+public record RefreshTokenRequest([MaxLength(2000)] string RefreshToken);
 
 public record TokenResponse(
     string AccessToken,
@@ -62,45 +63,45 @@ public record TokenResponse(
     int ExpiresIn
 );
 
-public record ForgotPasswordRequest(string Email);
+public record ForgotPasswordRequest([MaxLength(255)] string Email);
 
 public record ResetPasswordRequest(
-    string Token,
-    string Password,
-    string ConfirmPassword
+    [MaxLength(500)] string Token,
+    [MaxLength(128)] string Password,
+    [MaxLength(128)] string ConfirmPassword
 );
 
 public record ChangePasswordRequest(
-    string CurrentPassword,
-    string NewPassword,
-    string ConfirmPassword
+    [MaxLength(128)] string CurrentPassword,
+    [MaxLength(128)] string NewPassword,
+    [MaxLength(128)] string ConfirmPassword
 );
 
 public record LogoutRequest(bool AllDevices = false);
 
 // OTP DTOs
-public record OtpRequestRequest(string Mobile, string Purpose = "login");
+public record OtpRequestRequest([MaxLength(20)] string Mobile, [MaxLength(20)] string Purpose = "login");
 public record OtpResponse(string Message, string MaskedMobile, int ExpiresIn, int RetryAfter);
-public record OtpVerifyRequest(string Mobile, string Otp);
+public record OtpVerifyRequest([MaxLength(20)] string Mobile, [MaxLength(10)] string Otp);
 
 // 2FA Setup DTOs
 public record TwoFactorSetupResponse(string Secret, string QrCodeDataUrl, string OtpauthUrl, List<string> BackupCodes);
-public record TwoFactorVerifySetupRequest(string Code);
+public record TwoFactorVerifySetupRequest([MaxLength(10)] string Code);
 public record TwoFactorVerifySetupResponse(string Message, int BackupCodesRemaining);
 
 // 2FA Login DTOs
-public record TwoFactorLoginRequest(string PartialToken, string Code);
+public record TwoFactorLoginRequest([MaxLength(500)] string PartialToken, [MaxLength(20)] string Code);
 public record TwoFactorLoginResponse(string AccessToken, string RefreshToken, string TokenType, int ExpiresIn, bool BackupCodeUsed);
 
 // 2FA Disable DTOs
-public record TwoFactorDisableRequest(string Password);
+public record TwoFactorDisableRequest([MaxLength(128)] string Password);
 
 // OAuth DTOs
 public record OAuthProviderInfo(string Name, string DisplayName, bool Enabled);
 public record OAuthProvidersResponse(List<OAuthProviderInfo> Providers);
 public record OAuthLoginUrlResponse(string LoginUrl, string State);
-public record OAuthCallbackRequest(string Code, string State, DeviceInfo? DeviceInfo = null);
-public record DisconnectOAuthRequest(string Provider, string Password);
+public record OAuthCallbackRequest([MaxLength(2000)] string Code, [MaxLength(500)] string State, DeviceInfo? DeviceInfo = null);
+public record DisconnectOAuthRequest([MaxLength(50)] string Provider, [MaxLength(128)] string Password);
 
 /// <summary>
 /// Information about a linked OAuth provider.
@@ -154,8 +155,8 @@ public record UserProfileDto(
 public record UserOrganizationDto(Guid Id, string Name, string Role);
 
 // Legacy DTOs for backward compatibility
-public record LoginDto(string Email, string Password);
-public record RegisterDto(string Email, string Password, string Name, string? Mobile);
+public record LoginDto([MaxLength(255)] string Email, [MaxLength(128)] string Password);
+public record RegisterDto([MaxLength(255)] string Email, [MaxLength(128)] string Password, [MaxLength(100)] string Name, [MaxLength(20)] string? Mobile);
 public record AuthResponse(string AccessToken, string RefreshToken, UserDto User, DateTime ExpiresAt);
 
 // ============================================================================
@@ -173,20 +174,20 @@ public record UserDto(
     List<UserOrganizationDto> Organizations
 );
 
-public record UpdateUserDto(string? Name, string? Mobile, string? AvatarUrl, Dictionary<string, object>? Preferences);
+public record UpdateUserDto([MaxLength(100)] string? Name, [MaxLength(20)] string? Mobile, [MaxLength(500)] string? AvatarUrl, Dictionary<string, object>? Preferences);
 
 // ============================================================================
 // Organization DTOs
 // ============================================================================
 
 public record CreateOrganizationRequest(
-    string Name,
-    string? LegalName,
-    string Gstin,
-    string? Industry,
-    string State,
-    string? City,
-    string? AnnualTurnoverRange
+    [MaxLength(200)] string Name,
+    [MaxLength(200)] string? LegalName,
+    [MaxLength(15)] string Gstin,
+    [MaxLength(100)] string? Industry,
+    [MaxLength(50)] string State,
+    [MaxLength(100)] string? City,
+    [MaxLength(50)] string? AnnualTurnoverRange
 );
 
 public record CreateOrganizationResponse(
@@ -207,29 +208,29 @@ public record CreateOrganizationResponse(
 );
 
 public record UpdateOrganizationRequest(
-    string? Name,
-    string? LegalName,
-    string? DisplayName,
-    string? Industry,
-    string? SubIndustry,
-    string? BusinessType,
-    string? AnnualTurnoverRange,
-    string? EmployeeCountRange,
-    string? Email,
-    string? Phone,
-    string? Website,
+    [MaxLength(200)] string? Name,
+    [MaxLength(200)] string? LegalName,
+    [MaxLength(200)] string? DisplayName,
+    [MaxLength(100)] string? Industry,
+    [MaxLength(100)] string? SubIndustry,
+    [MaxLength(100)] string? BusinessType,
+    [MaxLength(50)] string? AnnualTurnoverRange,
+    [MaxLength(50)] string? EmployeeCountRange,
+    [MaxLength(255)] string? Email,
+    [MaxLength(20)] string? Phone,
+    [MaxLength(500)] string? Website,
     AddressDto? Address,
-    string? Pan,
-    string? Tan
+    [MaxLength(10)] string? Pan,
+    [MaxLength(10)] string? Tan
 );
 
 public record AddressDto(
-    string? Line1,
-    string? Line2,
-    string? City,
-    string? State,
-    string? PinCode,
-    string? Country
+    [MaxLength(200)] string? Line1,
+    [MaxLength(200)] string? Line2,
+    [MaxLength(100)] string? City,
+    [MaxLength(50)] string? State,
+    [MaxLength(10)] string? PinCode,
+    [MaxLength(50)] string? Country
 );
 
 public record OrganizationDetailResponse(
@@ -313,14 +314,14 @@ public record UpdateOrganizationSettingsRequest(
     bool? NotificationSms,
     bool? AllowCaAccess,
     bool? RequireResponseApproval,
-    string? Timezone,
-    string? Language,
-    string? DateFormat
+    [MaxLength(50)] string? Timezone,
+    [MaxLength(10)] string? Language,
+    [MaxLength(20)] string? DateFormat
 );
 
 public record DeleteOrganizationRequest(
-    string Confirmation,
-    string Password
+    [MaxLength(100)] string Confirmation,
+    [MaxLength(128)] string Password
 );
 
 // ============================================================================
@@ -340,8 +341,8 @@ public record GstinDto(
 );
 
 public record AddGstinRequest(
-    string Gstin,
-    string? TradeName,
+    [MaxLength(15)] string Gstin,
+    [MaxLength(200)] string? TradeName,
     bool IsPrimary = false
 );
 
@@ -386,7 +387,7 @@ public record MemberListResponse(
     int TotalPages
 );
 
-public record ChangeMemberRoleRequest(string Role);
+public record ChangeMemberRoleRequest([MaxLength(50)] string Role);
 
 public record ChangeMemberRoleResponse(
     Guid MemberId,
@@ -399,7 +400,7 @@ public record ChangeMemberRoleResponse(
 // ============================================================================
 
 public record SuspendMemberRequest(
-    string Reason,
+    [MaxLength(500)] string Reason,
     DateTime? ExpiresAt = null
 );
 
@@ -421,12 +422,12 @@ public record MemberSuspensionResponse(
 // ============================================================================
 
 public record InviteMemberRequest(
-    string Email,
-    string Role,
+    [MaxLength(255)] string Email,
+    [MaxLength(50)] string Role,
     bool IsExternal = false,
     int? AccessDurationDays = null,
-    string? ClientReference = null,
-    string? Message = null
+    [MaxLength(100)] string? ClientReference = null,
+    [MaxLength(1000)] string? Message = null
 );
 
 public record InvitationDto(
@@ -472,7 +473,7 @@ public record OrganizationBasicDto(
 
 public record TransferOwnershipRequest(
     Guid NewOwnerId,
-    string Password
+    [MaxLength(128)] string Password
 );
 
 public record TransferOwnershipResponse(
@@ -495,25 +496,25 @@ public record SwitchOrganizationResponse(
 
 // Legacy DTOs for backward compatibility
 public record CreateOrganizationDto(
-    string Name,
+    [MaxLength(200)] string Name,
     List<string> Gstins,
-    string? Industry,
-    string? State,
-    string? City,
-    string? Address,
-    string? PinCode,
+    [MaxLength(100)] string? Industry,
+    [MaxLength(50)] string? State,
+    [MaxLength(100)] string? City,
+    [MaxLength(500)] string? Address,
+    [MaxLength(10)] string? PinCode,
     decimal? AnnualTurnover,
-    string? Pan
+    [MaxLength(10)] string? Pan
 );
 
 public record UpdateOrganizationDto(
-    string? Name,
+    [MaxLength(200)] string? Name,
     List<string>? Gstins,
-    string? Industry,
-    string? State,
-    string? City,
-    string? Address,
-    string? PinCode,
+    [MaxLength(100)] string? Industry,
+    [MaxLength(50)] string? State,
+    [MaxLength(100)] string? City,
+    [MaxLength(500)] string? Address,
+    [MaxLength(10)] string? PinCode,
     decimal? AnnualTurnover
 );
 
@@ -528,7 +529,7 @@ public record OrganizationDto(
     int MemberCount
 );
 
-public record AddMemberDto(string Email, string Role);
+public record AddMemberDto([MaxLength(255)] string Email, [MaxLength(50)] string Role);
 
 // ============================================================================
 // Notice DTOs
@@ -559,26 +560,31 @@ public record CreateManualNoticeRequest
     /// <summary>
     /// GSTIN associated with this notice (required).
     /// </summary>
+    [MaxLength(15)]
     public required string Gstin { get; init; }
 
     /// <summary>
     /// Notice number from the authority.
     /// </summary>
+    [MaxLength(100)]
     public string? NoticeNumber { get; init; }
 
     /// <summary>
     /// Notice type code (e.g., DRC-01, ASMT-10, REG-17).
     /// </summary>
+    [MaxLength(50)]
     public string? NoticeType { get; init; }
 
     /// <summary>
     /// Notice category (assessment, demand, registration, refund, audit).
     /// </summary>
+    [MaxLength(50)]
     public string? NoticeCategory { get; init; }
 
     /// <summary>
     /// Notice sub-category for detailed classification.
     /// </summary>
+    [MaxLength(100)]
     public string? NoticeSubCategory { get; init; }
 
     /// <summary>
@@ -624,16 +630,19 @@ public record CreateManualNoticeRequest
     /// <summary>
     /// Issuing authority name.
     /// </summary>
+    [MaxLength(200)]
     public string? IssuingAuthority { get; init; }
 
     /// <summary>
     /// Subject/description of the notice.
     /// </summary>
+    [MaxLength(500)]
     public string? Subject { get; init; }
 
     /// <summary>
     /// Priority level (critical, high, medium, low).
     /// </summary>
+    [MaxLength(20)]
     public string? Priority { get; init; }
 
     /// <summary>
@@ -720,8 +729,8 @@ public record NoticeRelationshipNoticeDto(
 
 public record CreateNoticeRelationshipRequest(
     Guid TargetNoticeId,
-    string RelationshipType,
-    string? Note
+    [MaxLength(50)] string RelationshipType,
+    [MaxLength(500)] string? Note
 );
 
 public record NoticeRelationshipsResponse(
@@ -811,7 +820,7 @@ public record SimilarNotice(Guid NoticeId, float SimilarityScore, string? Notice
 // Comment DTOs
 // ============================================================================
 
-public record CreateCommentDto(string Content, Guid? ParentId, bool IsInternal, List<Guid>? Mentions);
+public record CreateCommentDto([MaxLength(10000)] string Content, Guid? ParentId, bool IsInternal, List<Guid>? Mentions);
 public record CommentDto(
     Guid Id,
     Guid UserId,
@@ -835,8 +844,8 @@ public record CommentDto(
 // Response DTOs
 // ============================================================================
 
-public record CreateResponseDto(string? DraftContent);
-public record UpdateResponseDto(string? DraftContent, string? FinalContent, string? Status);
+public record CreateResponseDto([MaxLength(100000)] string? DraftContent);
+public record UpdateResponseDto([MaxLength(100000)] string? DraftContent, [MaxLength(100000)] string? FinalContent, [MaxLength(50)] string? Status);
 public record ResponseDto(
     Guid Id,
     string? DraftContent,
@@ -892,6 +901,7 @@ public record AttachmentVersionHistoryResponse
 public class UploadNewVersionRequest
 {
     public IFormFile? File { get; set; }
+    [MaxLength(500)]
     public string? VersionNote { get; set; }
 }
 
@@ -920,8 +930,11 @@ public record ApiErrorResponse(
 
 public record CreateApprovalChainRequest
 {
+    [MaxLength(200)]
     public required string Name { get; init; }
+    [MaxLength(1000)]
     public string? Description { get; init; }
+    [MaxLength(100)]
     public string? TriggerEvent { get; init; }
     public Dictionary<string, object>? TriggerConditions { get; init; }
     public bool? IsActive { get; init; }
@@ -933,22 +946,29 @@ public record CreateApprovalChainRequest
 
 public record CreateApprovalStepRequest
 {
+    [MaxLength(200)]
     public required string Name { get; init; }
+    [MaxLength(50)]
     public string? ApproverType { get; init; }
     public Guid? ApproverId { get; init; }
+    [MaxLength(50)]
     public string? ApproverRole { get; init; }
     public bool? IsOptional { get; init; }
     public Dictionary<string, object>? Conditions { get; init; }
     public int? TimeoutHours { get; init; }
     public Guid? EscalationUserId { get; init; }
     public bool? AllowDelegation { get; init; }
+    [MaxLength(2000)]
     public string? Instructions { get; init; }
 }
 
 public record UpdateApprovalChainRequest
 {
+    [MaxLength(200)]
     public string? Name { get; init; }
+    [MaxLength(1000)]
     public string? Description { get; init; }
+    [MaxLength(100)]
     public string? TriggerEvent { get; init; }
     public Dictionary<string, object>? TriggerConditions { get; init; }
     public bool? IsActive { get; init; }
@@ -962,18 +982,21 @@ public record SubmitApprovalRequest
     public required Guid ApprovalChainId { get; init; }
     public required Guid NoticeId { get; init; }
     public Guid? ResponseId { get; init; }
+    [MaxLength(2000)]
     public string? Notes { get; init; }
     public Dictionary<string, object>? Metadata { get; init; }
 }
 
 public record ApprovalActionRequest
 {
+    [MaxLength(2000)]
     public string? Comments { get; init; }
 }
 
 public record DelegateApprovalRequest
 {
     public required Guid DelegateToUserId { get; init; }
+    [MaxLength(500)]
     public string? Reason { get; init; }
 }
 

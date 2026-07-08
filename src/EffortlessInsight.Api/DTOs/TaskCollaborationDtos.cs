@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using System.Text.Json.Serialization;
 
 namespace EffortlessInsight.Api.DTOs;
@@ -7,11 +8,11 @@ namespace EffortlessInsight.Api.DTOs;
 // =============================================================================
 
 public record CreateTaskDto(
-    string Title,
-    string? Description,
+    [MaxLength(200)] string Title,
+    [MaxLength(5000)] string? Description,
     List<Guid>? Assignees,
     Guid? AssignedTeamId,
-    string? Priority,
+    [MaxLength(20)] string? Priority,
     DateTime? DueDate,
     decimal? EstimatedHours,
     List<string>? Labels,
@@ -20,18 +21,18 @@ public record CreateTaskDto(
 );
 
 public record UpdateTaskDto(
-    string? Title,
-    string? Description,
+    [MaxLength(200)] string? Title,
+    [MaxLength(5000)] string? Description,
     List<Guid>? Assignees,
     Guid? AssignedTeamId,
     bool? ClearTeamAssignment,
-    string? Priority,
+    [MaxLength(20)] string? Priority,
     DateTime? DueDate,
     decimal? EstimatedHours,
     decimal? ActualHours,
     List<string>? Labels,
-    string? Status,
-    string? CompletionNote
+    [MaxLength(50)] string? Status,
+    [MaxLength(2000)] string? CompletionNote
 );
 
 public record TaskDto(
@@ -155,14 +156,14 @@ public record MyTaskOrganizationDto(
 // =============================================================================
 
 public record CreateCommentRequestDto(
-    string Content,
-    string? Visibility,
+    [MaxLength(10000)] string Content,
+    [MaxLength(20)] string? Visibility,
     Guid? ParentCommentId,
     List<string>? AttachmentUrls
 );
 
 public record UpdateCommentDto(
-    string Content
+    [MaxLength(10000)] string Content
 );
 
 public record CommentResponseDto(
@@ -213,7 +214,7 @@ public record CommentListResponseDto(
 // =============================================================================
 
 public record AddReactionDto(
-    string Emoji
+    [MaxLength(10)] string Emoji
 );
 
 public record ReactionResponseDto(
@@ -226,23 +227,23 @@ public record ReactionResponseDto(
 // =============================================================================
 
 public record CreateDocumentRequestDto(
-    string Title,
-    string Description,
+    [MaxLength(200)] string Title,
+    [MaxLength(2000)] string Description,
     Guid RequestedFrom,
     DateOnly DueDate,
-    string? Priority,
+    [MaxLength(20)] string? Priority,
     List<string>? AcceptedFormats,
     Guid? TemplateId
 );
 
 public record UpdateDocumentRequestDto(
-    string? Title,
-    string? Description,
+    [MaxLength(200)] string? Title,
+    [MaxLength(2000)] string? Description,
     DateOnly? DueDate,
-    string? Priority,
+    [MaxLength(20)] string? Priority,
     List<string>? AcceptedFormats,
-    string? Status,
-    string? ReviewNote
+    [MaxLength(50)] string? Status,
+    [MaxLength(2000)] string? ReviewNote
 );
 
 public record DocumentRequestDto(
@@ -285,7 +286,7 @@ public record DocumentRequestDocumentDto(
 );
 
 public record FulfillDocumentRequestDto(
-    string? Note
+    [MaxLength(2000)] string? Note
 );
 
 public record DocumentRequestListResponseDto(
@@ -333,11 +334,11 @@ public record ActivityFeedResponseDto(
 // =============================================================================
 
 public record CreateTaskTemplateDto(
-    string Name,
-    string? Description,
-    string DefaultTitle,
-    string? DefaultDescription,
-    string? DefaultPriority,
+    [MaxLength(200)] string Name,
+    [MaxLength(2000)] string? Description,
+    [MaxLength(200)] string DefaultTitle,
+    [MaxLength(5000)] string? DefaultDescription,
+    [MaxLength(20)] string? DefaultPriority,
     decimal? DefaultEstimatedHours,
     List<string>? DefaultLabels,
     List<string>? ApplicableNoticeTypes
@@ -359,10 +360,10 @@ public record TaskTemplateDto(
 );
 
 public record CreateDocumentRequestTemplateDto(
-    string Name,
-    string TitleTemplate,
-    string DescriptionTemplate,
-    string? DefaultPriority,
+    [MaxLength(200)] string Name,
+    [MaxLength(500)] string TitleTemplate,
+    [MaxLength(2000)] string DescriptionTemplate,
+    [MaxLength(20)] string? DefaultPriority,
     int? DefaultDueDays,
     List<string>? AcceptedFormats,
     List<string>? ApplicableNoticeTypes
@@ -413,7 +414,7 @@ public record FileFolderDto(
 );
 
 public record CreateFolderDto(
-    string Name,
+    [MaxLength(200)] string Name,
     Guid? ParentFolderId
 );
 
@@ -442,7 +443,7 @@ public record PaginationDto(
 
 public record CreateTaskDependencyDto(
     Guid DependsOnTaskId,
-    string? Type
+    [MaxLength(50)] string? Type
 );
 
 public record TaskDependencyDto(
@@ -492,14 +493,14 @@ public record TaskReminderDto(
 public record CreateTimeEntryDto(
     decimal Hours,
     DateOnly Date,
-    string? Description,
+    [MaxLength(1000)] string? Description,
     bool IsBillable = true
 );
 
 public record UpdateTimeEntryDto(
     decimal? Hours,
     DateOnly? Date,
-    string? Description,
+    [MaxLength(1000)] string? Description,
     bool? IsBillable
 );
 
@@ -535,8 +536,8 @@ public record TimeEntryListResponseDto(
 // =============================================================================
 
 public record UploadTaskAttachmentDto(
-    string? Description,
-    string? DocumentType
+    [MaxLength(500)] string? Description,
+    [MaxLength(100)] string? DocumentType
 );
 
 public record TaskAttachmentDto(

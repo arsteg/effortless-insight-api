@@ -1,12 +1,19 @@
 using EffortlessInsight.Api.DTOs;
+using EffortlessInsight.Api.Services.Auth;
 using FluentValidation;
 
 namespace EffortlessInsight.Api.Validators;
 
 public class RegisterRequestValidator : AbstractValidator<RegisterRequest>
 {
-    public RegisterRequestValidator()
+    private readonly IPasswordStrengthService? _passwordStrengthService;
+
+    public RegisterRequestValidator() : this(null) { }
+
+    public RegisterRequestValidator(IPasswordStrengthService? passwordStrengthService)
     {
+        _passwordStrengthService = passwordStrengthService;
+
         RuleFor(x => x.Email)
             .NotEmpty().WithMessage("Email is required")
             .EmailAddress().WithMessage("Invalid email format")
@@ -29,7 +36,11 @@ public class RegisterRequestValidator : AbstractValidator<RegisterRequest>
             .Must(HaveUppercase).WithMessage("Password must contain at least one uppercase letter")
             .Must(HaveLowercase).WithMessage("Password must contain at least one lowercase letter")
             .Must(HaveDigit).WithMessage("Password must contain at least one number")
-            .Must(HaveSpecialCharacter).WithMessage("Password must contain at least one special character");
+            .Must(HaveSpecialCharacter).WithMessage("Password must contain at least one special character")
+            .Must(NotBeCommonPassword).WithMessage("This password is too common. Please choose a more unique password.")
+            .Must((request, password) => NotContainUserInfo(password, request.Email, request.Name))
+                .WithMessage("Password should not contain your name or email address.")
+            .Must(NotHaveSequentialChars).WithMessage("Password should not contain sequential or repeated characters.");
 
         RuleFor(x => x.AcceptTerms)
             .Equal(true).WithMessage("You must accept the terms and conditions");
@@ -39,6 +50,24 @@ public class RegisterRequestValidator : AbstractValidator<RegisterRequest>
     private static bool HaveLowercase(string password) => !string.IsNullOrEmpty(password) && password.Any(char.IsLower);
     private static bool HaveDigit(string password) => !string.IsNullOrEmpty(password) && password.Any(char.IsDigit);
     private static bool HaveSpecialCharacter(string password) => !string.IsNullOrEmpty(password) && password.Any(c => !char.IsLetterOrDigit(c));
+
+    private bool NotBeCommonPassword(string password)
+    {
+        if (string.IsNullOrEmpty(password)) return true;
+        return _passwordStrengthService == null || !_passwordStrengthService.IsCommonPassword(password);
+    }
+
+    private bool NotContainUserInfo(string password, string? email, string? name)
+    {
+        if (string.IsNullOrEmpty(password)) return true;
+        return _passwordStrengthService == null || !_passwordStrengthService.ContainsUserInfo(password, email, name);
+    }
+
+    private bool NotHaveSequentialChars(string password)
+    {
+        if (string.IsNullOrEmpty(password)) return true;
+        return _passwordStrengthService == null || !_passwordStrengthService.HasSequentialOrRepeatedChars(password);
+    }
 }
 
 public class LoginRequestValidator : AbstractValidator<LoginRequest>
@@ -84,8 +113,14 @@ public class ForgotPasswordRequestValidator : AbstractValidator<ForgotPasswordRe
 
 public class ResetPasswordRequestValidator : AbstractValidator<ResetPasswordRequest>
 {
-    public ResetPasswordRequestValidator()
+    private readonly IPasswordStrengthService? _passwordStrengthService;
+
+    public ResetPasswordRequestValidator() : this(null) { }
+
+    public ResetPasswordRequestValidator(IPasswordStrengthService? passwordStrengthService)
     {
+        _passwordStrengthService = passwordStrengthService;
+
         RuleFor(x => x.Token)
             .NotEmpty().WithMessage("Token is required");
 
@@ -96,7 +131,9 @@ public class ResetPasswordRequestValidator : AbstractValidator<ResetPasswordRequ
             .Must(HaveUppercase).WithMessage("Password must contain at least one uppercase letter")
             .Must(HaveLowercase).WithMessage("Password must contain at least one lowercase letter")
             .Must(HaveDigit).WithMessage("Password must contain at least one number")
-            .Must(HaveSpecialCharacter).WithMessage("Password must contain at least one special character");
+            .Must(HaveSpecialCharacter).WithMessage("Password must contain at least one special character")
+            .Must(NotBeCommonPassword).WithMessage("This password is too common. Please choose a more unique password.")
+            .Must(NotHaveSequentialChars).WithMessage("Password should not contain sequential or repeated characters.");
 
         RuleFor(x => x.ConfirmPassword)
             .NotEmpty().WithMessage("Confirm password is required")
@@ -107,12 +144,30 @@ public class ResetPasswordRequestValidator : AbstractValidator<ResetPasswordRequ
     private static bool HaveLowercase(string password) => !string.IsNullOrEmpty(password) && password.Any(char.IsLower);
     private static bool HaveDigit(string password) => !string.IsNullOrEmpty(password) && password.Any(char.IsDigit);
     private static bool HaveSpecialCharacter(string password) => !string.IsNullOrEmpty(password) && password.Any(c => !char.IsLetterOrDigit(c));
+
+    private bool NotBeCommonPassword(string password)
+    {
+        if (string.IsNullOrEmpty(password)) return true;
+        return _passwordStrengthService == null || !_passwordStrengthService.IsCommonPassword(password);
+    }
+
+    private bool NotHaveSequentialChars(string password)
+    {
+        if (string.IsNullOrEmpty(password)) return true;
+        return _passwordStrengthService == null || !_passwordStrengthService.HasSequentialOrRepeatedChars(password);
+    }
 }
 
 public class ChangePasswordRequestValidator : AbstractValidator<ChangePasswordRequest>
 {
-    public ChangePasswordRequestValidator()
+    private readonly IPasswordStrengthService? _passwordStrengthService;
+
+    public ChangePasswordRequestValidator() : this(null) { }
+
+    public ChangePasswordRequestValidator(IPasswordStrengthService? passwordStrengthService)
     {
+        _passwordStrengthService = passwordStrengthService;
+
         RuleFor(x => x.CurrentPassword)
             .NotEmpty().WithMessage("Current password is required");
 
@@ -124,6 +179,8 @@ public class ChangePasswordRequestValidator : AbstractValidator<ChangePasswordRe
             .Must(HaveLowercase).WithMessage("Password must contain at least one lowercase letter")
             .Must(HaveDigit).WithMessage("Password must contain at least one number")
             .Must(HaveSpecialCharacter).WithMessage("Password must contain at least one special character")
+            .Must(NotBeCommonPassword).WithMessage("This password is too common. Please choose a more unique password.")
+            .Must(NotHaveSequentialChars).WithMessage("Password should not contain sequential or repeated characters.")
             .NotEqual(x => x.CurrentPassword).WithMessage("New password must be different from current password");
 
         RuleFor(x => x.ConfirmPassword)
@@ -135,6 +192,18 @@ public class ChangePasswordRequestValidator : AbstractValidator<ChangePasswordRe
     private static bool HaveLowercase(string password) => !string.IsNullOrEmpty(password) && password.Any(char.IsLower);
     private static bool HaveDigit(string password) => !string.IsNullOrEmpty(password) && password.Any(char.IsDigit);
     private static bool HaveSpecialCharacter(string password) => !string.IsNullOrEmpty(password) && password.Any(c => !char.IsLetterOrDigit(c));
+
+    private bool NotBeCommonPassword(string password)
+    {
+        if (string.IsNullOrEmpty(password)) return true;
+        return _passwordStrengthService == null || !_passwordStrengthService.IsCommonPassword(password);
+    }
+
+    private bool NotHaveSequentialChars(string password)
+    {
+        if (string.IsNullOrEmpty(password)) return true;
+        return _passwordStrengthService == null || !_passwordStrengthService.HasSequentialOrRepeatedChars(password);
+    }
 }
 
 public class OtpRequestValidator : AbstractValidator<OtpRequestRequest>

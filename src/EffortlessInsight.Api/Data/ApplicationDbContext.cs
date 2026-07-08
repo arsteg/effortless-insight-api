@@ -1,6 +1,7 @@
 using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.Data.Entities.Admin;
 using EffortlessInsight.Api.Data.Entities.Billing;
+using EffortlessInsight.Api.Data.Entities.GstSync;
 using EffortlessInsight.Api.Services;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
@@ -163,6 +164,13 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
     public DbSet<ConversationSummary> ConversationSummaries => Set<ConversationSummary>();
     public DbSet<MessageFeedback> MessageFeedbacks => Set<MessageFeedback>();
     public DbSet<AIAuditLog> AIAuditLogs => Set<AIAuditLog>();
+
+    // GST Sync Module entities (isolated from GSTN Integration)
+    public DbSet<GstClient> GstClients => Set<GstClient>();
+    public DbSet<GstSyncSession> GstSyncSessions => Set<GstSyncSession>();
+    public DbSet<GstNoticeRaw> GstNoticesRaw => Set<GstNoticeRaw>();
+    public DbSet<GstExtensionEvent> GstExtensionEvents => Set<GstExtensionEvent>();
+    public DbSet<GstSyncReminder> GstSyncReminders => Set<GstSyncReminder>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -2726,6 +2734,189 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
                 .WithMany()
                 .HasForeignKey(e => e.CreatedById)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // ============================================================================
+        // GST Sync Module Entity Configurations (Isolated Module)
+        // ============================================================================
+
+        // GstClient Configuration
+        modelBuilder.Entity<GstClient>(entity =>
+        {
+            entity.ToTable("gst_clients");
+
+            // Soft delete and tenant-scoped query filter
+            entity.HasQueryFilter(c =>
+                c.DeletedAt == null &&
+                (BypassTenantFilter || CurrentOrganizationId == null || c.OrganizationId == CurrentOrganizationId));
+
+            // Unique GSTIN per organization
+            entity.HasIndex(e => new { e.OrganizationId, e.Gstin })
+                .IsUnique()
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .HasDatabaseName("IX_GstClients_Org_Gstin_Unique");
+
+            // Performance indexes
+            entity.HasIndex(e => e.OrganizationId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.Gstin)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.Status)
+                .HasFilter("\"DeletedAt\" IS NULL AND \"Status\" = 'active'")
+                .HasDatabaseName("IX_GstClients_Active");
+            entity.HasIndex(e => e.NextSyncDueAt)
+                .HasFilter("\"DeletedAt\" IS NULL AND \"SyncEnabled\" = true AND \"Status\" = 'active'")
+                .HasDatabaseName("IX_GstClients_NextSyncDue");
+
+            // Relationships
+            entity.HasOne(e => e.Organization)
+                .WithMany()
+                .HasForeignKey(e => e.OrganizationId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.CreatedByUser)
+                .WithMany()
+                .HasForeignKey(e => e.CreatedByUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // GstSyncSession Configuration
+        modelBuilder.Entity<GstSyncSession>(entity =>
+        {
+            entity.ToTable("gst_sync_sessions");
+
+            // Soft delete filter
+            entity.HasQueryFilter(s => s.DeletedAt == null);
+
+            // Performance indexes
+            entity.HasIndex(e => e.GstClientId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.OrganizationId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.StartedAt)
+                .IsDescending()
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .HasDatabaseName("IX_GstSyncSessions_StartedAt_Desc");
+            entity.HasIndex(e => e.Status)
+                .HasFilter("\"DeletedAt\" IS NULL");
+
+            // JSON column for source metadata
+            entity.Property(e => e.SourceMetadata)
+                .HasColumnType("jsonb");
+
+            // Relationships
+            entity.HasOne(e => e.GstClient)
+                .WithMany(c => c.SyncSessions)
+                .HasForeignKey(e => e.GstClientId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // GstNoticeRaw Configuration
+        modelBuilder.Entity<GstNoticeRaw>(entity =>
+        {
+            entity.ToTable("gst_notices_raw");
+
+            // Soft delete and tenant-scoped query filter
+            entity.HasQueryFilter(n =>
+                n.DeletedAt == null &&
+                (BypassTenantFilter || CurrentOrganizationId == null || n.OrganizationId == CurrentOrganizationId));
+
+            // Unique portal notice ID per connection
+            entity.HasIndex(e => new { e.GstClientId, e.PortalNoticeId })
+                .IsUnique()
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .HasDatabaseName("IX_GstNoticesRaw_Client_PortalId_Unique");
+
+            // Performance indexes
+            entity.HasIndex(e => e.GstClientId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.OrganizationId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.Gstin)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.NoticeType)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.DueDate)
+                .HasFilter("\"DeletedAt\" IS NULL AND \"DueDate\" IS NOT NULL")
+                .HasDatabaseName("IX_GstNoticesRaw_DueDate");
+            entity.HasIndex(e => e.ImportedToNotices)
+                .HasFilter("\"DeletedAt\" IS NULL AND \"ImportedToNotices\" = false")
+                .HasDatabaseName("IX_GstNoticesRaw_NotImported");
+            entity.HasIndex(e => e.PortalNoticeId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+
+            // JSON column for raw data
+            entity.Property(e => e.RawData)
+                .HasColumnType("jsonb");
+
+            // Relationships
+            entity.HasOne(e => e.GstClient)
+                .WithMany(c => c.Notices)
+                .HasForeignKey(e => e.GstClientId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.LastSyncSession)
+                .WithMany(s => s.Notices)
+                .HasForeignKey(e => e.LastSyncSessionId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // GstExtensionEvent Configuration
+        modelBuilder.Entity<GstExtensionEvent>(entity =>
+        {
+            entity.ToTable("gst_extension_events");
+
+            // Soft delete filter
+            entity.HasQueryFilter(e => e.DeletedAt == null);
+
+            // Performance indexes
+            entity.HasIndex(e => e.OrganizationId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.EventType)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.CreatedAt)
+                .IsDescending()
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .HasDatabaseName("IX_GstExtensionEvents_CreatedAt_Desc");
+
+            // JSON column for event data
+            entity.Property(e => e.EventData)
+                .HasColumnType("jsonb");
+
+            // Relationships
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // GstSyncReminder Configuration
+        modelBuilder.Entity<GstSyncReminder>(entity =>
+        {
+            entity.ToTable("gst_sync_reminders");
+
+            // Soft delete filter
+            entity.HasQueryFilter(r => r.DeletedAt == null);
+
+            // Performance indexes
+            entity.HasIndex(e => e.GstClientId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.Status)
+                .HasFilter("\"DeletedAt\" IS NULL AND \"Status\" = 'pending'")
+                .HasDatabaseName("IX_GstSyncReminders_Pending");
+            entity.HasIndex(e => e.OrganizationId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+
+            // Relationships
+            entity.HasOne(e => e.GstClient)
+                .WithMany(c => c.Reminders)
+                .HasForeignKey(e => e.GstClientId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         // Seed initial data

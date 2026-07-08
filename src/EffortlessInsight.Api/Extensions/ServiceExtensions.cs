@@ -45,6 +45,7 @@ public static class ServiceExtensions
         services.AddScoped<ISessionService, SessionService>();
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<IGeoLocationService, GeoLocationService>();
+        services.AddSingleton<IPasswordStrengthService, PasswordStrengthService>();
 
         // Register application services
         services.AddScoped<INoticeService, NoticeServiceImpl>();
@@ -69,6 +70,14 @@ public static class ServiceExtensions
         services.AddScoped<Services.GstnIntegration.IGstnAuthService, Services.GstnIntegration.GstnAuthService>();
         services.AddScoped<Services.GstnIntegration.IGstnNoticeService, Services.GstnIntegration.GstnNoticeService>();
         services.AddScoped<Services.GstnIntegration.IGspClient, Services.GstnIntegration.WhiteBooksGspClient>();
+
+        // Register GST Sync services (Chrome Extension / Desktop Agent integration)
+        services.AddScoped<Services.GstSync.IGstSyncNotificationService, Services.GstSync.GstSyncNotificationService>();
+        services.AddScoped<Services.GstSync.IGstClientService, Services.GstSync.GstClientService>();
+        services.AddScoped<Services.GstSync.IGstSyncService, Services.GstSync.GstSyncService>();
+        services.AddScoped<Services.GstSync.IGstNoticeRawService, Services.GstSync.GstNoticeRawService>();
+        services.AddScoped<Services.GstSync.IGstExtensionService, Services.GstSync.GstExtensionService>();
+        services.AddSingleton<Jobs.GstSyncNotificationJobs>();
 
         // Register notice services
         services.AddScoped<IFileValidationService, FileValidationService>();

@@ -473,7 +473,12 @@ public class NotificationPreferencesService : INotificationPreferencesService
             NotificationType.TaskDueSoon, NotificationType.TaskOverdue,
             NotificationType.TaskCompleted, NotificationType.UserMentioned,
             NotificationType.DocumentRequested, NotificationType.DocumentReceived,
-            NotificationType.CommentAdded
+            NotificationType.CommentAdded,
+            // GST Sync notification types
+            NotificationType.GstSyncNoticesSynced, NotificationType.GstSyncDailyDigest,
+            NotificationType.GstSyncFailed, NotificationType.GstSyncDueDateReminder,
+            NotificationType.GstSyncDueDateOverdue, NotificationType.GstSyncExtensionDisconnected,
+            NotificationType.GstSyncPaused, NotificationType.GstSyncImportCompleted
         };
 
         foreach (var type in types)

@@ -25,6 +25,7 @@ public static class NotificationCategory
     public const string Task = "task";
     public const string Collaboration = "collaboration";
     public const string Account = "account";
+    public const string GstSync = "gst_sync";
 }
 
 /// <summary>
@@ -68,19 +69,32 @@ public static class NotificationType
     public const string LoginAlert = "login_alert";
     public const string SubscriptionExpiring = "subscription_expiring";
 
+    // GST Sync notifications
+    public const string GstSyncNoticesSynced = "gst_sync.notices_synced";
+    public const string GstSyncDailyDigest = "gst_sync.daily_digest";
+    public const string GstSyncFailed = "gst_sync.sync_failed";
+    public const string GstSyncDueDateReminder = "gst_sync.due_date_reminder";
+    public const string GstSyncDueDateOverdue = "gst_sync.due_date_overdue";
+    public const string GstSyncExtensionDisconnected = "gst_sync.extension_disconnected";
+    public const string GstSyncPaused = "gst_sync.sync_paused";
+    public const string GstSyncImportCompleted = "gst_sync.import_completed";
+
     /// <summary>
     /// Get priority for a notification type
     /// </summary>
     public static string GetPriority(string type) => type switch
     {
         Deadline1Day or DeadlineToday or DeadlineMissed or NoticeHighRisk or
-        SlaBreach or PasswordReset => NotificationPriority.Critical,
+        SlaBreach or PasswordReset or GstSyncDueDateOverdue => NotificationPriority.Critical,
 
         Deadline3Day or SlaCritical or TaskOverdue or DocumentRequested or
-        LoginAlert or SubscriptionExpiring => NotificationPriority.High,
+        LoginAlert or SubscriptionExpiring or GstSyncFailed or
+        GstSyncDueDateReminder => NotificationPriority.High,
 
         Deadline7Day or SlaWarning or NoticeUploaded or NoticeAnalyzed or
-        NoticeAssigned or TaskAssigned or TaskDueSoon or UserMentioned => NotificationPriority.Medium,
+        NoticeAssigned or TaskAssigned or TaskDueSoon or UserMentioned or
+        GstSyncNoticesSynced or GstSyncExtensionDisconnected or
+        GstSyncPaused => NotificationPriority.Medium,
 
         _ => NotificationPriority.Low
     };
@@ -100,6 +114,10 @@ public static class NotificationType
             => NotificationCategory.Task,
         CommentAdded or UserMentioned or DocumentRequested or DocumentReceived
             => NotificationCategory.Collaboration,
+        GstSyncNoticesSynced or GstSyncDailyDigest or GstSyncFailed or
+        GstSyncDueDateReminder or GstSyncDueDateOverdue or GstSyncExtensionDisconnected or
+        GstSyncPaused or GstSyncImportCompleted
+            => NotificationCategory.GstSync,
         _ => NotificationCategory.Account
     };
 
@@ -109,11 +127,13 @@ public static class NotificationType
     public static string[] GetDefaultChannels(string type) => type switch
     {
         // Critical - All channels
-        Deadline1Day or DeadlineToday or DeadlineMissed or NoticeHighRisk
+        Deadline1Day or DeadlineToday or DeadlineMissed or NoticeHighRisk or
+        GstSyncDueDateOverdue
             => ["email", "sms", "push", "whatsapp", "inApp"],
 
         // High - Email, SMS, Push
-        Deadline3Day or SlaCritical or SlaBreach or TaskOverdue or LoginAlert
+        Deadline3Day or SlaCritical or SlaBreach or TaskOverdue or LoginAlert or
+        GstSyncFailed or GstSyncDueDateReminder
             => ["email", "sms", "push", "inApp"],
 
         // High with WhatsApp
@@ -121,14 +141,18 @@ public static class NotificationType
 
         // Medium - Email, Push
         Deadline7Day or SlaWarning or NoticeUploaded or NoticeAnalyzed or
-        NoticeAssigned or TaskAssigned or UserMentioned or SubscriptionExpiring
+        NoticeAssigned or TaskAssigned or UserMentioned or SubscriptionExpiring or
+        GstSyncNoticesSynced or GstSyncExtensionDisconnected or GstSyncPaused
             => ["email", "push", "inApp"],
+
+        // GST Sync - Daily digest (email only)
+        GstSyncDailyDigest => ["email"],
 
         // Medium - Push only
         TaskDueSoon or DocumentReceived => ["push", "inApp"],
 
         // Low - In-App only
-        TaskCompleted or CommentAdded => ["inApp"],
+        TaskCompleted or CommentAdded or GstSyncImportCompleted => ["inApp"],
 
         // Account - Email (and SMS for password reset)
         Welcome => ["email"],

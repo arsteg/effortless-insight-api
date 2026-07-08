@@ -167,7 +167,36 @@ builder.Services.Configure<IpRateLimitOptions>(options =>
         // WhatsApp rate limits
         new() { Endpoint = "POST:/api/v1/whatsapp/link/request", Period = "1h", Limit = 5 },
         new() { Endpoint = "POST:/api/v1/whatsapp/link/verify", Period = "5m", Limit = 10 },
-        new() { Endpoint = "POST:/api/v1/whatsapp/webhook", Period = "1s", Limit = 100 }
+        new() { Endpoint = "POST:/api/v1/whatsapp/webhook", Period = "1s", Limit = 100 },
+
+        // AI-related endpoints rate limits (CRIT-002: Prevent DoS and cost explosion)
+        // Auto-draft generation (high cost - GPT-4 calls)
+        new() { Endpoint = "POST:/api/v1/notices/*/responses/auto-draft", Period = "1m", Limit = 5 },
+        new() { Endpoint = "POST:/api/v1/notices/*/responses/auto-draft", Period = "1h", Limit = 20 },
+
+        // AI conversation endpoints (streaming and sync)
+        new() { Endpoint = "POST:/api/v1/conversations/*/messages", Period = "1m", Limit = 10 },
+        new() { Endpoint = "POST:/api/v1/conversations/*/messages", Period = "1h", Limit = 100 },
+        new() { Endpoint = "POST:/api/v1/conversations/*/messages/sync", Period = "1m", Limit = 10 },
+        new() { Endpoint = "POST:/api/v1/conversations/*/messages/sync", Period = "1h", Limit = 100 },
+
+        // Message regeneration (high cost)
+        new() { Endpoint = "POST:/api/v1/conversations/*/messages/*/regenerate", Period = "1m", Limit = 5 },
+        new() { Endpoint = "POST:/api/v1/conversations/*/messages/*/regenerate", Period = "1h", Limit = 30 },
+
+        // Suggested questions generation
+        new() { Endpoint = "GET:/api/v1/notices/*/suggested-questions", Period = "1m", Limit = 20 },
+        new() { Endpoint = "GET:/api/v1/notices/*/suggested-questions", Period = "1h", Limit = 200 },
+
+        // Notice reprocessing (very high cost - full AI pipeline)
+        new() { Endpoint = "POST:/api/v1/notices/*/report/retry", Period = "1m", Limit = 3 },
+        new() { Endpoint = "POST:/api/v1/notices/*/report/retry", Period = "1h", Limit = 10 },
+
+        // Notice upload (moderate cost)
+        new() { Endpoint = "POST:/api/v1/notices/upload", Period = "1m", Limit = 10 },
+        new() { Endpoint = "POST:/api/v1/notices/upload", Period = "1h", Limit = 50 },
+        new() { Endpoint = "POST:/api/v1/notices/upload/batch", Period = "1m", Limit = 3 },
+        new() { Endpoint = "POST:/api/v1/notices/upload/batch", Period = "1h", Limit = 20 }
     };
     // Add admin rate limit rules
     AdminServiceExtensions.AddAdminRateLimitRules(options);
