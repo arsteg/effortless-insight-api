@@ -169,6 +169,12 @@ builder.Services.Configure<IpRateLimitOptions>(options =>
         new() { Endpoint = "POST:/api/v1/whatsapp/link/verify", Period = "5m", Limit = 10 },
         new() { Endpoint = "POST:/api/v1/whatsapp/webhook", Period = "1s", Limit = 100 },
 
+        // Razorpay webhook rate limits (Fixes Issue #11: Rate Limiting for Webhook Endpoint)
+        // Allow burst of webhooks but prevent abuse
+        new() { Endpoint = "POST:/api/webhooks/razorpay", Period = "1s", Limit = 50 },
+        new() { Endpoint = "POST:/api/webhooks/razorpay", Period = "1m", Limit = 200 },
+        new() { Endpoint = "POST:/api/webhooks/razorpay", Period = "1h", Limit = 1000 },
+
         // AI-related endpoints rate limits (CRIT-002: Prevent DoS and cost explosion)
         // Auto-draft generation (high cost - GPT-4 calls)
         new() { Endpoint = "POST:/api/v1/notices/*/responses/auto-draft", Period = "1m", Limit = 5 },
@@ -273,7 +279,12 @@ app.UseIpRateLimiting();
 
 app.UseSerilogRequestLogging();
 
-app.UseHttpsRedirection();
+// Only use HTTPS redirection in production
+// Skip for Development and Local environments to avoid CORS issues
+if (app.Environment.IsProduction())
+{
+    app.UseHttpsRedirection();
+}
 
 app.UseAuthentication();
 app.UseAuthorization();

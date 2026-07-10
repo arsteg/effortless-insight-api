@@ -569,3 +569,147 @@ public record ExtendedPlanPricingDto(
     int? EffectiveMonthlyRate,
     PerSeatPricingDto? PerSeat
 );
+
+// ============================================================================
+// Admin Plan Management DTOs
+// ============================================================================
+
+/// <summary>
+/// Paginated list of plans for admin portal.
+/// </summary>
+public record AdminPlanListResponse(
+    List<AdminPlanListItem> Plans,
+    AdminPaginationDto Pagination
+);
+
+/// <summary>
+/// Plan summary for admin list view.
+/// </summary>
+public record AdminPlanListItem(
+    Guid Id,
+    string Code,
+    string Name,
+    string DisplayName,
+    int? PricingMonthly,
+    int? PricingAnnually,
+    string Currency,
+    bool IsActive,
+    bool IsPopular,
+    int SortOrder,
+    int SubscriberCount,
+    DateTime CreatedAt,
+    DateTime? UpdatedAt
+);
+
+/// <summary>
+/// Full plan details for admin view.
+/// </summary>
+public record AdminPlanDetailDto(
+    Guid Id,
+    string Code,
+    string Name,
+    string DisplayName,
+    string? Description,
+    int? PricingMonthly,
+    int? PricingAnnually,
+    int? PerSeatMonthly,
+    int? PerSeatAnnually,
+    string Currency,
+    PlanLimitsDto Limits,
+    List<string> Features,
+    bool IsActive,
+    bool IsPopular,
+    int TrialDays,
+    int SortOrder,
+    bool ContactSales,
+    int? StartingAt,
+    string? RazorpayPlanIdMonthly,
+    string? RazorpayPlanIdAnnually,
+    int SubscriberCount,
+    DateTime CreatedAt,
+    DateTime? UpdatedAt,
+    DateTime? DeletedAt
+);
+
+/// <summary>
+/// Request to create a new subscription plan.
+/// </summary>
+public record CreatePlanRequest(
+    string Code,
+    string Name,
+    string DisplayName,
+    string? Description,
+    int? PricingMonthly,
+    int? PricingAnnually,
+    int? PerSeatMonthly,
+    int? PerSeatAnnually,
+    string Currency,
+    CreatePlanLimitsRequest Limits,
+    List<string> Features,
+    bool IsActive,
+    bool IsPopular,
+    int TrialDays,
+    int SortOrder,
+    bool ContactSales,
+    int? StartingAt,
+    string? RazorpayPlanIdMonthly,
+    string? RazorpayPlanIdAnnually
+);
+
+/// <summary>
+/// Request to update an existing subscription plan.
+/// </summary>
+public record UpdatePlanRequest(
+    string? Name,
+    string? DisplayName,
+    string? Description,
+    int? PricingMonthly,
+    int? PricingAnnually,
+    int? PerSeatMonthly,
+    int? PerSeatAnnually,
+    string? Currency,
+    CreatePlanLimitsRequest? Limits,
+    List<string>? Features,
+    bool? IsActive,
+    bool? IsPopular,
+    int? TrialDays,
+    int? SortOrder,
+    bool? ContactSales,
+    int? StartingAt,
+    string? RazorpayPlanIdMonthly,
+    string? RazorpayPlanIdAnnually
+);
+
+/// <summary>
+/// Plan limits for create/update requests.
+/// </summary>
+public record CreatePlanLimitsRequest(
+    int NoticesPerMonth,
+    int Users,
+    int StorageGb,
+    int OrganizationsCount,
+    bool AdditionalUsersAllowed,
+    int ApiCalls
+);
+
+/// <summary>
+/// Search and filter parameters for admin plan list.
+/// </summary>
+public record PlanSearchParams(
+    string? Search,
+    bool? IsActive,
+    int Page = 1,
+    int PageSize = 20,
+    string SortBy = "SortOrder",
+    string SortDirection = "asc"
+);
+
+/// <summary>
+/// Pagination metadata for admin responses.
+/// </summary>
+public record AdminPaginationDto(
+    int Page,
+    int PageSize,
+    int TotalRecords,
+    int TotalPages
+);

@@ -6,18 +6,21 @@ using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.Data.Entities.Billing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using Pgvector;
 
 #nullable disable
 
-namespace EffortlessInsight.Api.Data.Migrations
+namespace EffortlessInsight.Api.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260709063917_AddPerformanceIndexesAndConstraints")]
+    partial class AddPerformanceIndexesAndConstraints
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -6187,6 +6190,9 @@ namespace EffortlessInsight.Api.Data.Migrations
                         .HasMaxLength(10)
                         .HasColumnType("character varying(10)");
 
+                    b.Property<Guid?>("PlanId")
+                        .HasColumnType("uuid");
+
                     b.Property<Dictionary<string, object>>("Settings")
                         .HasColumnType("jsonb");
 
@@ -6228,6 +6234,8 @@ namespace EffortlessInsight.Api.Data.Migrations
                         .IsUnique()
                         .HasDatabaseName("IX_Organizations_NameNormalized_Unique")
                         .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("PlanId");
 
                     b.HasIndex("State")
                         .HasFilter("\"DeletedAt\" IS NULL");
@@ -6605,6 +6613,116 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.ToTable("PasswordResetTokens");
                 });
 
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Plan", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Dictionary<string, object>>("Features")
+                        .HasColumnType("jsonb");
+
+                    b.Property<int?>("GstinLimit")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<int?>("NoticeLimit")
+                        .HasColumnType("integer");
+
+                    b.Property<decimal?>("PriceMonthly")
+                        .HasColumnType("numeric");
+
+                    b.Property<decimal?>("PriceYearly")
+                        .HasColumnType("numeric");
+
+                    b.Property<int?>("StorageLimitGb")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int?>("UserLimit")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("Plans");
+
+                    b.HasData(
+                        new
+                        {
+                            Id = new Guid("11111111-1111-1111-1111-111111111111"),
+                            Code = "free",
+                            CreatedAt = new DateTime(2024, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
+                            GstinLimit = 1,
+                            IsActive = true,
+                            Name = "Free",
+                            NoticeLimit = 3,
+                            PriceMonthly = 0m,
+                            PriceYearly = 0m,
+                            StorageLimitGb = 1,
+                            UserLimit = 1
+                        },
+                        new
+                        {
+                            Id = new Guid("22222222-2222-2222-2222-222222222222"),
+                            Code = "starter",
+                            CreatedAt = new DateTime(2024, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
+                            GstinLimit = 1,
+                            IsActive = true,
+                            Name = "Starter",
+                            NoticeLimit = 10,
+                            PriceMonthly = 499m,
+                            PriceYearly = 4999m,
+                            StorageLimitGb = 5,
+                            UserLimit = 2
+                        },
+                        new
+                        {
+                            Id = new Guid("33333333-3333-3333-3333-333333333333"),
+                            Code = "growth",
+                            CreatedAt = new DateTime(2024, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
+                            GstinLimit = 3,
+                            IsActive = true,
+                            Name = "Growth",
+                            NoticeLimit = 30,
+                            PriceMonthly = 999m,
+                            PriceYearly = 9999m,
+                            StorageLimitGb = 20,
+                            UserLimit = 5
+                        },
+                        new
+                        {
+                            Id = new Guid("44444444-4444-4444-4444-444444444444"),
+                            Code = "professional",
+                            CreatedAt = new DateTime(2024, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
+                            IsActive = true,
+                            Name = "Professional",
+                            NoticeLimit = 150,
+                            PriceMonthly = 4999m,
+                            PriceYearly = 49999m,
+                            StorageLimitGb = 100
+                        });
+                });
+
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.PushToken", b =>
                 {
                     b.Property<Guid>("Id")
@@ -6928,6 +7046,62 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.HasIndex("UserId");
 
                     b.ToTable("ScheduledNotifications");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Subscription", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("BillingCycle")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<bool>("CancelAtPeriodEnd")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateOnly?>("CurrentPeriodEnd")
+                        .HasColumnType("date");
+
+                    b.Property<DateOnly?>("CurrentPeriodStart")
+                        .HasColumnType("date");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PaymentProvider")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<Guid>("PlanId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ProviderSubscriptionId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.HasIndex("PlanId");
+
+                    b.ToTable("Subscriptions");
                 });
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.TaskAssignee", b =>
@@ -9896,6 +10070,15 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Navigation("Notification");
                 });
 
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Organization", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Plan", "Plan")
+                        .WithMany()
+                        .HasForeignKey("PlanId");
+
+                    b.Navigation("Plan");
+                });
+
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.OrganizationGstin", b =>
                 {
                     b.HasOne("EffortlessInsight.Api.Data.Entities.Organization", "Organization")
@@ -10083,6 +10266,25 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Navigation("SentNotification");
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Subscription", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Organization", "Organization")
+                        .WithMany("Subscriptions")
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Plan", "Plan")
+                        .WithMany()
+                        .HasForeignKey("PlanId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Organization");
+
+                    b.Navigation("Plan");
                 });
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.TaskAssignee", b =>
@@ -10695,6 +10897,8 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Navigation("Notices");
 
                     b.Navigation("OrganizationGstins");
+
+                    b.Navigation("Subscriptions");
 
                     b.Navigation("Teams");
 

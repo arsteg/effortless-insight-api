@@ -82,7 +82,17 @@ public class WebhooksController : ControllerBase
         }
 
         // Check for duplicate (idempotency)
-        var eventId = $"{webhookPayload.Event}_{webhookPayload.CreatedAt}";
+        // Fixes Issue #3: Webhook Replay Attack Vulnerability
+        // Use Razorpay's event ID from header (unique per event) instead of payload timestamp
+        var eventId = Request.Headers["X-Razorpay-Event-Id"].FirstOrDefault();
+
+        if (string.IsNullOrEmpty(eventId))
+        {
+            // Fallback to generated ID if header not present (shouldn't happen with Razorpay)
+            eventId = $"{webhookPayload.Event}_{Guid.NewGuid()}_{webhookPayload.CreatedAt}";
+            _logger.LogWarning("Razorpay webhook received without X-Razorpay-Event-Id header, using generated ID");
+        }
+
         var existingEvent = await _dbContext.WebhookEvents
             .FirstOrDefaultAsync(e => e.Provider == "razorpay" && e.EventId == eventId);
 
@@ -128,7 +138,20 @@ public class WebhooksController : ControllerBase
             webhookEvent.LastAttemptAt = DateTime.UtcNow;
             await _dbContext.SaveChangesAsync();
 
-            return Ok(new { status = "failed", error = ex.Message });
+            // Fixes Issue #8: Return HTTP 500 for transient errors so Razorpay retries
+            // Return HTTP 200 for permanent errors (business logic, invalid data)
+            if (IsTransientError(ex))
+            {
+                _logger.LogWarning(
+                    "Transient error processing webhook {EventId}, Razorpay will retry. Error: {Error}",
+                    webhookEvent.EventId, ex.Message);
+                return StatusCode(500, new { status = "failed", error = "Transient error, will retry", retryable = true });
+            }
+
+            _logger.LogWarning(
+                "Permanent error processing webhook {EventId}, will not retry. Error: {Error}",
+                webhookEvent.EventId, ex.Message);
+            return Ok(new { status = "failed", error = ex.Message, retryable = false });
         }
     }
 
@@ -360,5 +383,27 @@ public class WebhooksController : ControllerBase
 
             await _dbContext.SaveChangesAsync();
         }
+    }
+
+    /// <summary>
+    /// Determines if an exception is a transient error that should trigger a retry.
+    /// Fixes Issue #8: Webhook Retry Mechanism
+    /// </summary>
+    private static bool IsTransientError(Exception ex)
+    {
+        // Transient errors: Database, network, timeout issues
+        // These should return HTTP 500 so Razorpay retries
+        return ex is DbUpdateException
+            || ex is TimeoutException
+            || ex is TaskCanceledException
+            || ex is OperationCanceledException
+            || ex is HttpRequestException
+            || (ex.InnerException != null && IsTransientError(ex.InnerException))
+            || ex.Message.Contains("timeout", StringComparison.OrdinalIgnoreCase)
+            || ex.Message.Contains("connection", StringComparison.OrdinalIgnoreCase)
+            || ex.Message.Contains("network", StringComparison.OrdinalIgnoreCase);
+
+        // Permanent errors (ArgumentException, InvalidOperationException, etc.)
+        // return HTTP 200 to prevent infinite retries
     }
 }

@@ -43,7 +43,6 @@ public class AdminUsersController : AdminControllerBase
 
         var query = _dbContext.Users
             .Include(u => u.Organization)
-            .ThenInclude(o => o!.Plan)
             .AsQueryable();
 
         // Apply search filter
@@ -69,12 +68,12 @@ public class AdminUsersController : AdminControllerBase
         }
 
         // Apply plan filter
-        if (!string.IsNullOrEmpty(request.Plan))
-        {
-            query = query.Where(u => u.Organization != null &&
-                u.Organization.Plan != null &&
-                u.Organization.Plan.Code == request.Plan);
-        }
+        // TODO: Update to join with BillingSubscriptions table for plan filtering
+        // Temporarily disabled until plan info comes from BillingSubscription
+        // if (!string.IsNullOrEmpty(request.Plan))
+        // {
+        //     query = query.Where(u => u.Organization != null);
+        // }
 
         // Apply organization filter
         if (request.OrganizationId.HasValue)
@@ -113,9 +112,7 @@ public class AdminUsersController : AdminControllerBase
                     Id = u.Organization.Id,
                     Name = u.Organization.Name
                 } : null,
-                Plan = u.Organization != null && u.Organization.Plan != null
-                    ? u.Organization.Plan.Code
-                    : "free",
+                Plan = null, // TODO: Get from BillingSubscription
                 CreatedAt = u.CreatedAt,
                 LastLoginAt = u.LastLoginAt
             })
@@ -149,7 +146,6 @@ public class AdminUsersController : AdminControllerBase
 
         var user = await _dbContext.Users
             .Include(u => u.Organization)
-            .ThenInclude(o => o!.Plan)
             .FirstOrDefaultAsync(u => u.Id == userId);
 
         if (user == null)
@@ -214,8 +210,8 @@ public class AdminUsersController : AdminControllerBase
             {
                 Id = user.Organization.Id,
                 Name = user.Organization.Name,
-                PlanCode = user.Organization.Plan?.Code ?? "free",
-                PlanName = user.Organization.Plan?.Name ?? "Free",
+                PlanCode = null, // TODO: Get from BillingSubscription
+                PlanName = null, // TODO: Get from BillingSubscription
                 SubscriptionStatus = subscriptionStatus,
                 MemberCount = memberCount
             } : null,

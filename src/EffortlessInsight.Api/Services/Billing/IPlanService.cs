@@ -59,4 +59,48 @@ public interface IPlanService
     /// Checks if a plan change is an upgrade or downgrade.
     /// </summary>
     string GetPlanChangeType(SubscriptionPlan currentPlan, SubscriptionPlan newPlan, string currentCycle, string newCycle);
+
+    // ============================================================================
+    // Admin Methods
+    // ============================================================================
+
+    /// <summary>
+    /// Gets all plans for admin portal with search, filters, and pagination.
+    /// </summary>
+    Task<AdminPlanListResponse> GetAllPlansForAdminAsync(PlanSearchParams searchParams);
+
+    /// <summary>
+    /// Gets detailed plan information for admin view including subscriber count.
+    /// </summary>
+    Task<AdminPlanDetailDto?> GetPlanDetailForAdminAsync(Guid planId);
+
+    /// <summary>
+    /// Creates a new subscription plan.
+    /// </summary>
+    Task<SubscriptionPlan> CreatePlanAsync(CreatePlanRequest request, Guid adminId);
+
+    /// <summary>
+    /// Updates an existing subscription plan.
+    /// </summary>
+    Task<SubscriptionPlan> UpdatePlanAsync(Guid planId, UpdatePlanRequest request, Guid adminId);
+
+    /// <summary>
+    /// Soft deletes a subscription plan (sets DeletedAt).
+    /// </summary>
+    Task DeletePlanAsync(Guid planId, Guid adminId);
+
+    /// <summary>
+    /// Activates a subscription plan (sets IsActive = true).
+    /// </summary>
+    Task<SubscriptionPlan> ActivatePlanAsync(Guid planId, Guid adminId);
+
+    /// <summary>
+    /// Deactivates a subscription plan (sets IsActive = false).
+    /// </summary>
+    Task<SubscriptionPlan> DeactivatePlanAsync(Guid planId, Guid adminId);
+
+    /// <summary>
+    /// Invalidates the plans cache.
+    /// </summary>
+    Task InvalidatePlansCacheAsync();
 }

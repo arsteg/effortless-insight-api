@@ -96,6 +96,15 @@ public class SubscriptionService : ISubscriptionService
         var pricing = _planService.CalculateSubscriptionPrice(
             plan, request.BillingCycle, request.AdditionalSeats, discountAmount);
 
+        // Fixes Issue #21: Validate currency matches plan currency
+        if (!string.Equals(pricing.Currency, plan.Currency, StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogError(
+                "Currency mismatch: Pricing currency {PricingCurrency} doesn't match plan currency {PlanCurrency}",
+                pricing.Currency, plan.Currency);
+            throw new InvalidOperationException($"Currency mismatch. Expected {plan.Currency} but got {pricing.Currency}");
+        }
+
         // Create or update subscription in pending state
         var subscription = await GetSubscriptionEntityAsync(organizationId);
         if (subscription == null)
@@ -164,69 +173,73 @@ public class SubscriptionService : ISubscriptionService
         Guid userId,
         VerifyPaymentRequest request)
     {
-        // Verify signature
-        var isValid = _razorpayService.VerifyPaymentSignature(
-            request.RazorpayOrderId,
-            request.RazorpayPaymentId,
-            request.RazorpaySignature);
+        // Fixes Issue #4: Add transaction rollback for payment verification
+        // Wrap entire payment flow in a transaction to ensure atomicity
+        using var transaction = await _dbContext.Database.BeginTransactionAsync();
 
-        if (!isValid)
-            throw new InvalidOperationException("Payment signature verification failed");
-
-        var subscription = await GetSubscriptionEntityAsync(organizationId)
-            ?? throw new InvalidOperationException("Subscription not found");
-
-        var plan = await _planService.GetPlanByIdAsync(subscription.PlanId)
-            ?? throw new InvalidOperationException("Plan not found");
-
-        // Capture payment
-        var payment = await _razorpayService.CapturePaymentAsync(request.RazorpayPaymentId);
-
-        // Record payment
-        var paymentRecord = new Payment
-        {
-            OrganizationId = organizationId,
-            SubscriptionId = subscription.Id,
-            Amount = payment.Amount,
-            Currency = payment.Currency,
-            Status = PaymentStatus.Captured,
-            PaymentMethod = payment.Method,
-            RazorpayPaymentId = payment.PaymentId,
-            RazorpayOrderId = request.RazorpayOrderId,
-            RazorpaySignature = request.RazorpaySignature,
-            CapturedAt = DateTime.UtcNow
-        };
-        _dbContext.Payments.Add(paymentRecord);
-
-        // Activate subscription
-        var now = DateTime.UtcNow;
-        var periodEnd = subscription.BillingCycle == BillingCycle.Annually
-            ? now.AddYears(1)
-            : now.AddMonths(1);
-
-        subscription.Status = SubscriptionStatus.Active;
-        subscription.CurrentPeriodStart = now;
-        subscription.CurrentPeriodEnd = periodEnd;
-        subscription.TrialEnd = null;
-        subscription.FailedPaymentAttempts = 0;
-        subscription.Metadata ??= new Dictionary<string, object>();
-        subscription.Metadata["activatedAt"] = now.ToString("O");
-        subscription.Metadata["activatedBy"] = userId.ToString();
-
-        // Update organization
-        var org = await _dbContext.Organizations.FindAsync(organizationId);
-        if (org != null)
-        {
-            org.SubscriptionStatus = "active";
-            org.PlanId = await GetLegacyPlanIdAsync(plan.Code);
-        }
-
-        await _dbContext.SaveChangesAsync();
-
-        // Generate invoice
-        InvoiceSummaryDto? invoiceSummary = null;
         try
         {
+            // Verify signature
+            var isValid = _razorpayService.VerifyPaymentSignature(
+                request.RazorpayOrderId,
+                request.RazorpayPaymentId,
+                request.RazorpaySignature);
+
+            if (!isValid)
+                throw new InvalidOperationException("Payment signature verification failed");
+
+            var subscription = await GetSubscriptionEntityAsync(organizationId)
+                ?? throw new InvalidOperationException("Subscription not found");
+
+            var plan = await _planService.GetPlanByIdAsync(subscription.PlanId)
+                ?? throw new InvalidOperationException("Plan not found");
+
+            // Capture payment
+            var payment = await _razorpayService.CapturePaymentAsync(request.RazorpayPaymentId);
+
+            // Record payment
+            var paymentRecord = new Payment
+            {
+                OrganizationId = organizationId,
+                SubscriptionId = subscription.Id,
+                Amount = payment.Amount,
+                Currency = payment.Currency,
+                Status = PaymentStatus.Captured,
+                PaymentMethod = payment.Method,
+                RazorpayPaymentId = payment.PaymentId,
+                RazorpayOrderId = request.RazorpayOrderId,
+                RazorpaySignature = request.RazorpaySignature,
+                CapturedAt = DateTime.UtcNow
+            };
+            _dbContext.Payments.Add(paymentRecord);
+
+            // Activate subscription
+            var now = DateTime.UtcNow;
+            var periodEnd = subscription.BillingCycle == BillingCycle.Annually
+                ? now.AddYears(1)
+                : now.AddMonths(1);
+
+            subscription.Status = SubscriptionStatus.Active;
+            subscription.CurrentPeriodStart = now;
+            subscription.CurrentPeriodEnd = periodEnd;
+            subscription.TrialEnd = null;
+            subscription.FailedPaymentAttempts = 0;
+            subscription.Metadata ??= new Dictionary<string, object>();
+            subscription.Metadata["activatedAt"] = now.ToString("O");
+            subscription.Metadata["activatedBy"] = userId.ToString();
+
+            // Update organization
+            var org = await _dbContext.Organizations.FindAsync(organizationId);
+            if (org != null)
+            {
+                org.SubscriptionStatus = "active";
+            }
+
+            // Save changes within transaction
+            await _dbContext.SaveChangesAsync();
+
+            // Generate invoice (within same transaction)
+            InvoiceSummaryDto? invoiceSummary = null;
             var description = $"{plan.DisplayName} Subscription - {subscription.BillingCycle}";
             var lineItems = new List<InvoiceLineItemRequest>
             {
@@ -259,28 +272,46 @@ public class SubscriptionService : ISubscriptionService
                 Number: invoice.InvoiceNumber,
                 DownloadUrl: $"/api/v1/invoices/{invoice.Id}/pdf"
             );
+
+            // Commit transaction - all or nothing
+            await transaction.CommitAsync();
+
+            _logger.LogInformation(
+                "Subscription {SubscriptionId} activated for organization {OrganizationId}",
+                subscription.Id, organizationId);
+
+            return new VerifyPaymentResponse(
+                Success: true,
+                Subscription: new SubscriptionActivatedDto(
+                    Id: subscription.Id,
+                    Status: subscription.Status,
+                    PlanCode: subscription.PlanCode,
+                    ActivatedAt: now
+                ),
+                Invoice: invoiceSummary
+            );
         }
         catch (Exception ex)
         {
+            // Rollback transaction on any error
+            await transaction.RollbackAsync();
+
             _logger.LogError(ex,
-                "Failed to generate invoice for subscription {SubscriptionId}",
-                subscription.Id);
+                "Failed to verify payment and activate subscription for organization {OrganizationId}. Transaction rolled back.",
+                organizationId);
+
+            // If payment was captured but DB operations failed, we should ideally refund
+            // For now, log it for manual investigation
+            if (ex.Message.Contains("invoice", StringComparison.OrdinalIgnoreCase) ||
+                ex.Message.Contains("database", StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogCritical(
+                    "CRITICAL: Payment {PaymentId} was captured but subscription activation failed. Manual intervention required.",
+                    request.RazorpayPaymentId);
+            }
+
+            throw;
         }
-
-        _logger.LogInformation(
-            "Subscription {SubscriptionId} activated for organization {OrganizationId}",
-            subscription.Id, organizationId);
-
-        return new VerifyPaymentResponse(
-            Success: true,
-            Subscription: new SubscriptionActivatedDto(
-                Id: subscription.Id,
-                Status: subscription.Status,
-                PlanCode: subscription.PlanCode,
-                ActivatedAt: now
-            ),
-            Invoice: invoiceSummary
-        );
     }
 
     public async Task<ChangePlanResponse> ChangePlanAsync(
@@ -555,7 +586,6 @@ public class SubscriptionService : ISubscriptionService
         {
             org.SubscriptionStatus = "trial";
             org.TrialEndsAt = subscription.TrialEnd;
-            org.PlanId = await GetLegacyPlanIdAsync(plan.Code);
         }
 
         await _dbContext.SaveChangesAsync();
@@ -924,16 +954,19 @@ public class SubscriptionService : ISubscriptionService
             }
 
             // Check if card is expired (for card payments)
+            // Fixes Issue #5: Card Expiry Check Logic Error
             if (paymentMethod.Type == PaymentMethodType.Card &&
                 paymentMethod.CardExpiryYear.HasValue &&
                 paymentMethod.CardExpiryMonth.HasValue)
             {
-                var expiryDate = new DateTime(
+                // Card is valid until the last day of the expiry month
+                var lastDayOfExpiryMonth = new DateTime(
                     paymentMethod.CardExpiryYear.Value,
                     paymentMethod.CardExpiryMonth.Value,
-                    1).AddMonths(1).AddDays(-1); // End of expiry month
+                    DateTime.DaysInMonth(paymentMethod.CardExpiryYear.Value, paymentMethod.CardExpiryMonth.Value),
+                    23, 59, 59, DateTimeKind.Utc);
 
-                if (expiryDate < DateTime.UtcNow)
+                if (DateTime.UtcNow > lastDayOfExpiryMonth)
                 {
                     _logger.LogWarning(
                         "Card payment method {PaymentMethodId} has expired (expiry: {ExpiryMonth}/{ExpiryYear})",
@@ -1530,6 +1563,72 @@ public class SubscriptionService : ISubscriptionService
         return subscription;
     }
 
+    /// <summary>
+    /// Expires subscriptions that are past their grace period.
+    /// Fixes Issue #10: Grace Period Expiration Not Automatically Handled
+    /// </summary>
+    public async Task ExpireGracePeriodSubscriptionsAsync()
+    {
+        var expiredGracePeriods = await _dbContext.BillingSubscriptions
+            .Where(s => s.Status == SubscriptionStatus.PastDue &&
+                       s.GracePeriodEndAt.HasValue &&
+                       s.GracePeriodEndAt < DateTime.UtcNow &&
+                       s.DeletedAt == null)
+            .ToListAsync();
+
+        if (expiredGracePeriods.Count == 0)
+        {
+            _logger.LogInformation("No subscriptions past grace period found");
+            return;
+        }
+
+        _logger.LogInformation("Expiring {Count} subscriptions past grace period", expiredGracePeriods.Count);
+
+        foreach (var subscription in expiredGracePeriods)
+        {
+            subscription.Status = SubscriptionStatus.Cancelled;
+            subscription.EndedAt = DateTime.UtcNow;
+            subscription.CancellationReason = "payment_failed";
+
+            // Update organization
+            var org = await _dbContext.Organizations.FindAsync(subscription.OrganizationId);
+            if (org != null)
+            {
+                org.SubscriptionStatus = "cancelled";
+            }
+
+            _logger.LogWarning(
+                "Subscription {SubscriptionId} cancelled after {Attempts} failed payment attempts. Grace period ended at {GracePeriodEnd}",
+                subscription.Id, subscription.FailedPaymentAttempts, subscription.GracePeriodEndAt);
+
+            // Send final cancellation notification
+            try
+            {
+                var owner = await _dbContext.Users
+                    .FirstOrDefaultAsync(u => u.OrganizationId == subscription.OrganizationId && u.Role == "owner");
+
+                if (owner != null)
+                {
+                    var plan = await _planService.GetPlanByIdAsync(subscription.PlanId);
+                    await _billingNotificationService.SendSubscriptionCancelledAsync(
+                        owner.Id,
+                        plan?.DisplayName ?? subscription.PlanCode,
+                        subscription.EndedAt ?? DateTime.UtcNow);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "Failed to send grace period expiration notification for subscription {SubscriptionId}",
+                    subscription.Id);
+            }
+        }
+
+        await _dbContext.SaveChangesAsync();
+
+        _logger.LogInformation("Successfully expired {Count} subscriptions", expiredGracePeriods.Count);
+    }
+
     #region Private Methods
 
     private async Task SaveBillingDetailsAsync(Guid organizationId, BillingDetailsRequest request)
@@ -1576,22 +1675,7 @@ public class SubscriptionService : ISubscriptionService
         subscription.SeatsIncluded = newPlan.Limits.Users;
         subscription.SeatsAdditional = additionalSeats;
 
-        // Update organization
-        var org = await _dbContext.Organizations.FindAsync(subscription.OrganizationId);
-        if (org != null)
-        {
-            org.PlanId = await GetLegacyPlanIdAsync(newPlan.Code);
-        }
-
         await _dbContext.SaveChangesAsync();
-    }
-
-    private async Task<Guid?> GetLegacyPlanIdAsync(string planCode)
-    {
-        // Map to legacy Plan entity for backward compatibility
-        var legacyPlan = await _dbContext.Plans
-            .FirstOrDefaultAsync(p => p.Code == planCode && p.IsActive);
-        return legacyPlan?.Id;
     }
 
     private static SubscriptionDto MapToSubscriptionDto(BillingSubscription subscription, SubscriptionPlan plan)

@@ -50,8 +50,6 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
     public DbSet<NoticeResponse> NoticeResponses => Set<NoticeResponse>();
     public DbSet<DeadlineReminder> DeadlineReminders => Set<DeadlineReminder>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
-    public DbSet<Plan> Plans => Set<Plan>();
-    public DbSet<Subscription> Subscriptions => Set<Subscription>();
     public DbSet<Embedding> Embeddings => Set<Embedding>();
     public DbSet<KnowledgeBase> KnowledgeBase => Set<KnowledgeBase>();
     public DbSet<UserSession> UserSessions => Set<UserSession>();
@@ -256,10 +254,6 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
 
         modelBuilder.Entity<AuditLog>()
             .Property(a => a.NewValues)
-            .HasColumnType("jsonb");
-
-        modelBuilder.Entity<Plan>()
-            .Property(p => p.Features)
             .HasColumnType("jsonb");
 
         modelBuilder.Entity<Embedding>()
@@ -2927,66 +2921,6 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
     {
         // Use a fixed date for seed data to avoid migration changes
         var seedDate = new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc);
-
-        // Seed Plans
-        modelBuilder.Entity<Plan>().HasData(
-            new Plan
-            {
-                Id = Guid.Parse("11111111-1111-1111-1111-111111111111"),
-                Name = "Free",
-                Code = "free",
-                PriceMonthly = 0,
-                PriceYearly = 0,
-                NoticeLimit = 3,
-                UserLimit = 1,
-                GstinLimit = 1,
-                StorageLimitGb = 1,
-                IsActive = true,
-                CreatedAt = seedDate
-            },
-            new Plan
-            {
-                Id = Guid.Parse("22222222-2222-2222-2222-222222222222"),
-                Name = "Starter",
-                Code = "starter",
-                PriceMonthly = 499,
-                PriceYearly = 4999,
-                NoticeLimit = 10,
-                UserLimit = 2,
-                GstinLimit = 1,
-                StorageLimitGb = 5,
-                IsActive = true,
-                CreatedAt = seedDate
-            },
-            new Plan
-            {
-                Id = Guid.Parse("33333333-3333-3333-3333-333333333333"),
-                Name = "Growth",
-                Code = "growth",
-                PriceMonthly = 999,
-                PriceYearly = 9999,
-                NoticeLimit = 30,
-                UserLimit = 5,
-                GstinLimit = 3,
-                StorageLimitGb = 20,
-                IsActive = true,
-                CreatedAt = seedDate
-            },
-            new Plan
-            {
-                Id = Guid.Parse("44444444-4444-4444-4444-444444444444"),
-                Name = "Professional",
-                Code = "professional",
-                PriceMonthly = 4999,
-                PriceYearly = 49999,
-                NoticeLimit = 150,
-                UserLimit = null, // Unlimited
-                GstinLimit = null, // Unlimited
-                StorageLimitGb = 100,
-                IsActive = true,
-                CreatedAt = seedDate
-            }
-        );
 
         // Seed GSTIN State Codes
         modelBuilder.Entity<GstinStateCode>().HasData(

@@ -171,36 +171,21 @@ public class BillingJobs
 
     /// <summary>
     /// Process grace period expirations - runs daily.
+    /// Fixes Issue #10: Grace Period Expiration Not Automatically Handled
     /// </summary>
     public async Task ProcessGracePeriodExpirationsAsync()
     {
         _logger.LogInformation("Processing grace period expirations...");
 
-        var now = DateTime.UtcNow;
-        var expiredGracePeriods = await _dbContext.BillingSubscriptions
-            .Where(s => s.Status == SubscriptionStatus.PastDue &&
-                       s.GracePeriodEndAt.HasValue &&
-                       s.GracePeriodEndAt.Value <= now)
-            .ToListAsync();
-
-        foreach (var subscription in expiredGracePeriods)
+        try
         {
-            subscription.Status = SubscriptionStatus.Expired;
-            subscription.EndedAt = now;
-
-            var org = await _dbContext.Organizations.FindAsync(subscription.OrganizationId);
-            if (org != null)
-            {
-                org.SubscriptionStatus = "expired";
-            }
-
-            _logger.LogInformation(
-                "Expired subscription {SubscriptionId} after grace period",
-                subscription.Id);
+            // Call subscription service which handles all business logic
+            await _subscriptionService.ExpireGracePeriodSubscriptionsAsync();
         }
-
-        await _dbContext.SaveChangesAsync();
-        _logger.LogInformation("Processed {Count} grace period expirations", expiredGracePeriods.Count);
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to process grace period expirations");
+        }
     }
 
     /// <summary>
