@@ -76,7 +76,11 @@ public class RazorpayService : IRazorpayService
         {
             var text = $"{orderId}|{paymentId}";
             var expectedSignature = ComputeHmacSha256(text, _options.KeySecret);
-            return signature == expectedSignature;
+
+            // Fixes Issue #7: Use constant-time comparison to prevent timing attacks
+            return CryptographicOperations.FixedTimeEquals(
+                Encoding.UTF8.GetBytes(signature ?? ""),
+                Encoding.UTF8.GetBytes(expectedSignature));
         }
         catch (Exception ex)
         {
@@ -406,7 +410,11 @@ public class RazorpayService : IRazorpayService
         try
         {
             var expectedSignature = ComputeHmacSha256(payload, _options.WebhookSecret);
-            return signature == expectedSignature;
+
+            // Fixes Issue #7: Use constant-time comparison to prevent timing attacks
+            return CryptographicOperations.FixedTimeEquals(
+                Encoding.UTF8.GetBytes(signature ?? ""),
+                Encoding.UTF8.GetBytes(expectedSignature));
         }
         catch (Exception ex)
         {

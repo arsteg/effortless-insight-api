@@ -344,62 +344,6 @@ public class AuditLog : BaseEntity
     public Dictionary<string, object>? Metadata { get; set; }
 }
 
-public class Plan : BaseEntity
-{
-    [Required]
-    [MaxLength(100)]
-    public string Name { get; set; } = string.Empty;
-
-    [Required]
-    [MaxLength(50)]
-    public string Code { get; set; } = string.Empty;
-
-    public decimal? PriceMonthly { get; set; }
-
-    public decimal? PriceYearly { get; set; }
-
-    public int? NoticeLimit { get; set; }
-
-    public int? UserLimit { get; set; }
-
-    public int? GstinLimit { get; set; }
-
-    public int? StorageLimitGb { get; set; }
-
-    public Dictionary<string, object>? Features { get; set; }
-
-    public bool IsActive { get; set; } = true;
-}
-
-public class Subscription : BaseEntity
-{
-    [Required]
-    public Guid OrganizationId { get; set; }
-    public Organization Organization { get; set; } = null!;
-
-    [Required]
-    public Guid PlanId { get; set; }
-    public Plan Plan { get; set; } = null!;
-
-    [MaxLength(20)]
-    public string Status { get; set; } = "active";
-
-    [MaxLength(20)]
-    public string? BillingCycle { get; set; } // monthly, yearly
-
-    public DateOnly? CurrentPeriodStart { get; set; }
-
-    public DateOnly? CurrentPeriodEnd { get; set; }
-
-    public bool CancelAtPeriodEnd { get; set; }
-
-    [MaxLength(50)]
-    public string? PaymentProvider { get; set; }
-
-    [MaxLength(100)]
-    public string? ProviderSubscriptionId { get; set; }
-}
-
 public class Embedding : BaseEntity
 {
     [Required]

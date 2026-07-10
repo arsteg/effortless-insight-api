@@ -41,7 +41,6 @@ public class AdminOrganizationsController : AdminControllerBase
         }
 
         var query = _dbContext.Organizations
-            .Include(o => o.Plan)
             .AsQueryable();
 
         // Apply search filter
@@ -67,10 +66,11 @@ public class AdminOrganizationsController : AdminControllerBase
         }
 
         // Apply plan filter
-        if (!string.IsNullOrEmpty(request.Plan))
-        {
-            query = query.Where(o => o.Plan != null && o.Plan.Code == request.Plan);
-        }
+        // TODO: Implement plan filter using BillingSubscriptions table
+        // if (!string.IsNullOrEmpty(request.Plan))
+        // {
+        //     query = query.Where(o => o.SubscriptionStatus == "active");
+        // }
 
         // Get total count
         var totalCount = await query.CountAsync();
@@ -97,8 +97,8 @@ public class AdminOrganizationsController : AdminControllerBase
                 Id = o.Id,
                 Name = o.Name,
                 Status = o.DeletedAt != null ? "deleted" : (o.SubscriptionStatus == "suspended" ? "suspended" : "active"),
-                PlanCode = o.Plan != null ? o.Plan.Code : "free",
-                PlanName = o.Plan != null ? o.Plan.Name : "Free",
+                PlanCode = null, // TODO: Get from BillingSubscription
+                PlanName = null, // TODO: Get from BillingSubscription
                 SubscriptionStatus = o.SubscriptionStatus,
                 MemberCount = o.Members.Count,
                 NoticeCount = o.Notices.Count,
@@ -133,7 +133,6 @@ public class AdminOrganizationsController : AdminControllerBase
         }
 
         var org = await _dbContext.Organizations
-            .Include(o => o.Plan)
             .Include(o => o.Members)
             .ThenInclude(m => m.User)
             .Include(o => o.OrganizationGstins)
@@ -184,11 +183,7 @@ public class AdminOrganizationsController : AdminControllerBase
             Status = org.DeletedAt != null ? "deleted" : (org.SubscriptionStatus == "suspended" ? "suspended" : "active"),
             Industry = org.Industry,
             Website = org.Website,
-            Plan = org.Plan != null ? new AdminPlanInfo
-            {
-                Code = org.Plan.Code,
-                Name = org.Plan.Name
-            } : null,
+            Plan = null, // TODO: Get from BillingSubscription
             Subscription = subscription != null ? new AdminSubscriptionInfo
             {
                 Status = subscription.Status,

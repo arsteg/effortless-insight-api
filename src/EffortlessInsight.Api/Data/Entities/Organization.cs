@@ -126,9 +126,6 @@ public class Organization : BaseEntity
     [MaxLength(10)]
     public string? Tan { get; set; }
 
-    public Guid? PlanId { get; set; }
-    public Plan? Plan { get; set; }
-
     [MaxLength(20)]
     public string SubscriptionStatus { get; set; } = "trial";
 
@@ -176,7 +173,6 @@ public class Organization : BaseEntity
     public ICollection<OrganizationInvitation> Invitations { get; set; } = [];
 
     public ICollection<Notice> Notices { get; set; } = [];
-    public ICollection<Subscription> Subscriptions { get; set; } = [];
 
     /// <summary>
     /// Custom roles defined for this organization

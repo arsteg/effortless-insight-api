@@ -111,9 +111,6 @@ public class OrganizationManagementService : IOrganizationManagementService
         var user = await _userManager.FindByIdAsync(userId.ToString())
             ?? throw new KeyNotFoundException("USER_NOT_FOUND");
 
-        // Get default free plan
-        var freePlan = await _dbContext.Plans.FirstOrDefaultAsync(p => p.Code == "free" && p.IsActive);
-
         // Get state name from database
         var stateName = await _gstinValidator.GetStateNameAsync(gstinResult.StateCode!) ?? gstinResult.StateName!;
 
@@ -148,7 +145,6 @@ public class OrganizationManagementService : IOrganizationManagementService
             State = request.State,
             City = request.City,
             AnnualTurnoverRange = request.AnnualTurnoverRange,
-            PlanId = freePlan?.Id,
             SubscriptionStatus = "trial",
             TrialEndsAt = DateTime.UtcNow.AddDays(14),
             Settings = new Dictionary<string, object>
@@ -238,7 +234,6 @@ public class OrganizationManagementService : IOrganizationManagementService
 
         var organization = await _dbContext.Organizations
             .Include(o => o.OrganizationGstins)
-            .Include(o => o.Plan)
             .Include(o => o.Members.Where(m => m.Status == "active"))
             .FirstOrDefaultAsync(o => o.Id == organizationId && o.DeletedAt == null)
             ?? throw new KeyNotFoundException("ORGANIZATION_NOT_FOUND");
@@ -301,7 +296,6 @@ public class OrganizationManagementService : IOrganizationManagementService
 
         var organization = await _dbContext.Organizations
             .Include(o => o.OrganizationGstins)
-            .Include(o => o.Plan)
             .Include(o => o.Members.Where(m => m.Status == "active"))
             .FirstOrDefaultAsync(o => o.Id == organizationId && o.DeletedAt == null)
             ?? throw new KeyNotFoundException("ORGANIZATION_NOT_FOUND");
@@ -441,15 +435,19 @@ public class OrganizationManagementService : IOrganizationManagementService
 
         // Check plan limits
         var organization = await _dbContext.Organizations
-            .Include(o => o.Plan)
             .Include(o => o.OrganizationGstins)
             .FirstOrDefaultAsync(o => o.Id == organizationId && o.DeletedAt == null)
             ?? throw new KeyNotFoundException("ORGANIZATION_NOT_FOUND");
 
-        if (organization.Plan?.GstinLimit != null && organization.OrganizationGstins.Count >= organization.Plan.GstinLimit)
-        {
-            throw new InvalidOperationException($"GSTIN_LIMIT_EXCEEDED: Maximum {organization.Plan.GstinLimit} GSTINs allowed on your plan");
-        }
+        // Get active subscription to check limits
+        var subscription = await _dbContext.BillingSubscriptions
+            .Include(s => s.Plan)
+            .FirstOrDefaultAsync(s => s.OrganizationId == organizationId
+                && s.Status == "active"
+                && s.DeletedAt == null);
+
+        // Note: GstinLimit is not in the new billing system's PlanLimits
+        // This check can be removed or updated based on business requirements
 
         // Get state name
         var stateName = await _gstinValidator.GetStateNameAsync(gstinResult.StateCode!) ?? gstinResult.StateName!;
@@ -1008,7 +1006,6 @@ public class OrganizationManagementService : IOrganizationManagementService
         var actor = await _userManager.FindByIdAsync(userId.ToString());
 
         var organization = await _dbContext.Organizations
-            .Include(o => o.Plan)
             .FirstOrDefaultAsync(o => o.Id == organizationId && o.DeletedAt == null)
             ?? throw new KeyNotFoundException("ORGANIZATION_NOT_FOUND");
 
@@ -1043,9 +1040,17 @@ public class OrganizationManagementService : IOrganizationManagementService
             .CountAsync(i => i.OrganizationId == organizationId && i.Status == "pending");
 
         var effectiveCount = currentMemberCount + pendingInvitationCount;
-        var maxMembers = organization.Plan?.UserLimit ?? DefaultMaxMembers;
 
-        if (effectiveCount >= maxMembers)
+        // Get active subscription to check user limit
+        var subscription = await _dbContext.BillingSubscriptions
+            .Include(s => s.Plan)
+            .FirstOrDefaultAsync(s => s.OrganizationId == organizationId
+                && s.Status == "active"
+                && s.DeletedAt == null);
+
+        var maxMembers = subscription?.Plan?.Limits.Users ?? DefaultMaxMembers;
+
+        if (maxMembers > 0 && effectiveCount >= maxMembers)
         {
             throw new InvalidOperationException($"USER_LIMIT_EXCEEDED: Maximum {maxMembers} users allowed on your plan (including pending invitations)");
         }
@@ -1259,7 +1264,6 @@ public class OrganizationManagementService : IOrganizationManagementService
         {
             // Re-check plan limits atomically within transaction
             var organization = await _dbContext.Organizations
-                .Include(o => o.Plan)
                 .FirstOrDefaultAsync(o => o.Id == invitation.OrganizationId);
 
             if (organization != null)
@@ -1267,9 +1271,16 @@ public class OrganizationManagementService : IOrganizationManagementService
                 var currentMemberCount = await _dbContext.OrganizationMembers
                     .CountAsync(m => m.OrganizationId == invitation.OrganizationId && m.Status == "active");
 
-                var maxMembers = organization.Plan?.UserLimit ?? DefaultMaxMembers;
+                // Get active subscription to check user limit
+                var subscription = await _dbContext.BillingSubscriptions
+                    .Include(s => s.Plan)
+                    .FirstOrDefaultAsync(s => s.OrganizationId == invitation.OrganizationId
+                        && s.Status == "active"
+                        && s.DeletedAt == null);
 
-                if (currentMemberCount >= maxMembers)
+                var maxMembers = subscription?.Plan?.Limits.Users ?? DefaultMaxMembers;
+
+                if (maxMembers > 0 && currentMemberCount >= maxMembers)
                 {
                     throw new InvalidOperationException($"USER_LIMIT_EXCEEDED: Organization has reached maximum {maxMembers} members");
                 }
@@ -1541,13 +1552,7 @@ public class OrganizationManagementService : IOrganizationManagementService
             )).ToList(),
             Subscription: new SubscriptionInfoDto(
                 org.SubscriptionStatus,
-                org.Plan != null ? new PlanInfoDto(
-                    org.Plan.Id,
-                    org.Plan.Name,
-                    org.Plan.NoticeLimit,
-                    org.Plan.UserLimit,
-                    org.Plan.GstinLimit
-                ) : null,
+                null, // Plan info now comes from BillingSubscription
                 org.TrialEndsAt,
                 new UsageInfoDto(
                     noticesThisMonth,

@@ -164,6 +164,7 @@ public static class AdminPermissions
     public const string BillingRefund = "billing:refund";
     public const string BillingOverride = "billing:override";
     public const string BillingCredits = "billing:credits";
+    public const string PlansManage = "plans:manage";
 
     // AI Operations
     public const string AiOpsView = "ai_ops:view";
@@ -197,7 +198,7 @@ public static class AdminPermissions
             DashboardView, DashboardExport,
             UsersView, UsersSuspend, UsersDelete, UsersImpersonate, UsersResetPassword,
             OrganizationsView, OrganizationsUpdate, OrganizationsDelete, OrganizationsCredits,
-            BillingView, BillingRefund, BillingOverride, BillingCredits,
+            BillingView, BillingRefund, BillingOverride, BillingCredits, PlansManage,
             AiOpsView, AiOpsRetry, AiOpsPrompts,
             AuditView, AuditExport,
             ContentView, ContentEdit, ContentPublish,
@@ -216,7 +217,7 @@ public static class AdminPermissions
             DashboardView, DashboardExport,
             UsersView,
             OrganizationsView, OrganizationsCredits,
-            BillingView, BillingRefund, BillingOverride, BillingCredits,
+            BillingView, BillingRefund, BillingOverride, BillingCredits, PlansManage,
             AuditView
         ],
         AdminRoles.SupportAdmin => [

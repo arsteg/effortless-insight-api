@@ -140,6 +140,13 @@ public interface ISubscriptionService
     /// <param name="reason">The reason for the refund.</param>
     /// <returns>Refund details.</returns>
     Task<RefundResponse> CreateRefundAsync(Guid subscriptionId, decimal? amount, string reason);
+
+    /// <summary>
+    /// Expires subscriptions that are past their grace period.
+    /// Called by Hangfire recurring job to clean up past_due subscriptions.
+    /// Fixes Issue #10: Grace Period Expiration Not Automatically Handled
+    /// </summary>
+    Task ExpireGracePeriodSubscriptionsAsync();
 }
 
 /// <summary>

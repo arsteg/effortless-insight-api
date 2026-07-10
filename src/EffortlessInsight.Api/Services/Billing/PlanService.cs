@@ -301,4 +301,321 @@ public class PlanService : IPlanService
             ContactSales: plan.ContactSales
         );
     }
+
+    // ============================================================================
+    // Admin Methods Implementation
+    // ============================================================================
+
+    public async Task<AdminPlanListResponse> GetAllPlansForAdminAsync(PlanSearchParams searchParams)
+    {
+        var query = _dbContext.SubscriptionPlans
+            .Where(p => p.DeletedAt == null);
+
+        // Apply search filter
+        if (!string.IsNullOrWhiteSpace(searchParams.Search))
+        {
+            var searchLower = searchParams.Search.ToLower();
+            query = query.Where(p =>
+                p.Code.ToLower().Contains(searchLower) ||
+                p.Name.ToLower().Contains(searchLower) ||
+                p.DisplayName.ToLower().Contains(searchLower));
+        }
+
+        // Apply active filter
+        if (searchParams.IsActive.HasValue)
+        {
+            query = query.Where(p => p.IsActive == searchParams.IsActive.Value);
+        }
+
+        // Get total count
+        var totalRecords = await query.CountAsync();
+
+        // Apply sorting
+        query = searchParams.SortBy.ToLower() switch
+        {
+            "code" => searchParams.SortDirection.ToLower() == "desc"
+                ? query.OrderByDescending(p => p.Code)
+                : query.OrderBy(p => p.Code),
+            "name" => searchParams.SortDirection.ToLower() == "desc"
+                ? query.OrderByDescending(p => p.Name)
+                : query.OrderBy(p => p.Name),
+            "createdat" => searchParams.SortDirection.ToLower() == "desc"
+                ? query.OrderByDescending(p => p.CreatedAt)
+                : query.OrderBy(p => p.CreatedAt),
+            "sortorder" or _ => searchParams.SortDirection.ToLower() == "desc"
+                ? query.OrderByDescending(p => p.SortOrder)
+                : query.OrderBy(p => p.SortOrder)
+        };
+
+        // Apply pagination
+        var plans = await query
+            .Skip((searchParams.Page - 1) * searchParams.PageSize)
+            .Take(searchParams.PageSize)
+            .ToListAsync();
+
+        // Get subscriber counts for each plan
+        var planIds = plans.Select(p => p.Id).ToList();
+        var subscriberCounts = await _dbContext.BillingSubscriptions
+            .Where(s => planIds.Contains(s.PlanId) && s.Status == SubscriptionStatus.Active)
+            .GroupBy(s => s.PlanId)
+            .Select(g => new { PlanId = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.PlanId, x => x.Count);
+
+        var planItems = plans.Select(p => new AdminPlanListItem(
+            Id: p.Id,
+            Code: p.Code,
+            Name: p.Name,
+            DisplayName: p.DisplayName,
+            PricingMonthly: p.PricingMonthly,
+            PricingAnnually: p.PricingAnnually,
+            Currency: p.Currency,
+            IsActive: p.IsActive,
+            IsPopular: p.IsPopular,
+            SortOrder: p.SortOrder,
+            SubscriberCount: subscriberCounts.GetValueOrDefault(p.Id, 0),
+            CreatedAt: p.CreatedAt,
+            UpdatedAt: p.UpdatedAt
+        )).ToList();
+
+        var totalPages = (int)Math.Ceiling(totalRecords / (double)searchParams.PageSize);
+
+        return new AdminPlanListResponse(
+            Plans: planItems,
+            Pagination: new AdminPaginationDto(
+                Page: searchParams.Page,
+                PageSize: searchParams.PageSize,
+                TotalRecords: totalRecords,
+                TotalPages: totalPages
+            )
+        );
+    }
+
+    public async Task<AdminPlanDetailDto?> GetPlanDetailForAdminAsync(Guid planId)
+    {
+        var plan = await _dbContext.SubscriptionPlans
+            .FirstOrDefaultAsync(p => p.Id == planId);
+
+        if (plan == null)
+            return null;
+
+        // Get subscriber count
+        var subscriberCount = await _dbContext.BillingSubscriptions
+            .CountAsync(s => s.PlanId == planId && s.Status == SubscriptionStatus.Active);
+
+        return new AdminPlanDetailDto(
+            Id: plan.Id,
+            Code: plan.Code,
+            Name: plan.Name,
+            DisplayName: plan.DisplayName,
+            Description: plan.Description,
+            PricingMonthly: plan.PricingMonthly,
+            PricingAnnually: plan.PricingAnnually,
+            PerSeatMonthly: plan.PerSeatMonthly,
+            PerSeatAnnually: plan.PerSeatAnnually,
+            Currency: plan.Currency,
+            Limits: new PlanLimitsDto(
+                NoticesPerMonth: plan.Limits.NoticesPerMonth,
+                Users: plan.Limits.Users,
+                StorageGb: plan.Limits.StorageGb,
+                OrganizationsCount: plan.Limits.OrganizationsCount,
+                AdditionalUsersAllowed: plan.Limits.AdditionalUsersAllowed,
+                ApiCalls: plan.Limits.ApiCalls
+            ),
+            Features: plan.Features,
+            IsActive: plan.IsActive,
+            IsPopular: plan.IsPopular,
+            TrialDays: plan.TrialDays,
+            SortOrder: plan.SortOrder,
+            ContactSales: plan.ContactSales,
+            StartingAt: plan.StartingAt,
+            RazorpayPlanIdMonthly: plan.RazorpayPlanIdMonthly,
+            RazorpayPlanIdAnnually: plan.RazorpayPlanIdAnnually,
+            SubscriberCount: subscriberCount,
+            CreatedAt: plan.CreatedAt,
+            UpdatedAt: plan.UpdatedAt,
+            DeletedAt: plan.DeletedAt
+        );
+    }
+
+    public async Task<SubscriptionPlan> CreatePlanAsync(CreatePlanRequest request, Guid adminId)
+    {
+        // Validate unique plan code
+        var existingPlan = await _dbContext.SubscriptionPlans
+            .FirstOrDefaultAsync(p => p.Code == request.Code && p.DeletedAt == null);
+
+        if (existingPlan != null)
+        {
+            throw new InvalidOperationException($"A plan with code '{request.Code}' already exists.");
+        }
+
+        var plan = new SubscriptionPlan
+        {
+            Id = Guid.NewGuid(),
+            Code = request.Code,
+            Name = request.Name,
+            DisplayName = request.DisplayName,
+            Description = request.Description,
+            PricingMonthly = request.PricingMonthly,
+            PricingAnnually = request.PricingAnnually,
+            PerSeatMonthly = request.PerSeatMonthly,
+            PerSeatAnnually = request.PerSeatAnnually,
+            Currency = request.Currency,
+            Limits = new PlanLimits
+            {
+                NoticesPerMonth = request.Limits.NoticesPerMonth,
+                Users = request.Limits.Users,
+                StorageGb = request.Limits.StorageGb,
+                OrganizationsCount = request.Limits.OrganizationsCount,
+                AdditionalUsersAllowed = request.Limits.AdditionalUsersAllowed,
+                ApiCalls = request.Limits.ApiCalls
+            },
+            Features = request.Features,
+            IsActive = request.IsActive,
+            IsPopular = request.IsPopular,
+            TrialDays = request.TrialDays,
+            SortOrder = request.SortOrder,
+            ContactSales = request.ContactSales,
+            StartingAt = request.StartingAt,
+            RazorpayPlanIdMonthly = request.RazorpayPlanIdMonthly,
+            RazorpayPlanIdAnnually = request.RazorpayPlanIdAnnually,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        _dbContext.SubscriptionPlans.Add(plan);
+        await _dbContext.SaveChangesAsync();
+
+        await InvalidatePlansCacheAsync();
+
+        _logger.LogInformation("Plan {PlanCode} created by admin {AdminId}", plan.Code, adminId);
+
+        return plan;
+    }
+
+    public async Task<SubscriptionPlan> UpdatePlanAsync(Guid planId, UpdatePlanRequest request, Guid adminId)
+    {
+        var plan = await _dbContext.SubscriptionPlans
+            .FirstOrDefaultAsync(p => p.Id == planId && p.DeletedAt == null);
+
+        if (plan == null)
+        {
+            throw new InvalidOperationException($"Plan with ID '{planId}' not found.");
+        }
+
+        // Update fields if provided
+        if (request.Name != null) plan.Name = request.Name;
+        if (request.DisplayName != null) plan.DisplayName = request.DisplayName;
+        if (request.Description != null) plan.Description = request.Description;
+        if (request.PricingMonthly.HasValue) plan.PricingMonthly = request.PricingMonthly;
+        if (request.PricingAnnually.HasValue) plan.PricingAnnually = request.PricingAnnually;
+        if (request.PerSeatMonthly.HasValue) plan.PerSeatMonthly = request.PerSeatMonthly;
+        if (request.PerSeatAnnually.HasValue) plan.PerSeatAnnually = request.PerSeatAnnually;
+        if (request.Currency != null) plan.Currency = request.Currency;
+
+        if (request.Limits != null)
+        {
+            plan.Limits = new PlanLimits
+            {
+                NoticesPerMonth = request.Limits.NoticesPerMonth,
+                Users = request.Limits.Users,
+                StorageGb = request.Limits.StorageGb,
+                OrganizationsCount = request.Limits.OrganizationsCount,
+                AdditionalUsersAllowed = request.Limits.AdditionalUsersAllowed,
+                ApiCalls = request.Limits.ApiCalls
+            };
+        }
+
+        if (request.Features != null) plan.Features = request.Features;
+        if (request.IsActive.HasValue) plan.IsActive = request.IsActive.Value;
+        if (request.IsPopular.HasValue) plan.IsPopular = request.IsPopular.Value;
+        if (request.TrialDays.HasValue) plan.TrialDays = request.TrialDays.Value;
+        if (request.SortOrder.HasValue) plan.SortOrder = request.SortOrder.Value;
+        if (request.ContactSales.HasValue) plan.ContactSales = request.ContactSales.Value;
+        if (request.StartingAt.HasValue) plan.StartingAt = request.StartingAt;
+        if (request.RazorpayPlanIdMonthly != null) plan.RazorpayPlanIdMonthly = request.RazorpayPlanIdMonthly;
+        if (request.RazorpayPlanIdAnnually != null) plan.RazorpayPlanIdAnnually = request.RazorpayPlanIdAnnually;
+
+        plan.UpdatedAt = DateTime.UtcNow;
+
+        await _dbContext.SaveChangesAsync();
+        await InvalidatePlansCacheAsync();
+
+        _logger.LogInformation("Plan {PlanCode} updated by admin {AdminId}", plan.Code, adminId);
+
+        return plan;
+    }
+
+    public async Task DeletePlanAsync(Guid planId, Guid adminId)
+    {
+        var plan = await _dbContext.SubscriptionPlans
+            .FirstOrDefaultAsync(p => p.Id == planId && p.DeletedAt == null);
+
+        if (plan == null)
+        {
+            throw new InvalidOperationException($"Plan with ID '{planId}' not found.");
+        }
+
+        // Soft delete
+        plan.DeletedAt = DateTime.UtcNow;
+        plan.UpdatedAt = DateTime.UtcNow;
+
+        await _dbContext.SaveChangesAsync();
+        await InvalidatePlansCacheAsync();
+
+        _logger.LogInformation("Plan {PlanCode} deleted by admin {AdminId}", plan.Code, adminId);
+    }
+
+    public async Task<SubscriptionPlan> ActivatePlanAsync(Guid planId, Guid adminId)
+    {
+        var plan = await _dbContext.SubscriptionPlans
+            .FirstOrDefaultAsync(p => p.Id == planId && p.DeletedAt == null);
+
+        if (plan == null)
+        {
+            throw new InvalidOperationException($"Plan with ID '{planId}' not found.");
+        }
+
+        plan.IsActive = true;
+        plan.UpdatedAt = DateTime.UtcNow;
+
+        await _dbContext.SaveChangesAsync();
+        await InvalidatePlansCacheAsync();
+
+        _logger.LogInformation("Plan {PlanCode} activated by admin {AdminId}", plan.Code, adminId);
+
+        return plan;
+    }
+
+    public async Task<SubscriptionPlan> DeactivatePlanAsync(Guid planId, Guid adminId)
+    {
+        var plan = await _dbContext.SubscriptionPlans
+            .FirstOrDefaultAsync(p => p.Id == planId && p.DeletedAt == null);
+
+        if (plan == null)
+        {
+            throw new InvalidOperationException($"Plan with ID '{planId}' not found.");
+        }
+
+        plan.IsActive = false;
+        plan.UpdatedAt = DateTime.UtcNow;
+
+        await _dbContext.SaveChangesAsync();
+        await InvalidatePlansCacheAsync();
+
+        _logger.LogInformation("Plan {PlanCode} deactivated by admin {AdminId}", plan.Code, adminId);
+
+        return plan;
+    }
+
+    public async Task InvalidatePlansCacheAsync()
+    {
+        try
+        {
+            await _cache.RemoveAsync(PlansCacheKey);
+            _logger.LogInformation("Plans cache invalidated");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to invalidate plans cache");
+        }
+    }
 }
