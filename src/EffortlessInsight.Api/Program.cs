@@ -296,7 +296,7 @@ app.MapNotificationEndpoints();
 // Hangfire Dashboard (protected in production)
 app.UseHangfireDashboard("/hangfire", new DashboardOptions
 {
-    Authorization = app.Environment.IsDevelopment()
+    Authorization = app.Environment.IsDevelopment() || app.Environment.EnvironmentName == "Local"
         ? []
         : [new HangfireAuthorizationFilter()]
 });

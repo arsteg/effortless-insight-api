@@ -97,30 +97,31 @@ public class AdminAuthService : IAdminAuthService
             admin.LockedUntil = null;
         }
 
+        // TODO: MFA temporarily disabled for development
         // Check if MFA is required
-        if (admin.MfaEnabled)
-        {
-            var mfaSessionToken = GenerateSecureToken();
-            var mfaExpiresAt = DateTime.UtcNow.AddMinutes(5);
-
-            // Store MFA session in cache
-            await _cache.SetStringAsync(
-                $"{MFA_SESSION_PREFIX}{mfaSessionToken}",
-                admin.Id.ToString(),
-                new DistributedCacheEntryOptions
-                {
-                    AbsoluteExpiration = mfaExpiresAt
-                });
-
-            await _dbContext.SaveChangesAsync();
-
-            return new AdminMfaRequiredResponse
-            {
-                MfaRequired = true,
-                SessionToken = mfaSessionToken,
-                ExpiresAt = mfaExpiresAt
-            };
-        }
+        // if (admin.MfaEnabled)
+        // {
+        //     var mfaSessionToken = GenerateSecureToken();
+        //     var mfaExpiresAt = DateTime.UtcNow.AddMinutes(5);
+        //
+        //     // Store MFA session in cache
+        //     await _cache.SetStringAsync(
+        //         $"{MFA_SESSION_PREFIX}{mfaSessionToken}",
+        //         admin.Id.ToString(),
+        //         new DistributedCacheEntryOptions
+        //         {
+        //             AbsoluteExpiration = mfaExpiresAt
+        //         });
+        //
+        //     await _dbContext.SaveChangesAsync();
+        //
+        //     return new AdminMfaRequiredResponse
+        //     {
+        //         MfaRequired = true,
+        //         SessionToken = mfaSessionToken,
+        //         ExpiresAt = mfaExpiresAt
+        //     };
+        // }
 
         // Complete login without MFA
         return await CompleteLoginAsync(admin, ipAddress, userAgent);
