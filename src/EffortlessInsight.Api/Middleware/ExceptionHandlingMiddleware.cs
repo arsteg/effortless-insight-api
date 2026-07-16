@@ -8,11 +8,13 @@ public class ExceptionHandlingMiddleware
 {
     private readonly RequestDelegate _next;
     private readonly ILogger<ExceptionHandlingMiddleware> _logger;
+    private readonly IHostEnvironment _environment;
 
-    public ExceptionHandlingMiddleware(RequestDelegate next, ILogger<ExceptionHandlingMiddleware> logger)
+    public ExceptionHandlingMiddleware(RequestDelegate next, ILogger<ExceptionHandlingMiddleware> logger, IHostEnvironment environment)
     {
         _next = next;
         _logger = logger;
+        _environment = environment;
     }
 
     public async Task InvokeAsync(HttpContext context)
@@ -65,7 +67,16 @@ public class ExceptionHandlingMiddleware
             default:
                 _logger.LogError(exception, "Unhandled exception occurred: {Message}", exception.Message);
                 response.StatusCode = (int)HttpStatusCode.InternalServerError;
-                errorResponse.Message = "An unexpected error occurred";
+                // In development, include the actual error message for debugging
+                if (_environment.IsDevelopment())
+                {
+                    errorResponse.Message = exception.Message;
+                    errorResponse.StackTrace = exception.StackTrace;
+                }
+                else
+                {
+                    errorResponse.Message = "An unexpected error occurred";
+                }
                 break;
         }
 
@@ -110,6 +121,7 @@ public class ErrorResponse
 {
     public string Message { get; set; } = string.Empty;
     public string? TraceId { get; set; }
+    public string? StackTrace { get; set; }
     public List<ErrorDetail>? Errors { get; set; }
 }
 

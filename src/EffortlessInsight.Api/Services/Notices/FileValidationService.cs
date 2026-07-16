@@ -176,8 +176,8 @@ public class FileValidationService : IFileValidationService
         if (detectedMimeType == null)
         {
             return FileValidationResult.Failure(
-                "INVALID_FILE_TYPE",
-                $"Could not detect file type. Allowed types: PDF, JPG, PNG, HEIC");
+                "INVALID_FILE_CONTENT",
+                "Unable to process file. File may be corrupted or not a valid PDF, JPG, PNG, or HEIC file.");
         }
 
         // Verify the detected type matches the claimed type
@@ -187,7 +187,19 @@ public class FileValidationService : IFileValidationService
         {
             return FileValidationResult.Failure(
                 "FILE_TYPE_MISMATCH",
-                $"File content does not match extension '{extension}'");
+                $"Unable to process file. The file content does not match the '{extension}' extension. File may be corrupted.");
+        }
+
+        // Check for password-protected PDF
+        if (detectedMimeType == "application/pdf")
+        {
+            var isPasswordProtected = await CheckPdfPasswordProtectionAsync(fileStream, cancellationToken);
+            if (isPasswordProtected)
+            {
+                return FileValidationResult.Failure(
+                    "PDF_PASSWORD_PROTECTED",
+                    "Password-protected files are not supported. Please remove the password protection and try again.");
+            }
         }
 
         // Reset stream for hash calculation
@@ -323,6 +335,101 @@ public class FileValidationService : IFileValidationService
     }
 
     /// <summary>
+    /// Checks if a PDF file is password-protected by looking for /Encrypt dictionary.
+    /// </summary>
+    private async Task<bool> CheckPdfPasswordProtectionAsync(
+        Stream fileStream,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (fileStream.CanSeek)
+            {
+                fileStream.Position = 0;
+            }
+
+            // Read the PDF content to search for encryption markers
+            // We'll read in chunks to handle large files efficiently
+            // Password-protected PDFs have /Encrypt in their trailer or xref
+            const int bufferSize = 8192;
+            const int maxBytesToRead = 1024 * 1024; // Read up to 1MB
+            var buffer = new byte[bufferSize];
+            var totalBytesRead = 0;
+
+            // We're looking for "/Encrypt" which indicates encryption
+            var encryptMarker = "/Encrypt"u8.ToArray();
+
+            while (totalBytesRead < maxBytesToRead)
+            {
+                var bytesRead = await fileStream.ReadAsync(buffer, cancellationToken);
+                if (bytesRead == 0)
+                    break;
+
+                // Search for /Encrypt in the buffer
+                if (ContainsSequence(buffer, bytesRead, encryptMarker))
+                {
+                    _logger.LogInformation("Detected password-protected PDF");
+                    return true;
+                }
+
+                totalBytesRead += bytesRead;
+
+                // For large files, also check the end where trailer usually is
+                if (totalBytesRead >= maxBytesToRead && fileStream.CanSeek && fileStream.Length > maxBytesToRead)
+                {
+                    // Check the last 64KB where the trailer typically resides
+                    fileStream.Position = Math.Max(0, fileStream.Length - 65536);
+                    while (true)
+                    {
+                        bytesRead = await fileStream.ReadAsync(buffer, cancellationToken);
+                        if (bytesRead == 0)
+                            break;
+
+                        if (ContainsSequence(buffer, bytesRead, encryptMarker))
+                        {
+                            _logger.LogInformation("Detected password-protected PDF (in trailer)");
+                            return true;
+                        }
+                    }
+                    break;
+                }
+            }
+
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error checking PDF password protection, assuming not protected");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Checks if a byte array contains a specific sequence.
+    /// </summary>
+    private static bool ContainsSequence(byte[] buffer, int length, byte[] sequence)
+    {
+        if (length < sequence.Length)
+            return false;
+
+        for (var i = 0; i <= length - sequence.Length; i++)
+        {
+            var found = true;
+            for (var j = 0; j < sequence.Length; j++)
+            {
+                if (buffer[i + j] != sequence[j])
+                {
+                    found = false;
+                    break;
+                }
+            }
+            if (found)
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
     /// Detects MIME type from file header bytes.
     /// </summary>
     private string? DetectMimeType(byte[] headerBytes, string fileName)
@@ -379,12 +486,12 @@ public class FileValidationService : IFileValidationService
             }
         }
 
-        // Fallback: use extension to determine type
-        var extension = Path.GetExtension(fileName).ToLowerInvariant();
-        if (AllowedFileTypes.TryGetValue(extension, out var mimes))
-        {
-            return mimes[0];
-        }
+        // No fallback to extension - file must have valid magic bytes
+        // This prevents renamed files (e.g., CSV renamed to .pdf) from being accepted
+        _logger.LogWarning(
+            "File {FileName} has invalid magic bytes. Header: {Header}",
+            fileName,
+            Convert.ToHexString(headerBytes[..Math.Min(8, headerBytes.Length)]));
 
         return null;
     }

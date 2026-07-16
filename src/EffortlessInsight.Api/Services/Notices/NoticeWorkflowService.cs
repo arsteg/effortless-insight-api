@@ -294,7 +294,7 @@ public class NoticeWorkflowService : INoticeWorkflowService
         // Deadline scoring
         if (responseDeadline.HasValue)
         {
-            var daysRemaining = (responseDeadline.Value.ToDateTime(TimeOnly.MinValue) - DateTime.UtcNow).TotalDays;
+            var daysRemaining = (DateTime.SpecifyKind(responseDeadline.Value.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc) - DateTime.UtcNow).TotalDays;
 
             if (daysRemaining < 0)
             {
@@ -381,7 +381,7 @@ public class NoticeWorkflowService : INoticeWorkflowService
         // Deadline scoring
         if (responseDeadline.HasValue)
         {
-            var daysRemaining = (responseDeadline.Value.ToDateTime(TimeOnly.MinValue) - DateTime.UtcNow).TotalDays;
+            var daysRemaining = (DateTime.SpecifyKind(responseDeadline.Value.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc) - DateTime.UtcNow).TotalDays;
 
             var (deadlineScore, deadlineReason) = daysRemaining switch
             {

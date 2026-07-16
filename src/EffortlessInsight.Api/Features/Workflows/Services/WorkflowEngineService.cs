@@ -864,16 +864,30 @@ public class WorkflowEngineService : IWorkflowEngineService
             .Include(i => i.CurrentStage)
             .FirstOrDefaultAsync(i => i.NoticeId == noticeId && i.Status == WorkflowInstanceStatuses.Active, cancellationToken);
 
-        if (instance?.CurrentStage == null)
+        if (instance == null)
         {
+            _logger.LogWarning("GetAvailableTransitions: No active workflow instance found for NoticeId={NoticeId}", noticeId);
+            return [];
+        }
+
+        if (instance.CurrentStage == null)
+        {
+            _logger.LogWarning("GetAvailableTransitions: CurrentStage is null for NoticeId={NoticeId}, CurrentStageId={CurrentStageId}",
+                noticeId, instance.CurrentStageId);
             return [];
         }
 
         var allowedKeys = instance.CurrentStage.AllowedTransitions;
-        return instance.WorkflowTemplate.Stages
+        _logger.LogInformation("GetAvailableTransitions: NoticeId={NoticeId}, CurrentStage={StageKey}, AllowedTransitions={AllowedTransitions}, TemplateStagesCount={StagesCount}",
+            noticeId, instance.CurrentStageKey, string.Join(",", allowedKeys), instance.WorkflowTemplate.Stages.Count);
+
+        var result = instance.WorkflowTemplate.Stages
             .Where(s => allowedKeys.Contains(s.StageKey, StringComparer.OrdinalIgnoreCase))
             .Select(MapToStageDto)
             .ToList();
+
+        _logger.LogInformation("GetAvailableTransitions: Returning {Count} transitions for NoticeId={NoticeId}", result.Count, noticeId);
+        return result;
     }
 
     public async Task<BulkTransitionResult> BulkTransitionAsync(

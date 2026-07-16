@@ -104,6 +104,10 @@ public class ComplianceReportService : IComplianceReportService
         _logger = logger;
     }
 
+    // Helper method to convert DateOnly to UTC DateTime for PostgreSQL compatibility
+    private static DateTime ToUtcDateTime(DateOnly date, TimeOnly time) =>
+        DateTime.SpecifyKind(date.ToDateTime(time), DateTimeKind.Utc);
+
     public async Task<ComplianceReport> GenerateDeadlineComplianceReportAsync(
         Guid orgId, DateRange range, CancellationToken ct)
     {
@@ -111,8 +115,8 @@ public class ComplianceReportService : IComplianceReportService
             "Generating deadline compliance report for org {OrgId} from {Start} to {End}",
             orgId, range.StartDate, range.EndDate);
 
-        var startDateTime = range.StartDate.ToDateTime(TimeOnly.MinValue);
-        var endDateTime = range.EndDate.ToDateTime(TimeOnly.MaxValue);
+        var startDateTime = ToUtcDateTime(range.StartDate, TimeOnly.MinValue);
+        var endDateTime = ToUtcDateTime(range.EndDate, TimeOnly.MaxValue);
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
 
         // Get notices with deadlines in the period
@@ -201,8 +205,8 @@ public class ComplianceReportService : IComplianceReportService
                 Description = $"{notice.NoticeType ?? "Notice"} #{notice.NoticeNumber ?? notice.Id.ToString()[..8]}",
                 Status = notice.Status,
                 IsCompliant = isCompliant,
-                DueDate = effectiveDeadline.ToDateTime(TimeOnly.MinValue),
-                CompletedAt = completedDate?.ToDateTime(TimeOnly.MinValue),
+                DueDate = ToUtcDateTime(effectiveDeadline, TimeOnly.MinValue),
+                CompletedAt = completedDate.HasValue ? ToUtcDateTime(completedDate.Value, TimeOnly.MinValue) : null,
                 DaysOverdue = daysOverdue,
                 AssignedTo = notice.AssignedToName,
                 AssignedToId = notice.AssignedToId,
@@ -261,8 +265,8 @@ public class ComplianceReportService : IComplianceReportService
             "Generating SLA compliance report for org {OrgId} from {Start} to {End}",
             orgId, range.StartDate, range.EndDate);
 
-        var startDateTime = range.StartDate.ToDateTime(TimeOnly.MinValue);
-        var endDateTime = range.EndDate.ToDateTime(TimeOnly.MaxValue);
+        var startDateTime = ToUtcDateTime(range.StartDate, TimeOnly.MinValue);
+        var endDateTime = ToUtcDateTime(range.EndDate, TimeOnly.MaxValue);
 
         // Get workflow SLA metrics for the period
         var slaMetrics = await _context.WorkflowSlaMetrics
@@ -371,8 +375,8 @@ public class ComplianceReportService : IComplianceReportService
             "Generating audit report for org {OrgId} from {Start} to {End}",
             orgId, range.StartDate, range.EndDate);
 
-        var startDateTime = range.StartDate.ToDateTime(TimeOnly.MinValue);
-        var endDateTime = range.EndDate.ToDateTime(TimeOnly.MaxValue);
+        var startDateTime = ToUtcDateTime(range.StartDate, TimeOnly.MinValue);
+        var endDateTime = ToUtcDateTime(range.EndDate, TimeOnly.MaxValue);
 
         // Get audit log entries for the period
         var auditLogs = await _context.AuditLogs

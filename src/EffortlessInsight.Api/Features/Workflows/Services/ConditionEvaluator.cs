@@ -78,7 +78,7 @@ public class ConditionEvaluator : IConditionEvaluator
                 return (notice.TaxAmount ?? 0) + (notice.PenaltyAmount ?? 0) + (notice.InterestAmount ?? 0);
             case "daysuntildeadline":
                 if (notice.ResponseDeadline.HasValue)
-                    return (notice.ResponseDeadline.Value.ToDateTime(TimeOnly.MinValue) - DateTime.Today).Days;
+                    return (DateTime.SpecifyKind(notice.ResponseDeadline.Value.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc) - DateTime.UtcNow.Date).Days;
                 return null;
             case "isoverdue":
                 return notice.ResponseDeadline.HasValue &&

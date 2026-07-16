@@ -299,11 +299,13 @@ public class UsageService : IUsageService
         usage.StorageBytes = storageBytes;
 
         // Count notices created this period
+        var periodStart = DateTime.SpecifyKind(usage.PeriodStart.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc);
+        var periodEnd = DateTime.SpecifyKind(usage.PeriodEnd.ToDateTime(TimeOnly.MaxValue), DateTimeKind.Utc);
         var noticeCount = await _dbContext.Notices
             .CountAsync(n =>
                 n.OrganizationId == organizationId &&
-                n.CreatedAt >= usage.PeriodStart.ToDateTime(TimeOnly.MinValue) &&
-                n.CreatedAt <= usage.PeriodEnd.ToDateTime(TimeOnly.MaxValue));
+                n.CreatedAt >= periodStart &&
+                n.CreatedAt <= periodEnd);
         usage.NoticesCount = noticeCount;
 
         usage.LastCalculatedAt = DateTime.UtcNow;

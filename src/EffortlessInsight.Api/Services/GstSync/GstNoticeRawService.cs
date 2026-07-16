@@ -245,7 +245,7 @@ public class GstNoticeRawService : IGstNoticeRawService
         // Determine priority based on notice type and due date
         if (notice.DueDate.HasValue)
         {
-            var daysUntilDue = (notice.DueDate.Value.ToDateTime(TimeOnly.MinValue) - DateTime.UtcNow).Days;
+            var daysUntilDue = (DateTime.SpecifyKind(notice.DueDate.Value.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc) - DateTime.UtcNow).Days;
             if (daysUntilDue <= 3)
                 return "critical";
             if (daysUntilDue <= 7)

@@ -183,9 +183,13 @@ public class DashboardService : IDashboardService
         // The "weekAgo" is used for "this week" metrics regardless of filter
         var weekAgo = DateTime.UtcNow.AddDays(-7);
 
-        // Convert DateOnly to DateTime for filtering
-        DateTime? filterStart = startDate?.ToDateTime(TimeOnly.MinValue);
-        DateTime? filterEnd = endDate?.ToDateTime(TimeOnly.MaxValue);
+        // Convert DateOnly to DateTime for filtering (must specify UTC for PostgreSQL)
+        DateTime? filterStart = startDate.HasValue
+            ? DateTime.SpecifyKind(startDate.Value.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc)
+            : null;
+        DateTime? filterEnd = endDate.HasValue
+            ? DateTime.SpecifyKind(endDate.Value.ToDateTime(TimeOnly.MaxValue), DateTimeKind.Utc)
+            : null;
 
         // Run queries sequentially (DbContext is not thread-safe)
         var notices = await GetNoticeMetricsAsync(orgId, today, weekAgo, filterStart, filterEnd, ct);

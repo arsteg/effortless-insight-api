@@ -104,8 +104,8 @@ public class NotificationJobs
                 continue;
 
             // Check if we already sent this reminder today
-            var todayStart = today.ToDateTime(TimeOnly.MinValue);
-            var todayEnd = today.AddDays(1).ToDateTime(TimeOnly.MinValue);
+            var todayStart = DateTime.SpecifyKind(today.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc);
+            var todayEnd = DateTime.SpecifyKind(today.AddDays(1).ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc);
             var alreadySent = await dbContext.Notifications
                 .AnyAsync(n => n.UserId == notice.AssignedToId.Value &&
                               n.Type == notificationType &&

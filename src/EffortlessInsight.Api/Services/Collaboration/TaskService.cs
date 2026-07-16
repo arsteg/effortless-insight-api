@@ -78,7 +78,7 @@ public class TaskService : ITaskService
             Description = dto.Description ?? template?.DefaultDescription,
             Priority = dto.Priority ?? template?.DefaultPriority ?? TaskPriorityValues.Medium,
             Status = TaskStatusValues.Todo,
-            DueDate = dto.DueDate,
+            DueDate = NormalizeToUtc(dto.DueDate),
             EstimatedHours = dto.EstimatedHours ?? template?.DefaultEstimatedHours,
             Labels = dto.Labels ?? template?.DefaultLabels,
             TemplateId = dto.TemplateId,
@@ -317,7 +317,7 @@ public class TaskService : ITaskService
 
         if (dto.DueDate.HasValue)
         {
-            task.DueDate = dto.DueDate;
+            task.DueDate = NormalizeToUtc(dto.DueDate);
         }
 
         if (dto.EstimatedHours.HasValue)
@@ -1319,5 +1319,21 @@ public class TaskService : ITaskService
         var invalidChars = Path.GetInvalidFileNameChars();
         var sanitized = string.Join("_", fileName.Split(invalidChars, StringSplitOptions.RemoveEmptyEntries));
         return sanitized.Length > 200 ? sanitized[..200] : sanitized;
+    }
+
+    /// <summary>
+    /// Normalizes a DateTime to UTC. If Kind is Unspecified, it assumes the value is already UTC.
+    /// </summary>
+    private static DateTime? NormalizeToUtc(DateTime? dateTime)
+    {
+        if (!dateTime.HasValue)
+            return null;
+
+        return dateTime.Value.Kind switch
+        {
+            DateTimeKind.Utc => dateTime.Value,
+            DateTimeKind.Local => dateTime.Value.ToUniversalTime(),
+            _ => DateTime.SpecifyKind(dateTime.Value, DateTimeKind.Utc) // Unspecified - assume UTC
+        };
     }
 }

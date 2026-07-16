@@ -628,7 +628,7 @@ public class ReportQueryBuilder : IReportQueryBuilder
 
         if (startDate.HasValue)
         {
-            var start = startDate.Value.ToDateTime(TimeOnly.MinValue);
+            var start = DateTime.SpecifyKind(startDate.Value.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc);
             var param = dateSelector.Parameters[0];
             var body = Expression.GreaterThanOrEqual(dateSelector.Body, Expression.Constant(start));
             var lambda = Expression.Lambda<Func<T, bool>>(body, param);
@@ -637,7 +637,7 @@ public class ReportQueryBuilder : IReportQueryBuilder
 
         if (endDate.HasValue)
         {
-            var end = endDate.Value.ToDateTime(TimeOnly.MaxValue);
+            var end = DateTime.SpecifyKind(endDate.Value.ToDateTime(TimeOnly.MaxValue), DateTimeKind.Utc);
             var param = dateSelector.Parameters[0];
             var body = Expression.LessThanOrEqual(dateSelector.Body, Expression.Constant(end));
             var lambda = Expression.Lambda<Func<T, bool>>(body, param);

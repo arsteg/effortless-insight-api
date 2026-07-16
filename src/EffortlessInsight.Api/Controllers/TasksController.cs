@@ -76,16 +76,25 @@ public class TasksController : ControllerBase
     {
         try
         {
+            _logger.LogInformation("CreateTask: NoticeId={NoticeId}, Title={Title}, UserId={UserId}",
+                noticeId, dto.Title, GetUserId());
             var result = await _taskService.CreateTaskAsync(noticeId, dto, GetUserId());
             return CreatedAtAction(nameof(GetTaskById), new { taskId = result.Id }, result);
         }
         catch (KeyNotFoundException ex)
         {
+            _logger.LogWarning(ex, "CreateTask KeyNotFound: {Message}", ex.Message);
             return NotFound(new { error = ex.Message });
         }
         catch (InvalidOperationException ex)
         {
+            _logger.LogWarning(ex, "CreateTask InvalidOperation: {Message}", ex.Message);
             return BadRequest(new { error = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "CreateTask failed unexpectedly for NoticeId={NoticeId}", noticeId);
+            throw; // Re-throw to let global handler deal with it, but now we have the log
         }
     }
 

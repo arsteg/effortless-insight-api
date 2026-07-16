@@ -44,10 +44,14 @@ public class NoticeAnalyticsService : INoticeAnalyticsService
         _logger = logger;
     }
 
+    // Helper method to convert DateOnly to UTC DateTime for PostgreSQL compatibility
+    private static DateTime ToUtcDateTime(DateOnly date, TimeOnly time) =>
+        DateTime.SpecifyKind(date.ToDateTime(time), DateTimeKind.Utc);
+
     public async Task<NoticeAnalyticsSummary> GetSummaryAsync(Guid orgId, DateRange range, CancellationToken ct)
     {
-        var startDateTime = range.StartDate.ToDateTime(TimeOnly.MinValue);
-        var endDateTime = range.EndDate.ToDateTime(TimeOnly.MaxValue);
+        var startDateTime = ToUtcDateTime(range.StartDate, TimeOnly.MinValue);
+        var endDateTime = ToUtcDateTime(range.EndDate, TimeOnly.MaxValue);
 
         // Get notices in the date range
         var notices = await _context.Notices
@@ -137,8 +141,8 @@ public class NoticeAnalyticsService : INoticeAnalyticsService
         string interval,
         CancellationToken ct)
     {
-        var startDateTime = range.StartDate.ToDateTime(TimeOnly.MinValue);
-        var endDateTime = range.EndDate.ToDateTime(TimeOnly.MaxValue);
+        var startDateTime = ToUtcDateTime(range.StartDate, TimeOnly.MinValue);
+        var endDateTime = ToUtcDateTime(range.EndDate, TimeOnly.MaxValue);
 
         var notices = await _context.Notices
             .Where(n => n.OrganizationId == orgId)
@@ -190,8 +194,8 @@ public class NoticeAnalyticsService : INoticeAnalyticsService
 
     public async Task<List<CategoryBreakdown>> GetCategoryBreakdownAsync(Guid orgId, DateRange range, CancellationToken ct)
     {
-        var startDateTime = range.StartDate.ToDateTime(TimeOnly.MinValue);
-        var endDateTime = range.EndDate.ToDateTime(TimeOnly.MaxValue);
+        var startDateTime = ToUtcDateTime(range.StartDate, TimeOnly.MinValue);
+        var endDateTime = ToUtcDateTime(range.EndDate, TimeOnly.MaxValue);
 
         var notices = await _context.Notices
             .Where(n => n.OrganizationId == orgId)
@@ -236,8 +240,8 @@ public class NoticeAnalyticsService : INoticeAnalyticsService
 
     public async Task<ResolutionMetrics> GetResolutionMetricsAsync(Guid orgId, DateRange range, CancellationToken ct)
     {
-        var startDateTime = range.StartDate.ToDateTime(TimeOnly.MinValue);
-        var endDateTime = range.EndDate.ToDateTime(TimeOnly.MaxValue);
+        var startDateTime = ToUtcDateTime(range.StartDate, TimeOnly.MinValue);
+        var endDateTime = ToUtcDateTime(range.EndDate, TimeOnly.MaxValue);
 
         var notices = await _context.Notices
             .Where(n => n.OrganizationId == orgId)
@@ -339,10 +343,10 @@ public class NoticeAnalyticsService : INoticeAnalyticsService
         var prevEndDate = range.StartDate.AddDays(-1);
         var prevStartDate = prevEndDate.AddDays(-periodDays + 1);
 
-        var currentStartDateTime = range.StartDate.ToDateTime(TimeOnly.MinValue);
-        var currentEndDateTime = range.EndDate.ToDateTime(TimeOnly.MaxValue);
-        var prevStartDateTime = prevStartDate.ToDateTime(TimeOnly.MinValue);
-        var prevEndDateTime = prevEndDate.ToDateTime(TimeOnly.MaxValue);
+        var currentStartDateTime = ToUtcDateTime(range.StartDate, TimeOnly.MinValue);
+        var currentEndDateTime = ToUtcDateTime(range.EndDate, TimeOnly.MaxValue);
+        var prevStartDateTime = ToUtcDateTime(prevStartDate, TimeOnly.MinValue);
+        var prevEndDateTime = ToUtcDateTime(prevEndDate, TimeOnly.MaxValue);
 
         // Get current period data
         var currentNotices = await _context.Notices

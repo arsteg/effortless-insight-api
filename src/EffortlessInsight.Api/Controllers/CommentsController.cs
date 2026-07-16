@@ -52,6 +52,11 @@ public class CommentsController : ControllerBase
         {
             return NotFound(new { error = ex.Message });
         }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error fetching comments for notice {NoticeId}", noticeId);
+            return StatusCode(500, new { error = "Failed to fetch comments", details = ex.Message });
+        }
     }
 
     /// <summary>
@@ -74,6 +79,11 @@ public class CommentsController : ControllerBase
         catch (InvalidOperationException ex)
         {
             return BadRequest(new { error = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error creating comment for notice {NoticeId}", noticeId);
+            return StatusCode(500, new { error = "Failed to create comment", details = ex.Message });
         }
     }
 

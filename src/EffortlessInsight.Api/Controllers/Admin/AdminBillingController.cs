@@ -472,7 +472,7 @@ public class AdminBillingController : AdminControllerBase
                 TaxAmount = i.TaxAmount,
                 TotalAmount = i.Total,
                 Status = i.Status,
-                DueDate = i.DueDate.ToDateTime(TimeOnly.MinValue),
+                DueDate = DateTime.SpecifyKind(i.DueDate.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc),
                 PaidAt = i.PaidAt,
                 CreatedAt = i.CreatedAt,
                 // Get the successful payment ID for refund processing

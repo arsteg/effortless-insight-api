@@ -50,14 +50,18 @@ public class UserPerformanceService : IUserPerformanceService
         _logger = logger;
     }
 
+    // Helper method to convert DateOnly to UTC DateTime for PostgreSQL compatibility
+    private static DateTime ToUtcDateTime(DateOnly date, TimeOnly time) =>
+        DateTime.SpecifyKind(date.ToDateTime(time), DateTimeKind.Utc);
+
     public async Task<UserPerformanceSummary> GetUserPerformanceAsync(
         Guid userId,
         Guid orgId,
         DateRange range,
         CancellationToken ct)
     {
-        var startDateTime = range.StartDate.ToDateTime(TimeOnly.MinValue);
-        var endDateTime = range.EndDate.ToDateTime(TimeOnly.MaxValue);
+        var startDateTime = ToUtcDateTime(range.StartDate, TimeOnly.MinValue);
+        var endDateTime = ToUtcDateTime(range.EndDate, TimeOnly.MaxValue);
 
         // Get user info
         var user = await _context.Users
@@ -262,8 +266,8 @@ public class UserPerformanceService : IUserPerformanceService
         DateRange range,
         CancellationToken ct)
     {
-        var startDateTime = range.StartDate.ToDateTime(TimeOnly.MinValue);
-        var endDateTime = range.EndDate.ToDateTime(TimeOnly.MaxValue);
+        var startDateTime = ToUtcDateTime(range.StartDate, TimeOnly.MinValue);
+        var endDateTime = ToUtcDateTime(range.EndDate, TimeOnly.MaxValue);
 
         // Get notices assigned to user with their first action time
         var notices = await _context.Notices
@@ -301,8 +305,8 @@ public class UserPerformanceService : IUserPerformanceService
         DateRange range,
         CancellationToken ct)
     {
-        var startDateTime = range.StartDate.ToDateTime(TimeOnly.MinValue);
-        var endDateTime = range.EndDate.ToDateTime(TimeOnly.MaxValue);
+        var startDateTime = ToUtcDateTime(range.StartDate, TimeOnly.MinValue);
+        var endDateTime = ToUtcDateTime(range.EndDate, TimeOnly.MaxValue);
 
         // Get tasks with due dates that the user completed
         var tasks = await _context.Tasks
@@ -339,11 +343,11 @@ public class UserPerformanceService : IUserPerformanceService
             range.StartDate.AddDays(-1)
         );
 
-        var prevStartDateTime = prevRange.StartDate.ToDateTime(TimeOnly.MinValue);
-        var prevEndDateTime = prevRange.EndDate.ToDateTime(TimeOnly.MaxValue);
+        var prevStartDateTime = ToUtcDateTime(prevRange.StartDate, TimeOnly.MinValue);
+        var prevEndDateTime = ToUtcDateTime(prevRange.EndDate, TimeOnly.MaxValue);
 
-        var currentStartDateTime = range.StartDate.ToDateTime(TimeOnly.MinValue);
-        var currentEndDateTime = range.EndDate.ToDateTime(TimeOnly.MaxValue);
+        var currentStartDateTime = ToUtcDateTime(range.StartDate, TimeOnly.MinValue);
+        var currentEndDateTime = ToUtcDateTime(range.EndDate, TimeOnly.MaxValue);
 
         // Get previous period metrics
         var prevTasksCompleted = await _context.Tasks

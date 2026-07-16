@@ -81,6 +81,10 @@ public class ComparativeAnalysisService : IComparativeAnalysisService
         _logger = logger;
     }
 
+    // Helper method to convert DateOnly to UTC DateTime for PostgreSQL compatibility
+    private static DateTime ToUtcDateTime(DateOnly date, TimeOnly time) =>
+        DateTime.SpecifyKind(date.ToDateTime(time), DateTimeKind.Utc);
+
     public async Task<PeriodComparison> ComparePeriods(
         Guid orgId, DateRange current, DateRange previous, CancellationToken ct)
     {
@@ -117,8 +121,8 @@ public class ComparativeAnalysisService : IComparativeAnalysisService
     private async Task<PeriodMetrics> CalculatePeriodMetricsAsync(
         Guid orgId, DateRange range, CancellationToken ct)
     {
-        var startDateTime = range.StartDate.ToDateTime(TimeOnly.MinValue);
-        var endDateTime = range.EndDate.ToDateTime(TimeOnly.MaxValue);
+        var startDateTime = ToUtcDateTime(range.StartDate, TimeOnly.MinValue);
+        var endDateTime = ToUtcDateTime(range.EndDate, TimeOnly.MaxValue);
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
 
         // Get notices created in the period

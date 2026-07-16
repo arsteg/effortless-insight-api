@@ -18,6 +18,7 @@ public class NoticesController : ControllerBase
     private readonly IZipProcessingService _zipProcessingService;
     private readonly INoticeWorkflowService _workflowService;
     private readonly INoticeResponseDraftService _responseDraftService;
+    private readonly IAiServiceClient _aiServiceClient;
     private readonly ICurrentOrganizationService _currentOrg;
     private readonly ILogger<NoticesController> _logger;
 
@@ -26,6 +27,7 @@ public class NoticesController : ControllerBase
         IZipProcessingService zipProcessingService,
         INoticeWorkflowService workflowService,
         INoticeResponseDraftService responseDraftService,
+        IAiServiceClient aiServiceClient,
         ICurrentOrganizationService currentOrg,
         ILogger<NoticesController> logger)
     {
@@ -33,6 +35,7 @@ public class NoticesController : ControllerBase
         _zipProcessingService = zipProcessingService;
         _workflowService = workflowService;
         _responseDraftService = responseDraftService;
+        _aiServiceClient = aiServiceClient;
         _currentOrg = currentOrg;
         _logger = logger;
     }
@@ -990,288 +993,11 @@ public class NoticesController : ControllerBase
 
     #endregion
 
-    #region Comments
+    // NOTE: Legacy comment endpoints removed - use CommentsController instead
+    // The duplicate routes were causing AmbiguousMatchException
 
-    /// <summary>
-    /// Get comments for a notice (legacy endpoint - use CommentsController instead)
-    /// </summary>
-    [HttpGet("{noticeId:guid}/comments")]
-    [ApiExplorerSettings(IgnoreApi = true)] // Hidden from Swagger - duplicate of CommentsController.GetCommentsForNotice
-    [ProducesResponseType(typeof(ApiResponse<List<CommentDto>>), StatusCodes.Status200OK)]
-    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> GetComments(Guid noticeId, CancellationToken cancellationToken)
-    {
-        try
-        {
-            var orgId = GetCurrentOrganizationId();
-            var comments = await _noticeService.GetCommentsAsync(noticeId, orgId, cancellationToken);
-
-            var dtos = comments.Select(MapCommentToDto).ToList();
-
-            return Ok(new ApiResponse<List<CommentDto>>(true, dtos));
-        }
-        catch (InvalidOperationException ex) when (ex.Message == "Notice not found")
-        {
-            return NotFound(new ApiErrorResponse(false, "NOT_FOUND", "Notice not found"));
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to get comments for notice {NoticeId}", noticeId);
-            return StatusCode(StatusCodes.Status500InternalServerError,
-                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
-        }
-    }
-
-    /// <summary>
-    /// Add a comment to a notice (legacy endpoint - use CommentsController instead)
-    /// </summary>
-    [HttpPost("{noticeId:guid}/comments")]
-    [ApiExplorerSettings(IgnoreApi = true)] // Hidden from Swagger - duplicate of CommentsController.CreateComment
-    [ProducesResponseType(typeof(ApiResponse<CommentDto>), StatusCodes.Status201Created)]
-    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> AddComment(
-        Guid noticeId,
-        [FromBody] AddCommentRequest request,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            var orgId = GetCurrentOrganizationId();
-            var userId = GetCurrentUserId();
-
-            var comment = await _noticeService.AddCommentAsync(
-                noticeId,
-                orgId,
-                userId,
-                request.Content,
-                request.IsInternal,
-                request.ParentId,
-                cancellationToken);
-
-            return StatusCode(StatusCodes.Status201Created,
-                new ApiResponse<CommentDto>(true, MapCommentToDto(comment)));
-        }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("not found"))
-        {
-            return NotFound(new ApiErrorResponse(false, "NOT_FOUND", ex.Message));
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to add comment to notice {NoticeId}", noticeId);
-            return StatusCode(StatusCodes.Status500InternalServerError,
-                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
-        }
-    }
-
-    /// <summary>
-    /// Delete a comment (legacy endpoint - use CommentsController instead)
-    /// </summary>
-    [HttpDelete("{noticeId:guid}/comments/{commentId:guid}")]
-    [ApiExplorerSettings(IgnoreApi = true)] // Hidden from Swagger - duplicate of CommentsController.DeleteComment
-    [ProducesResponseType(StatusCodes.Status204NoContent)]
-    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> DeleteComment(
-        Guid noticeId,
-        Guid commentId,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            var orgId = GetCurrentOrganizationId();
-            var userId = GetCurrentUserId();
-
-            await _noticeService.DeleteCommentAsync(commentId, noticeId, orgId, userId, cancellationToken);
-
-            return NoContent();
-        }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("not found"))
-        {
-            return NotFound(new ApiErrorResponse(false, "NOT_FOUND", ex.Message));
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to delete comment {CommentId}", commentId);
-            return StatusCode(StatusCodes.Status500InternalServerError,
-                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
-        }
-    }
-
-    #endregion
-
-    #region Tasks
-
-    /// <summary>
-    /// Get tasks for a notice (legacy endpoint - use TasksController instead)
-    /// </summary>
-    [HttpGet("{noticeId:guid}/tasks")]
-    [ApiExplorerSettings(IgnoreApi = true)]
-    [ProducesResponseType(typeof(ApiResponse<List<NoticeTaskDto>>), StatusCodes.Status200OK)]
-    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> GetTasks(Guid noticeId, CancellationToken cancellationToken)
-    {
-        try
-        {
-            var orgId = GetCurrentOrganizationId();
-            var tasks = await _noticeService.GetTasksAsync(noticeId, orgId, cancellationToken);
-
-            var dtos = tasks.Select(MapTaskToDto).ToList();
-
-            return Ok(new ApiResponse<List<NoticeTaskDto>>(true, dtos));
-        }
-        catch (InvalidOperationException ex) when (ex.Message == "Notice not found")
-        {
-            return NotFound(new ApiErrorResponse(false, "NOT_FOUND", "Notice not found"));
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to get tasks for notice {NoticeId}", noticeId);
-            return StatusCode(StatusCodes.Status500InternalServerError,
-                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
-        }
-    }
-
-    /// <summary>
-    /// Create a task for a notice (legacy endpoint - use TasksController instead)
-    /// </summary>
-    [HttpPost("{noticeId:guid}/tasks")]
-    [ApiExplorerSettings(IgnoreApi = true)]
-    [Authorize(Policy = "RequireManager")]
-    [ProducesResponseType(typeof(ApiResponse<NoticeTaskDto>), StatusCodes.Status201Created)]
-    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> CreateTask(
-        Guid noticeId,
-        [FromBody] CreateNoticeTaskRequest request,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            var orgId = GetCurrentOrganizationId();
-            var userId = GetCurrentUserId();
-
-            var taskDto = new DTOs.CreateTaskDto(
-                Title: request.Title,
-                Description: request.Description,
-                Assignees: request.AssignedToId.HasValue ? new List<Guid> { request.AssignedToId.Value } : null,
-                AssignedTeamId: null,
-                Priority: request.Priority ?? "medium",
-                DueDate: request.DueDate,
-                EstimatedHours: null,
-                Labels: null,
-                ParentTaskId: null,
-                TemplateId: null);
-
-            var task = await _noticeService.CreateTaskAsync(
-                noticeId, orgId, userId, taskDto, cancellationToken);
-
-            return StatusCode(StatusCodes.Status201Created,
-                new ApiResponse<NoticeTaskDto>(true, MapTaskToDto(task)));
-        }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("not found"))
-        {
-            return NotFound(new ApiErrorResponse(false, "NOT_FOUND", ex.Message));
-        }
-        catch (InvalidOperationException ex)
-        {
-            return BadRequest(new ApiErrorResponse(false, "VALIDATION_ERROR", ex.Message));
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to create task for notice {NoticeId}", noticeId);
-            return StatusCode(StatusCodes.Status500InternalServerError,
-                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
-        }
-    }
-
-    /// <summary>
-    /// Update a task (legacy endpoint - use TasksController instead)
-    /// </summary>
-    [HttpPut("{noticeId:guid}/tasks/{taskId:guid}")]
-    [ApiExplorerSettings(IgnoreApi = true)]
-    [ProducesResponseType(typeof(ApiResponse<NoticeTaskDto>), StatusCodes.Status200OK)]
-    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> UpdateTask(
-        Guid noticeId,
-        Guid taskId,
-        [FromBody] UpdateNoticeTaskRequest request,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            var orgId = GetCurrentOrganizationId();
-            var userId = GetCurrentUserId();
-
-            var updateDto = new DTOs.UpdateTaskDto(
-                Title: request.Title,
-                Description: request.Description,
-                Assignees: request.AssignedToId.HasValue ? new List<Guid> { request.AssignedToId.Value } : null,
-                AssignedTeamId: null,
-                ClearTeamAssignment: null,
-                Priority: request.Priority,
-                DueDate: request.DueDate,
-                EstimatedHours: null,
-                ActualHours: null,
-                Labels: null,
-                Status: request.Status,
-                CompletionNote: null);
-
-            var task = await _noticeService.UpdateTaskAsync(
-                taskId, noticeId, orgId, userId, updateDto, cancellationToken);
-
-            return Ok(new ApiResponse<NoticeTaskDto>(true, MapTaskToDto(task)));
-        }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("not found"))
-        {
-            return NotFound(new ApiErrorResponse(false, "NOT_FOUND", ex.Message));
-        }
-        catch (InvalidOperationException ex)
-        {
-            return BadRequest(new ApiErrorResponse(false, "VALIDATION_ERROR", ex.Message));
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to update task {TaskId}", taskId);
-            return StatusCode(StatusCodes.Status500InternalServerError,
-                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
-        }
-    }
-
-    /// <summary>
-    /// Delete a task (legacy endpoint - use TasksController instead)
-    /// </summary>
-    [HttpDelete("{noticeId:guid}/tasks/{taskId:guid}")]
-    [ApiExplorerSettings(IgnoreApi = true)]
-    [Authorize(Policy = "RequireManager")]
-    [ProducesResponseType(StatusCodes.Status204NoContent)]
-    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> DeleteTask(
-        Guid noticeId,
-        Guid taskId,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            var orgId = GetCurrentOrganizationId();
-
-            await _noticeService.DeleteTaskAsync(taskId, noticeId, orgId, cancellationToken);
-
-            return NoContent();
-        }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("not found"))
-        {
-            return NotFound(new ApiErrorResponse(false, "NOT_FOUND", ex.Message));
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to delete task {TaskId}", taskId);
-            return StatusCode(StatusCodes.Status500InternalServerError,
-                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
-        }
-    }
-
-    #endregion
+    // NOTE: Legacy task endpoints removed - use TasksController instead
+    // The duplicate routes were causing AmbiguousMatchException
 
     #region File Operations
 
@@ -2157,6 +1883,69 @@ public class NoticesController : ControllerBase
 
     #endregion
 
+    #region Similar Notices
+
+    /// <summary>
+    /// Get AI-detected similar notices from the same organization
+    /// </summary>
+    [HttpGet("{noticeId:guid}/similar")]
+    [ProducesResponseType(typeof(ApiResponse<SimilarNoticeDto[]>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetSimilarNotices(
+        Guid noticeId,
+        [FromQuery] int limit = 5,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            if (!_currentOrg.HasPermission("notices.view"))
+            {
+                return Forbid();
+            }
+
+            var orgId = GetCurrentOrganizationId();
+
+            // Verify the notice exists and belongs to this organization
+            var notice = await _noticeService.GetByIdAsync(noticeId, orgId, cancellationToken);
+            if (notice == null)
+            {
+                return NotFound(new ApiErrorResponse(false, "NOTICE_NOT_FOUND", "Notice not found"));
+            }
+
+            // Get similar notices from AI service
+            var similarNotices = await _aiServiceClient.FindSimilarNoticesAsync(noticeId, limit);
+
+            // Enrich with notice details from database
+            var enrichedNotices = new List<SimilarNoticeDto>();
+            foreach (var similar in similarNotices)
+            {
+                var similarNotice = await _noticeService.GetByIdAsync(similar.NoticeId, orgId, cancellationToken);
+                if (similarNotice != null)
+                {
+                    enrichedNotices.Add(new SimilarNoticeDto(
+                        Id: similarNotice.Id,
+                        NoticeNumber: similarNotice.NoticeNumber,
+                        NoticeType: similarNotice.NoticeType,
+                        Status: similarNotice.Status,
+                        SimilarityScore: (decimal)similar.SimilarityScore,
+                        Summary: similar.Summary ?? similarNotice.AiReport?.SummaryEn,
+                        ResponseDeadline: similarNotice.ResponseDeadline
+                    ));
+                }
+            }
+
+            return Ok(new ApiResponse<SimilarNoticeDto[]>(true, enrichedNotices.ToArray()));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get similar notices for {NoticeId}", noticeId);
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
+        }
+    }
+
+    #endregion
+
     #region Helpers
 
     private Guid GetCurrentUserId()
@@ -2440,24 +2229,6 @@ public class NoticesController : ControllerBase
             Replies: comment.Replies?.Where(r => r.DeletedAt == null)
                 .Select(MapCommentToDto).ToList() ?? [],
             CreatedAt: comment.CreatedAt);
-    }
-
-    private static NoticeTaskDto MapTaskToDto(Data.Entities.NoticeTask task)
-    {
-        return new NoticeTaskDto(
-            Id: task.Id,
-            Title: task.Title,
-            Description: task.Description,
-            DueDate: task.DueDate,
-            Priority: task.Priority,
-            Status: task.Status,
-            AssignedToId: task.AssignedToId,
-            AssignedToName: task.AssignedTo?.Name,
-            CreatedById: task.CreatedById,
-            CreatedByName: task.CreatedBy?.Name,
-            CompletedAt: task.CompletedAt,
-            CompletedById: task.CompletedById,
-            CreatedAt: task.CreatedAt);
     }
 
     private static NoticeResponseDto MapResponseToDto(Data.Entities.NoticeResponse response)

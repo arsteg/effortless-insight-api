@@ -816,6 +816,17 @@ public record NoticeMetadata(
 
 public record SimilarNotice(Guid NoticeId, float SimilarityScore, string? NoticeType, string? Summary);
 
+// Similar Notice DTO with enriched notice details
+public record SimilarNoticeDto(
+    Guid Id,
+    string? NoticeNumber,
+    string? NoticeType,
+    string Status,
+    decimal SimilarityScore,
+    string? Summary,
+    DateOnly? ResponseDeadline
+);
+
 // ============================================================================
 // Comment DTOs
 // ============================================================================
