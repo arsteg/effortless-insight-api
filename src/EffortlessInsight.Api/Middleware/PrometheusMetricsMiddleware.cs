@@ -203,6 +203,36 @@ public static class BusinessMetrics
         unit: "bytes",
         description: "Total bytes uploaded");
 
+    // WhatsApp metrics
+    public static readonly Counter<long> WhatsAppMessagesSent = Meter.CreateCounter<long>(
+        "whatsapp_messages_sent_total",
+        description: "Total WhatsApp messages sent");
+
+    public static readonly Counter<long> WhatsAppMessagesReceived = Meter.CreateCounter<long>(
+        "whatsapp_messages_received_total",
+        description: "Total WhatsApp messages received");
+
+    public static readonly Counter<long> WhatsAppMessagesFailed = Meter.CreateCounter<long>(
+        "whatsapp_messages_failed_total",
+        description: "Total WhatsApp messages that failed");
+
+    public static readonly Counter<long> WhatsAppMessagesRetried = Meter.CreateCounter<long>(
+        "whatsapp_messages_retried_total",
+        description: "Total WhatsApp messages retried");
+
+    public static readonly Histogram<double> WhatsAppMessageLatency = Meter.CreateHistogram<double>(
+        "whatsapp_message_latency_seconds",
+        unit: "s",
+        description: "WhatsApp message processing latency");
+
+    public static readonly Counter<long> WhatsAppSessionsLinked = Meter.CreateCounter<long>(
+        "whatsapp_sessions_linked_total",
+        description: "Total WhatsApp sessions linked");
+
+    public static readonly Counter<long> WhatsAppSessionsUnlinked = Meter.CreateCounter<long>(
+        "whatsapp_sessions_unlinked_total",
+        description: "Total WhatsApp sessions unlinked");
+
     /// <summary>
     /// Record a notice processing event
     /// </summary>
@@ -229,5 +259,61 @@ public static class BusinessMetrics
         AiRequestDuration.Record(durationSeconds,
             new KeyValuePair<string, object?>("service", service),
             new KeyValuePair<string, object?>("status", status));
+    }
+
+    /// <summary>
+    /// Record a WhatsApp message sent
+    /// </summary>
+    public static void RecordWhatsAppMessageSent(string messageType, string status, double latencySeconds)
+    {
+        WhatsAppMessagesSent.Add(1,
+            new KeyValuePair<string, object?>("type", messageType),
+            new KeyValuePair<string, object?>("status", status));
+
+        if (status == "failed")
+        {
+            WhatsAppMessagesFailed.Add(1,
+                new KeyValuePair<string, object?>("type", messageType));
+        }
+
+        WhatsAppMessageLatency.Record(latencySeconds,
+            new KeyValuePair<string, object?>("type", messageType),
+            new KeyValuePair<string, object?>("direction", "outbound"));
+    }
+
+    /// <summary>
+    /// Record a WhatsApp message received
+    /// </summary>
+    public static void RecordWhatsAppMessageReceived(string messageType, string command)
+    {
+        WhatsAppMessagesReceived.Add(1,
+            new KeyValuePair<string, object?>("type", messageType),
+            new KeyValuePair<string, object?>("command", command ?? "unknown"));
+    }
+
+    /// <summary>
+    /// Record a WhatsApp message retry
+    /// </summary>
+    public static void RecordWhatsAppMessageRetry(string messageType, bool success)
+    {
+        WhatsAppMessagesRetried.Add(1,
+            new KeyValuePair<string, object?>("type", messageType),
+            new KeyValuePair<string, object?>("success", success.ToString()));
+    }
+
+    /// <summary>
+    /// Record a WhatsApp session linked
+    /// </summary>
+    public static void RecordWhatsAppSessionLinked()
+    {
+        WhatsAppSessionsLinked.Add(1);
+    }
+
+    /// <summary>
+    /// Record a WhatsApp session unlinked
+    /// </summary>
+    public static void RecordWhatsAppSessionUnlinked()
+    {
+        WhatsAppSessionsUnlinked.Add(1);
     }
 }

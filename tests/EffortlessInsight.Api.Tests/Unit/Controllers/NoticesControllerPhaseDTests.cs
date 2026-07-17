@@ -22,6 +22,7 @@ public class NoticesControllerPhaseDTests
     private readonly Mock<IZipProcessingService> _zipProcessingService;
     private readonly Mock<INoticeWorkflowService> _workflowService;
     private readonly Mock<INoticeResponseDraftService> _responseDraftService;
+    private readonly Mock<IAiServiceClient> _aiServiceClient;
     private readonly Mock<ICurrentOrganizationService> _currentOrg;
     private readonly Mock<ILogger<NoticesController>> _logger;
     private readonly NoticesController _controller;
@@ -36,6 +37,7 @@ public class NoticesControllerPhaseDTests
         _zipProcessingService = new Mock<IZipProcessingService>();
         _workflowService = new Mock<INoticeWorkflowService>();
         _responseDraftService = new Mock<INoticeResponseDraftService>();
+        _aiServiceClient = new Mock<IAiServiceClient>();
         _currentOrg = new Mock<ICurrentOrganizationService>();
         _logger = new Mock<ILogger<NoticesController>>();
 
@@ -48,6 +50,7 @@ public class NoticesControllerPhaseDTests
             _zipProcessingService.Object,
             _workflowService.Object,
             _responseDraftService.Object,
+            _aiServiceClient.Object,
             _currentOrg.Object,
             _logger.Object);
 

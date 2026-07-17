@@ -127,25 +127,16 @@ public class WhatsAppBotService : IWhatsAppBotService
                 result = GetUnknownCommandResponse(session);
             }
 
-            // Update session state if needed
-            if (result.NewState != null)
+            // Update session state and context atomically
+            if (result.NewState != null || result.ContextUpdate != null)
             {
-                await _sessionService.UpdateStateAsync(
+                await _sessionService.UpdateStateAndContextAsync(
                     session.Id,
                     result.NewState,
                     result.PendingEmail,
                     result.PendingVerificationId,
+                    result.ContextUpdate,
                     ct);
-            }
-
-            if (result.ContextUpdate != null)
-            {
-                var newContext = new Dictionary<string, object>(session.Context);
-                foreach (var (key, value) in result.ContextUpdate)
-                {
-                    newContext[key] = value;
-                }
-                await _sessionService.UpdateContextAsync(session.Id, newContext, ct);
             }
 
             // Send response
@@ -235,6 +226,9 @@ public class WhatsAppBotService : IWhatsAppBotService
         string templateName,
         Dictionary<string, string> variables,
         string language = "en",
+        string? referenceType = null,
+        Guid? referenceId = null,
+        string? correlationId = null,
         CancellationToken ct = default)
     {
         var user = await _db.Users.FindAsync([userId], ct);
@@ -251,7 +245,8 @@ public class WhatsAppBotService : IWhatsAppBotService
             return new WhatsAppSendResult(false, null, "RATE_LIMITED", rateLimitResult.Reason);
         }
 
-        var parameters = variables.Values
+        var parameterValues = variables.Values.ToList();
+        var parameters = parameterValues
             .Select(v => new TemplateParameter("text", v))
             .ToList();
 
@@ -264,19 +259,22 @@ public class WhatsAppBotService : IWhatsAppBotService
             ct: ct);
         sw.Stop();
 
-        // Log outgoing message
-        await _messageLogService.LogOutgoingMessageAsync(
+        // Log template message with parameters for retry capability
+        await _messageLogService.LogTemplateMessageAsync(
             result.MessageId,
             user.WhatsAppPhoneNumber,
-            "template",
-            null,
             templateName,
+            language,
+            parameterValues,
             userId,
             user.OrganizationId,
             result.Success ? WhatsAppMessageStatus.Sent : WhatsAppMessageStatus.Failed,
             result.ErrorCode,
             result.ErrorMessage,
             (int)sw.ElapsedMilliseconds,
+            referenceType,
+            referenceId,
+            correlationId,
             ct);
 
         return result;

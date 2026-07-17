@@ -1,5 +1,6 @@
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities;
+using EffortlessInsight.Api.Middleware;
 using Microsoft.EntityFrameworkCore;
 
 namespace EffortlessInsight.Api.Services.WhatsApp;
@@ -49,6 +50,9 @@ public class WhatsAppMessageLogService : IWhatsAppMessageLogService
         _db.WhatsAppMessageLogs.Add(log);
         await _db.SaveChangesAsync(ct);
 
+        // Record metrics
+        BusinessMetrics.RecordWhatsAppMessageReceived(messageType, command ?? "none");
+
         return log;
     }
 
@@ -79,13 +83,127 @@ public class WhatsAppMessageLogService : IWhatsAppMessageLogService
             Status = status,
             ErrorCode = errorCode,
             ErrorMessage = errorMessage,
-            ProcessingTimeMs = processingTimeMs
+            ProcessingTimeMs = processingTimeMs,
+            IsRetryable = messageType == "text" // Text messages are retryable by default
         };
 
         _db.WhatsAppMessageLogs.Add(log);
         await _db.SaveChangesAsync(ct);
 
+        // Record metrics
+        var latencySeconds = processingTimeMs.HasValue ? processingTimeMs.Value / 1000.0 : 0;
+        BusinessMetrics.RecordWhatsAppMessageSent(messageType, status, latencySeconds);
+
         return log;
+    }
+
+    public async Task<WhatsAppMessageLog> LogTemplateMessageAsync(
+        string? wamId,
+        string phoneNumber,
+        string templateName,
+        string templateLanguage,
+        List<string> templateParameters,
+        Guid? userId,
+        Guid? organizationId,
+        string status,
+        string? errorCode,
+        string? errorMessage,
+        int? processingTimeMs,
+        string? referenceType = null,
+        Guid? referenceId = null,
+        string? correlationId = null,
+        CancellationToken ct = default)
+    {
+        var log = new WhatsAppMessageLog
+        {
+            WamId = wamId ?? Guid.NewGuid().ToString(),
+            PhoneNumber = _client.MaskPhoneNumber(phoneNumber),
+            FullPhoneNumber = phoneNumber, // Store full phone for retry
+            Direction = WhatsAppMessageDirection.Outbound,
+            MessageType = "template",
+            TemplateName = templateName,
+            TemplateLanguage = templateLanguage,
+            TemplateParameters = templateParameters,
+            UserId = userId,
+            OrganizationId = organizationId,
+            Status = status,
+            ErrorCode = errorCode,
+            ErrorMessage = errorMessage,
+            ProcessingTimeMs = processingTimeMs,
+            ReferenceType = referenceType,
+            ReferenceId = referenceId,
+            CorrelationId = correlationId,
+            IsRetryable = true, // Template messages are retryable
+            MaxRetryAttempts = 3,
+            NextRetryAt = status == WhatsAppMessageStatus.Failed
+                ? DateTime.UtcNow.AddMinutes(5)
+                : null
+        };
+
+        _db.WhatsAppMessageLogs.Add(log);
+        await _db.SaveChangesAsync(ct);
+
+        // Record metrics
+        var latencySeconds = processingTimeMs.HasValue ? processingTimeMs.Value / 1000.0 : 0;
+        BusinessMetrics.RecordWhatsAppMessageSent("template", status, latencySeconds);
+
+        return log;
+    }
+
+    public async Task<WhatsAppMessageLog?> GetByIdAsync(Guid id, CancellationToken ct = default)
+    {
+        return await _db.WhatsAppMessageLogs
+            .FirstOrDefaultAsync(l => l.Id == id, ct);
+    }
+
+    public async Task MarkRetryAttemptAsync(
+        Guid messageId,
+        bool success,
+        string? newWamId,
+        string? errorCode,
+        string? errorMessage,
+        CancellationToken ct = default)
+    {
+        var log = await _db.WhatsAppMessageLogs.FindAsync([messageId], ct);
+        if (log == null) return;
+
+        log.RetryCount++;
+        log.LastRetryAt = DateTime.UtcNow;
+        log.UpdatedAt = DateTime.UtcNow;
+
+        if (success)
+        {
+            log.Status = WhatsAppMessageStatus.Sent;
+            log.WamId = newWamId ?? log.WamId;
+            log.ErrorCode = null;
+            log.ErrorMessage = null;
+            log.NextRetryAt = null;
+        }
+        else
+        {
+            log.ErrorCode = errorCode;
+            log.ErrorMessage = errorMessage;
+
+            if (log.RetryCount >= log.MaxRetryAttempts)
+            {
+                log.IsRetryable = false;
+                log.NextRetryAt = null;
+                _logger.LogWarning(
+                    "Message {MessageId} exceeded max retry attempts ({MaxAttempts})",
+                    messageId, log.MaxRetryAttempts);
+            }
+            else
+            {
+                // Exponential backoff: 5min, 15min, 45min
+                var backoffMinutes = 5 * Math.Pow(3, log.RetryCount);
+                log.NextRetryAt = DateTime.UtcNow.AddMinutes(backoffMinutes);
+            }
+        }
+
+        await _db.SaveChangesAsync(ct);
+
+        // Record retry metrics
+        BusinessMetrics.RecordWhatsAppMessageRetry(log.MessageType, success);
     }
 
     public async Task UpdateMessageStatusAsync(
@@ -133,16 +251,16 @@ public class WhatsAppMessageLogService : IWhatsAppMessageLogService
 
     public async Task<List<WhatsAppMessageLog>> GetFailedMessagesForRetryAsync(int maxRetries, CancellationToken ct = default)
     {
-        var cutoff = DateTime.UtcNow.AddMinutes(-5); // Only retry messages older than 5 minutes
+        var now = DateTime.UtcNow;
 
         return await _db.WhatsAppMessageLogs
             .Where(l =>
                 l.Direction == WhatsAppMessageDirection.Outbound &&
                 l.Status == WhatsAppMessageStatus.Failed &&
-                l.RetryCount < maxRetries &&
-                l.CreatedAt < cutoff &&
-                (l.LastRetryAt == null || l.LastRetryAt < DateTime.UtcNow.AddMinutes(-10)))
-            .OrderBy(l => l.CreatedAt)
+                l.IsRetryable &&
+                l.RetryCount < l.MaxRetryAttempts &&
+                (l.NextRetryAt == null || l.NextRetryAt <= now))
+            .OrderBy(l => l.NextRetryAt ?? l.CreatedAt)
             .Take(100)
             .ToListAsync(ct);
     }

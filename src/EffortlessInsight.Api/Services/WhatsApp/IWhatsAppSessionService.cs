@@ -51,6 +51,17 @@ public interface IWhatsAppSessionService
         CancellationToken ct = default);
 
     /// <summary>
+    /// Update session state and context atomically.
+    /// </summary>
+    Task UpdateStateAndContextAsync(
+        Guid sessionId,
+        string? newState,
+        string? pendingEmail,
+        Guid? pendingVerificationId,
+        Dictionary<string, object>? contextUpdate,
+        CancellationToken ct = default);
+
+    /// <summary>
     /// Update current page for pagination.
     /// </summary>
     Task UpdateCurrentPageAsync(Guid sessionId, int page, CancellationToken ct = default);

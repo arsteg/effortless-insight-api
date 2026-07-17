@@ -84,6 +84,16 @@ public interface IMetaWhatsAppClient
         string? fileName = null,
         CancellationToken ct = default);
 
+    /// <summary>
+    /// Get media information (URL, MIME type, size) for a media ID.
+    /// </summary>
+    Task<WhatsAppMediaInfo?> GetMediaInfoAsync(string mediaId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Download media content from a URL.
+    /// </summary>
+    Task<Stream?> DownloadMediaAsync(string mediaUrl, CancellationToken ct = default);
+
     #endregion
 
     #region Templates

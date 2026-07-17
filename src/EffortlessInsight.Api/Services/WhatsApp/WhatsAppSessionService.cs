@@ -1,5 +1,6 @@
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities;
+using EffortlessInsight.Api.Middleware;
 using EffortlessInsight.Api.Options;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -139,6 +140,9 @@ public class WhatsAppSessionService : IWhatsAppSessionService
 
         await _db.SaveChangesAsync(ct);
 
+        // Record metrics
+        BusinessMetrics.RecordWhatsAppSessionLinked();
+
         _logger.LogInformation("Linked WhatsApp session {SessionId} to user {UserId}", sessionId, userId);
     }
 
@@ -178,6 +182,45 @@ public class WhatsAppSessionService : IWhatsAppSessionService
         session.UpdatedAt = DateTime.UtcNow;
 
         await _db.SaveChangesAsync(ct);
+    }
+
+    public async Task UpdateStateAndContextAsync(
+        Guid sessionId,
+        string? newState,
+        string? pendingEmail,
+        Guid? pendingVerificationId,
+        Dictionary<string, object>? contextUpdate,
+        CancellationToken ct = default)
+    {
+        var session = await _db.WhatsAppSessions.FindAsync([sessionId], ct);
+        if (session == null)
+            return;
+
+        // Update state if provided
+        if (newState != null)
+        {
+            session.CurrentState = newState;
+            session.PendingEmail = pendingEmail;
+            session.PendingVerificationId = pendingVerificationId;
+        }
+
+        // Update context if provided
+        if (contextUpdate != null)
+        {
+            var newContext = new Dictionary<string, object>(session.Context);
+            foreach (var (key, value) in contextUpdate)
+            {
+                newContext[key] = value;
+            }
+            session.Context = newContext;
+        }
+
+        session.UpdatedAt = DateTime.UtcNow;
+
+        // Single atomic save
+        await _db.SaveChangesAsync(ct);
+
+        _logger.LogDebug("Updated session {SessionId} state to {State} with context", sessionId, newState ?? session.CurrentState);
     }
 
     public async Task UpdateCurrentPageAsync(Guid sessionId, int page, CancellationToken ct = default)
@@ -247,6 +290,9 @@ public class WhatsAppSessionService : IWhatsAppSessionService
         }
 
         await _db.SaveChangesAsync(ct);
+
+        // Record metrics
+        BusinessMetrics.RecordWhatsAppSessionUnlinked();
 
         _logger.LogInformation("Unlinked WhatsApp for user {UserId}", userId);
     }

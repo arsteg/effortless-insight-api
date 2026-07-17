@@ -562,6 +562,31 @@ public class MetaWebhookErrorData
 
 #endregion
 
+#region Media Info Models
+
+/// <summary>
+/// Media information from Meta WhatsApp API.
+/// </summary>
+public class WhatsAppMediaInfo
+{
+    [JsonPropertyName("id")]
+    public string? Id { get; set; }
+
+    [JsonPropertyName("url")]
+    public string? Url { get; set; }
+
+    [JsonPropertyName("mime_type")]
+    public string? MimeType { get; set; }
+
+    [JsonPropertyName("sha256")]
+    public string? Sha256 { get; set; }
+
+    [JsonPropertyName("file_size")]
+    public int? FileSize { get; set; }
+}
+
+#endregion
+
 #region Template Info Models
 
 /// <summary>

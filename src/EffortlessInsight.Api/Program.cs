@@ -250,7 +250,8 @@ builder.Services.AddCors(options =>
 // Add Health Checks
 builder.Services.AddHealthChecks()
     .AddNpgSql(builder.Configuration.GetConnectionString("DefaultConnection")!)
-    .AddRedis(builder.Configuration.GetConnectionString("Redis")!);
+    .AddRedis(builder.Configuration.GetConnectionString("Redis")!)
+    .AddWhatsAppHealthCheck();
 
 var app = builder.Build();
 

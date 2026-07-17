@@ -158,12 +158,6 @@ public class TestableApplicationDbContext : ApplicationDbContext
             entity.Property(e => e.NotificationPreferences).HasConversion(jsonConverterNullable);
         });
 
-        // Fix Plan.Features (legacy) for InMemory
-        modelBuilder.Entity<Plan>(entity =>
-        {
-            entity.Property(e => e.Features).HasConversion(jsonConverterNullable);
-        });
-
         // Fix Embedding.Metadata and Vector for InMemory
         modelBuilder.Entity<Embedding>(entity =>
         {

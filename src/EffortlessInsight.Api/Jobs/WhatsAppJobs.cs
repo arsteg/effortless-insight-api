@@ -26,7 +26,7 @@ public class WhatsAppJobs
     }
 
     /// <summary>
-    /// Clean up expired sessions and verifications (hourly).
+    /// Clean up expired sessions, verifications, and webhook events (hourly).
     /// </summary>
     [AutomaticRetry(Attempts = 2)]
     public async Task CleanupExpiredSessionsAsync(CancellationToken ct)
@@ -36,9 +36,11 @@ public class WhatsAppJobs
         using var scope = _serviceProvider.CreateScope();
         var sessionService = scope.ServiceProvider.GetRequiredService<IWhatsAppSessionService>();
         var verificationService = scope.ServiceProvider.GetRequiredService<IWhatsAppVerificationService>();
+        var idempotencyService = scope.ServiceProvider.GetRequiredService<IWhatsAppWebhookIdempotencyService>();
 
         await sessionService.CleanupExpiredSessionsAsync(ct);
         await verificationService.CleanupExpiredVerificationsAsync(ct);
+        await idempotencyService.CleanupOldEventsAsync(7, ct); // Keep 7 days
 
         _logger.LogInformation("Completed WhatsApp cleanup job");
     }
@@ -370,13 +372,17 @@ public class WhatsAppJobs
 
         _logger.LogInformation("Found {Count} failed messages to retry", failedMessages.Count);
 
+        var successCount = 0;
+        var failCount = 0;
+
         foreach (var message in failedMessages)
         {
             try
             {
-                // Get the original phone number (unmask it from user if available)
-                string? phoneNumber = null;
-                if (message.UserId.HasValue)
+                // Get the phone number - prefer FullPhoneNumber (stored for retryable messages)
+                // Fall back to user's WhatsApp number if available
+                string? phoneNumber = message.FullPhoneNumber;
+                if (string.IsNullOrEmpty(phoneNumber) && message.UserId.HasValue)
                 {
                     var user = await db.Users.FindAsync([message.UserId.Value], ct);
                     phoneNumber = user?.WhatsAppPhoneNumber;
@@ -384,7 +390,15 @@ public class WhatsAppJobs
 
                 if (string.IsNullOrEmpty(phoneNumber))
                 {
-                    _logger.LogWarning("Cannot retry message {MessageId}: no phone number", message.Id);
+                    _logger.LogWarning("Cannot retry message {MessageId}: no phone number available", message.Id);
+                    await messageLogService.MarkRetryAttemptAsync(
+                        message.Id,
+                        success: false,
+                        newWamId: null,
+                        errorCode: "NO_PHONE",
+                        errorMessage: "No phone number available for retry",
+                        ct);
+                    failCount++;
                     continue;
                 }
 
@@ -392,9 +406,32 @@ public class WhatsAppJobs
 
                 if (!string.IsNullOrEmpty(message.TemplateName))
                 {
-                    // Retry template message (we don't have the original parameters, so just log as skipped)
-                    _logger.LogWarning("Cannot retry template message {MessageId}: parameters not stored", message.Id);
-                    continue;
+                    // Retry template message using stored parameters
+                    if (message.TemplateParameters == null || message.TemplateParameters.Count == 0)
+                    {
+                        _logger.LogWarning("Cannot retry template message {MessageId}: no parameters stored", message.Id);
+                        await messageLogService.MarkRetryAttemptAsync(
+                            message.Id,
+                            success: false,
+                            newWamId: null,
+                            errorCode: "NO_PARAMS",
+                            errorMessage: "Template parameters not stored for retry",
+                            ct);
+                        failCount++;
+                        continue;
+                    }
+
+                    // Convert List<string> to List<TemplateParameter> for the client
+                    var bodyParameters = message.TemplateParameters
+                        .Select(p => new TemplateParameter("text", p))
+                        .ToList();
+
+                    result = await client.SendTemplateMessageAsync(
+                        phoneNumber,
+                        message.TemplateName,
+                        message.TemplateLanguage ?? "en",
+                        bodyParameters,
+                        ct: ct);
                 }
                 else if (!string.IsNullOrEmpty(message.Content))
                 {
@@ -402,30 +439,58 @@ public class WhatsAppJobs
                 }
                 else
                 {
+                    _logger.LogWarning("Cannot retry message {MessageId}: no content or template", message.Id);
+                    failCount++;
                     continue;
                 }
 
-                // Update message log
-                message.RetryCount++;
-                message.LastRetryAt = DateTime.UtcNow;
-                message.Status = result.Success ? WhatsAppMessageStatus.Sent : WhatsAppMessageStatus.Failed;
-                message.ErrorCode = result.ErrorCode;
-                message.ErrorMessage = result.ErrorMessage;
-                message.UpdatedAt = DateTime.UtcNow;
+                // Update message log using the service method
+                await messageLogService.MarkRetryAttemptAsync(
+                    message.Id,
+                    success: result.Success,
+                    newWamId: result.MessageId,
+                    errorCode: result.ErrorCode,
+                    errorMessage: result.ErrorMessage,
+                    ct);
 
-                if (result.Success && result.MessageId != null)
+                if (result.Success)
                 {
-                    message.WamId = result.MessageId;
+                    successCount++;
+                    _logger.LogDebug("Successfully retried message {MessageId}", message.Id);
                 }
-
-                await db.SaveChangesAsync(ct);
+                else
+                {
+                    failCount++;
+                    _logger.LogWarning(
+                        "Retry failed for message {MessageId}: {ErrorCode} - {ErrorMessage}",
+                        message.Id, result.ErrorCode, result.ErrorMessage);
+                }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to retry message {MessageId}", message.Id);
+                _logger.LogError(ex, "Exception while retrying message {MessageId}", message.Id);
+                failCount++;
+
+                // Mark the retry attempt as failed
+                try
+                {
+                    await messageLogService.MarkRetryAttemptAsync(
+                        message.Id,
+                        success: false,
+                        newWamId: null,
+                        errorCode: "EXCEPTION",
+                        errorMessage: ex.Message.Length > 500 ? ex.Message[..500] : ex.Message,
+                        ct);
+                }
+                catch (Exception markEx)
+                {
+                    _logger.LogError(markEx, "Failed to mark retry attempt for message {MessageId}", message.Id);
+                }
             }
         }
 
-        _logger.LogInformation("Completed retry failed messages job");
+        _logger.LogInformation(
+            "Completed retry failed messages job. Success: {Success}, Failed: {Failed}",
+            successCount, failCount);
     }
 }

@@ -1,7 +1,9 @@
+using EffortlessInsight.Api.HealthChecks;
 using EffortlessInsight.Api.Jobs;
 using EffortlessInsight.Api.Options;
 using EffortlessInsight.Api.Services.WhatsApp;
 using EffortlessInsight.Api.Services.WhatsApp.Commands;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Polly;
 using Polly.Extensions.Http;
 
@@ -35,6 +37,7 @@ public static class WhatsAppServiceExtensions
         services.AddScoped<IWhatsAppMessageLogService, WhatsAppMessageLogService>();
         services.AddScoped<IWhatsAppTemplateService, WhatsAppTemplateService>();
         services.AddScoped<IWhatsAppBotService, WhatsAppBotService>();
+        services.AddScoped<IWhatsAppWebhookIdempotencyService, WhatsAppWebhookIdempotencyService>();
 
         // Register command router
         services.AddScoped<CommandRouter>();
@@ -65,6 +68,19 @@ public static class WhatsAppServiceExtensions
             .ValidateOnStart();
 
         return services;
+    }
+
+    /// <summary>
+    /// Add WhatsApp health check.
+    /// </summary>
+    public static IHealthChecksBuilder AddWhatsAppHealthCheck(
+        this IHealthChecksBuilder builder,
+        string name = "whatsapp",
+        string[]? tags = null)
+    {
+        return builder.AddCheck<WhatsAppHealthCheck>(
+            name,
+            tags: tags ?? ["ready"]);
     }
 
     private static IAsyncPolicy<HttpResponseMessage> GetRetryPolicy()

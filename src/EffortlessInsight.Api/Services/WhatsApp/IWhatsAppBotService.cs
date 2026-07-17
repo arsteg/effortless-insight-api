@@ -24,12 +24,16 @@ public interface IWhatsAppBotService
 
     /// <summary>
     /// Send template message to user (works outside 24h window).
+    /// Parameters are stored for retry capability.
     /// </summary>
     Task<WhatsAppSendResult> SendTemplateToUserAsync(
         Guid userId,
         string templateName,
         Dictionary<string, string> variables,
         string language = "en",
+        string? referenceType = null,
+        Guid? referenceId = null,
+        string? correlationId = null,
         CancellationToken ct = default);
 
     /// <summary>

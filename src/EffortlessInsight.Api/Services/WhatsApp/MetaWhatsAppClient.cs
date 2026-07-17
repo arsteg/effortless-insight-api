@@ -307,6 +307,64 @@ public class MetaWhatsAppClient : IMetaWhatsAppClient
         return await SendMessageAsync(request, ct);
     }
 
+    public async Task<WhatsAppMediaInfo?> GetMediaInfoAsync(string mediaId, CancellationToken ct = default)
+    {
+        try
+        {
+            var url = $"/{_options.GraphApiVersion}/{mediaId}";
+            var response = await _httpClient.GetAsync(url, ct);
+            var responseBody = await response.Content.ReadAsStringAsync(ct);
+
+            if (response.IsSuccessStatusCode)
+            {
+                var result = JsonSerializer.Deserialize<WhatsAppMediaInfo>(responseBody, _jsonOptions);
+                _logger.LogDebug("Retrieved media info for {MediaId}: {MimeType}", mediaId, result?.MimeType);
+                return result;
+            }
+
+            _logger.LogError("Failed to get media info: {Response}", responseBody);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting media info for {MediaId}", mediaId);
+            return null;
+        }
+    }
+
+    public async Task<Stream?> DownloadMediaAsync(string mediaUrl, CancellationToken ct = default)
+    {
+        try
+        {
+            // Create a new request with authorization header
+            using var request = new HttpRequestMessage(HttpMethod.Get, mediaUrl);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.AccessToken);
+
+            var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+
+            if (response.IsSuccessStatusCode)
+            {
+                _logger.LogDebug("Downloaded media from {Url}", MaskUrl(mediaUrl));
+                return await response.Content.ReadAsStreamAsync(ct);
+            }
+
+            _logger.LogError("Failed to download media: {StatusCode}", response.StatusCode);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error downloading media from {Url}", MaskUrl(mediaUrl));
+            return null;
+        }
+    }
+
+    private static string MaskUrl(string url)
+    {
+        // Mask access tokens in URL for logging
+        var uri = new Uri(url);
+        return $"{uri.Scheme}://{uri.Host}{uri.AbsolutePath}[masked]";
+    }
+
     #endregion
 
     #region Templates

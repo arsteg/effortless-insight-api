@@ -54,9 +54,45 @@ public interface IWhatsAppMessageLogService
     Task<WhatsAppMessageLog?> GetByWamIdAsync(string wamId, CancellationToken ct = default);
 
     /// <summary>
+    /// Log a template message with full parameters for retry capability.
+    /// </summary>
+    Task<WhatsAppMessageLog> LogTemplateMessageAsync(
+        string? wamId,
+        string phoneNumber,
+        string templateName,
+        string templateLanguage,
+        List<string> templateParameters,
+        Guid? userId,
+        Guid? organizationId,
+        string status,
+        string? errorCode,
+        string? errorMessage,
+        int? processingTimeMs,
+        string? referenceType = null,
+        Guid? referenceId = null,
+        string? correlationId = null,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Get message by ID.
+    /// </summary>
+    Task<WhatsAppMessageLog?> GetByIdAsync(Guid id, CancellationToken ct = default);
+
+    /// <summary>
     /// Get failed messages for retry.
     /// </summary>
     Task<List<WhatsAppMessageLog>> GetFailedMessagesForRetryAsync(int maxRetries, CancellationToken ct = default);
+
+    /// <summary>
+    /// Mark a retry attempt on a message.
+    /// </summary>
+    Task MarkRetryAttemptAsync(
+        Guid messageId,
+        bool success,
+        string? newWamId,
+        string? errorCode,
+        string? errorMessage,
+        CancellationToken ct = default);
 
     /// <summary>
     /// Get message statistics for analytics.

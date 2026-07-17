@@ -151,6 +151,7 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
     public DbSet<WhatsAppSession> WhatsAppSessions => Set<WhatsAppSession>();
     public DbSet<WhatsAppMessageLog> WhatsAppMessageLogs => Set<WhatsAppMessageLog>();
     public DbSet<WhatsAppTemplate> WhatsAppTemplates => Set<WhatsAppTemplate>();
+    public DbSet<WhatsAppWebhookEvent> WhatsAppWebhookEvents => Set<WhatsAppWebhookEvent>();
 
     // Reporting entities (GAP-RPT-006)
     public DbSet<SavedReport> SavedReports => Set<SavedReport>();

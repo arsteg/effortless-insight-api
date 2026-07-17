@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
 
 namespace EffortlessInsight.Api.Data.Entities;
 
@@ -24,6 +25,12 @@ public class WhatsAppMessageLog : BaseEntity
     [Required]
     [MaxLength(20)]
     public string PhoneNumber { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Full phone number for retry (encrypted or stored only for retryable messages).
+    /// </summary>
+    [MaxLength(20)]
+    public string? FullPhoneNumber { get; set; }
 
     /// <summary>
     /// Direction: inbound or outbound.
@@ -65,6 +72,18 @@ public class WhatsAppMessageLog : BaseEntity
     public string? TemplateName { get; set; }
 
     /// <summary>
+    /// Template language code.
+    /// </summary>
+    [MaxLength(10)]
+    public string? TemplateLanguage { get; set; }
+
+    /// <summary>
+    /// Template parameters stored as JSON for retry capability.
+    /// </summary>
+    [Column(TypeName = "jsonb")]
+    public List<string>? TemplateParameters { get; set; }
+
+    /// <summary>
     /// Message status: sent, delivered, read, failed.
     /// </summary>
     [Required]
@@ -104,9 +123,41 @@ public class WhatsAppMessageLog : BaseEntity
     public int RetryCount { get; set; }
 
     /// <summary>
+    /// Maximum retry attempts allowed.
+    /// </summary>
+    public int MaxRetryAttempts { get; set; } = 3;
+
+    /// <summary>
     /// Last retry timestamp.
     /// </summary>
     public DateTime? LastRetryAt { get; set; }
+
+    /// <summary>
+    /// Next retry scheduled time.
+    /// </summary>
+    public DateTime? NextRetryAt { get; set; }
+
+    /// <summary>
+    /// Whether this message can be retried.
+    /// </summary>
+    public bool IsRetryable { get; set; } = true;
+
+    /// <summary>
+    /// Correlation ID for request tracing.
+    /// </summary>
+    [MaxLength(50)]
+    public string? CorrelationId { get; set; }
+
+    /// <summary>
+    /// Reference type (Notice, Task, etc.) for context.
+    /// </summary>
+    [MaxLength(50)]
+    public string? ReferenceType { get; set; }
+
+    /// <summary>
+    /// Reference ID for context (NoticeId, TaskId, etc.).
+    /// </summary>
+    public Guid? ReferenceId { get; set; }
 
     // Navigation properties
     public ApplicationUser? User { get; set; }

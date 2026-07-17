@@ -22,17 +22,20 @@ public class WhatsAppWebhookController : ControllerBase
     private readonly MetaWhatsAppOptions _options;
     private readonly IWhatsAppBotService _botService;
     private readonly IWhatsAppMessageLogService _messageLogService;
+    private readonly IWhatsAppWebhookIdempotencyService _idempotencyService;
     private readonly ILogger<WhatsAppWebhookController> _logger;
 
     public WhatsAppWebhookController(
         IOptions<MetaWhatsAppOptions> options,
         IWhatsAppBotService botService,
         IWhatsAppMessageLogService messageLogService,
+        IWhatsAppWebhookIdempotencyService idempotencyService,
         ILogger<WhatsAppWebhookController> logger)
     {
         _options = options.Value;
         _botService = botService;
         _messageLogService = messageLogService;
+        _idempotencyService = idempotencyService;
         _logger = logger;
     }
 
@@ -73,6 +76,15 @@ public class WhatsAppWebhookController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> HandleWebhook(CancellationToken ct)
     {
+        // Generate correlation ID for request tracing
+        var correlationId = HttpContext.Request.Headers["X-Correlation-Id"].FirstOrDefault()
+            ?? Guid.NewGuid().ToString("N")[..16];
+
+        using var scope = _logger.BeginScope(new Dictionary<string, object>
+        {
+            ["CorrelationId"] = correlationId
+        });
+
         if (!_options.Enabled)
         {
             return Ok(); // Acknowledge but don't process
@@ -88,18 +100,30 @@ public class WhatsAppWebhookController : ControllerBase
         var signature = Request.Headers["X-Hub-Signature-256"].FirstOrDefault();
         if (!VerifySignature(rawBody, signature))
         {
-            _logger.LogWarning("Invalid webhook signature");
+            _logger.LogWarning("Invalid webhook signature. CorrelationId: {CorrelationId}", correlationId);
             return Unauthorized("Invalid signature");
         }
 
         try
         {
+            // Entry-level idempotency check
+            if (await _idempotencyService.IsProcessedAsync(rawBody, ct))
+            {
+                _logger.LogDebug("Skipping duplicate webhook payload. CorrelationId: {CorrelationId}", correlationId);
+                return Ok();
+            }
+
             var payload = JsonSerializer.Deserialize<MetaWebhookPayload>(rawBody);
             if (payload?.Object != "whatsapp_business_account")
             {
                 _logger.LogDebug("Ignoring non-WhatsApp webhook payload");
                 return Ok();
             }
+
+            // Mark webhook as received for idempotency
+            var entryId = payload.Entry?.FirstOrDefault()?.Id;
+            var eventType = payload.Entry?.FirstOrDefault()?.Changes?.FirstOrDefault()?.Field ?? "unknown";
+            var payloadHash = await _idempotencyService.MarkReceivedAsync(rawBody, entryId, eventType, ct);
 
             // Process each entry
             foreach (var entry in payload.Entry ?? [])
@@ -145,6 +169,9 @@ public class WhatsAppWebhookController : ControllerBase
                     }
                 }
             }
+
+            // Mark as processed successfully
+            await _idempotencyService.MarkProcessedAsync(payloadHash, "success", null, ct);
 
             return Ok();
         }
