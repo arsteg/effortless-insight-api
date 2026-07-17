@@ -550,32 +550,48 @@ public class SubscriptionService : ISubscriptionService
         return MapToSubscriptionDto(subscription, plan!);
     }
 
-    public async Task<BillingSubscription> StartTrialAsync(
+    public async Task<SubscriptionDto> StartTrialAsync(
         Guid organizationId,
         string planCode,
-        int trialDays)
+        string billingCycle)
     {
         var plan = await _planService.GetPlanByCodeAsync(planCode)
             ?? throw new InvalidOperationException($"Plan '{planCode}' not found");
+
+        if (plan.ContactSales)
+            throw new InvalidOperationException("Enterprise plans require contacting sales");
+
+        if (plan.TrialDays <= 0)
+            throw new InvalidOperationException($"Plan '{planCode}' does not offer a trial period");
 
         var existingSubscription = await GetSubscriptionEntityAsync(organizationId);
         if (existingSubscription != null)
             throw new InvalidOperationException("Organization already has a subscription");
 
+        // Validate and normalize billing cycle
+        var normalizedBillingCycle = billingCycle.ToLowerInvariant();
+        if (normalizedBillingCycle != Data.Entities.Billing.BillingCycle.Monthly &&
+            normalizedBillingCycle != Data.Entities.Billing.BillingCycle.Annually)
+        {
+            throw new InvalidOperationException($"Invalid billing cycle: {billingCycle}. Must be 'monthly' or 'annually'.");
+        }
+
         var now = DateTime.UtcNow;
+        var trialEnd = now.AddDays(plan.TrialDays);
+
         var subscription = new BillingSubscription
         {
             OrganizationId = organizationId,
             PlanCode = plan.Code,
             PlanId = plan.Id,
             Status = SubscriptionStatus.Trialing,
-            BillingCycle = BillingCycle.Monthly,
+            BillingCycle = normalizedBillingCycle,
             SeatsIncluded = plan.Limits.Users,
             SeatsAdditional = 0,
             TrialStart = now,
-            TrialEnd = now.AddDays(trialDays),
+            TrialEnd = trialEnd,
             CurrentPeriodStart = now,
-            CurrentPeriodEnd = now.AddDays(trialDays)
+            CurrentPeriodEnd = trialEnd
         };
 
         _dbContext.BillingSubscriptions.Add(subscription);
@@ -592,9 +608,9 @@ public class SubscriptionService : ISubscriptionService
 
         _logger.LogInformation(
             "Trial started for organization {OrganizationId} with plan {PlanCode} for {TrialDays} days",
-            organizationId, planCode, trialDays);
+            organizationId, planCode, plan.TrialDays);
 
-        return subscription;
+        return MapToSubscriptionDto(subscription, plan);
     }
 
     public async Task ProcessRenewalAsync(Guid subscriptionId)
@@ -1703,6 +1719,12 @@ public class SubscriptionService : ISubscriptionService
             Total = subtotal + gstAmount
         };
 
+        // Calculate trial status
+        var isTrialing = subscription.Status == "trial" && subscription.TrialEnd.HasValue && subscription.TrialEnd.Value > DateTime.UtcNow;
+        var trialDaysRemaining = isTrialing && subscription.TrialEnd.HasValue
+            ? (int)Math.Ceiling((subscription.TrialEnd.Value - DateTime.UtcNow).TotalDays)
+            : (int?)null;
+
         return new SubscriptionDto(
             Id: subscription.Id,
             PlanCode: subscription.PlanCode,
@@ -1713,6 +1735,8 @@ public class SubscriptionService : ISubscriptionService
             CurrentPeriodEnd: subscription.CurrentPeriodEnd,
             CancelAtPeriodEnd: subscription.CancelAtPeriodEnd,
             TrialEnd: subscription.TrialEnd,
+            IsTrialing: isTrialing,
+            TrialDaysRemaining: trialDaysRemaining,
             Seats: new SeatsDto(
                 Included: subscription.SeatsIncluded,
                 Additional: subscription.SeatsAdditional,

@@ -145,8 +145,8 @@ public class OrganizationManagementService : IOrganizationManagementService
             State = request.State,
             City = request.City,
             AnnualTurnoverRange = request.AnnualTurnoverRange,
-            SubscriptionStatus = "trial",
-            TrialEndsAt = DateTime.UtcNow.AddDays(14),
+            SubscriptionStatus = "none",
+            TrialEndsAt = null,
             Settings = new Dictionary<string, object>
             {
                 ["default_reminder_days"] = new[] { 7, 3, 1 },

@@ -83,6 +83,31 @@ public class SubscriptionsController : ControllerBase
     }
 
     /// <summary>
+    /// Start a free trial for a plan.
+    /// </summary>
+    [HttpPost("trial")]
+    [ProducesResponseType(typeof(ApiResponse<SubscriptionDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> StartTrial([FromBody] StartTrialRequest request)
+    {
+        try
+        {
+            var orgId = _currentOrganization.OrganizationId;
+            if (orgId == null)
+            {
+                return BadRequest(new ApiErrorResponse(false, "NO_ORG", "No organization selected"));
+            }
+
+            var result = await _subscriptionService.StartTrialAsync(orgId.Value, request.PlanCode, request.BillingCycle);
+            return Ok(new ApiResponse<SubscriptionDto>(true, result));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new ApiErrorResponse(false, "TRIAL_START_FAILED", ex.Message));
+        }
+    }
+
+    /// <summary>
     /// Verify payment and activate subscription.
     /// </summary>
     [HttpPost("verify")]

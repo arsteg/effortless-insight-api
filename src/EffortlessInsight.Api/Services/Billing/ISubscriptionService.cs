@@ -66,10 +66,10 @@ public interface ISubscriptionService
     /// <summary>
     /// Starts a trial for an organization.
     /// </summary>
-    Task<BillingSubscription> StartTrialAsync(
+    Task<SubscriptionDto> StartTrialAsync(
         Guid organizationId,
         string planCode,
-        int trialDays);
+        string billingCycle);
 
     /// <summary>
     /// Processes subscription renewal.
