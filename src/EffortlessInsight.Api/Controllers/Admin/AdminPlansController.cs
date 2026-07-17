@@ -296,4 +296,34 @@ public class AdminPlansController : AdminControllerBase
             return Error(ex.Message, "PLAN_DEACTIVATE_FAILED", 404);
         }
     }
+
+    /// <summary>
+    /// Clears the plans cache to force refresh from database.
+    /// Useful when plans are not showing on frontend due to cached empty data.
+    /// </summary>
+    [HttpPost("cache/clear")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> ClearPlansCache()
+    {
+        if (!HasPermission(AdminPermissions.PlansManage))
+        {
+            return Forbid();
+        }
+
+        await _planService.InvalidatePlansCacheAsync();
+
+        await _auditService.LogAsync(
+            CurrentAdminId,
+            "plans.cache_cleared",
+            "system",
+            "plans_cache",
+            "Cleared plans cache",
+            null,
+            ClientIpAddress,
+            ClientUserAgent,
+            CurrentSessionId);
+
+        return Success<object?>(null, "Plans cache cleared successfully. Next request will fetch fresh data from database.");
+    }
 }

@@ -72,6 +72,8 @@ public record SubscriptionDto(
     DateTime CurrentPeriodEnd,
     bool CancelAtPeriodEnd,
     DateTime? TrialEnd,
+    bool IsTrialing,
+    int? TrialDaysRemaining,
     SeatsDto Seats,
     SubscriptionPricingDto Pricing,
     DateOnly NextBillingDate,
@@ -157,6 +159,11 @@ public record CreateSubscriptionRequest(
     BillingDetailsRequest BillingDetails,
     string? CouponCode,
     bool AutoRenew
+);
+
+public record StartTrialRequest(
+    string PlanCode,
+    string BillingCycle
 );
 
 public record BillingDetailsRequest(

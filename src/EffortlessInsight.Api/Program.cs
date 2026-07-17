@@ -142,6 +142,7 @@ builder.Services.AddWhatsAppServices(builder.Configuration);
 // Add Database Seeders
 builder.Services.AddScoped<WorkflowTemplateSeeder>();
 builder.Services.AddScoped<AdminUserSeeder>();
+builder.Services.AddScoped<PlanSeeder>();
 
 // Add AutoMapper
 builder.Services.AddAutoMapper(typeof(Program));
@@ -223,12 +224,12 @@ builder.Services.AddCors(options =>
         {
             // In development, allow any localhost origin
             policy.SetIsOriginAllowed(origin =>
-                {
-                    var uri = new Uri(origin);
-                    var isAllowed = uri.Host == "localhost" || uri.Host == "127.0.0.1";
-                    Log.Debug("CORS check for origin {Origin}: {IsAllowed}", origin, isAllowed);
-                    return isAllowed;
-                })
+            {
+                var uri = new Uri(origin);
+                var isAllowed = uri.Host == "localhost" || uri.Host == "127.0.0.1";
+                Log.Debug("CORS check for origin {Origin}: {IsAllowed}", origin, isAllowed);
+                return isAllowed;
+            })
                   .AllowAnyHeader()
                   .AllowAnyMethod()
                   .AllowCredentials();
@@ -290,6 +291,9 @@ if (app.Environment.IsProduction())
 app.UseAuthentication();
 app.UseAuthorization();
 
+// Subscription enforcement (must come after authentication/authorization)
+app.UseSubscriptionEnforcement();
+
 app.MapControllers();
 app.MapHealthChecks("/health");
 app.MapNotificationEndpoints();
@@ -343,6 +347,10 @@ await workflowSeeder.SeedAsync();
 // Seed initial admin user (from environment variables)
 var adminSeeder = scope.ServiceProvider.GetRequiredService<AdminUserSeeder>();
 await adminSeeder.SeedAsync();
+
+// Seed default subscription plans
+var planSeeder = scope.ServiceProvider.GetRequiredService<PlanSeeder>();
+await planSeeder.SeedAsync();
 
 // Seed default notification templates
 var templateService = scope.ServiceProvider.GetRequiredService<EffortlessInsight.Api.Services.Notifications.INotificationTemplateService>();
