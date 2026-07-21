@@ -3,7 +3,10 @@ using System.Text;
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.DTOs;
+using Hangfire;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace EffortlessInsight.Api.Services.Notifications;
 
@@ -23,6 +26,11 @@ public class NotificationEngineService : INotificationEngineService
     private readonly IPushTokenService _pushTokenService;
     private readonly ILogger<NotificationEngineService> _logger;
     private readonly IConfiguration _configuration;
+    // Resolved lazily to avoid a constructor DI cycle: DeadLetterService depends
+    // on INotificationEngineService, so the engine cannot take IDeadLetterService
+    // as a constructor dependency (audit BE-04).
+    private readonly IServiceProvider _serviceProvider;
+    private readonly IBackgroundJobClient _backgroundJobs;
 
     public NotificationEngineService(
         ApplicationDbContext dbContext,
@@ -35,7 +43,9 @@ public class NotificationEngineService : INotificationEngineService
         IInAppChannelService inAppService,
         IPushTokenService pushTokenService,
         ILogger<NotificationEngineService> logger,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IServiceProvider serviceProvider,
+        IBackgroundJobClient backgroundJobs)
     {
         _dbContext = dbContext;
         _preferencesService = preferencesService;
@@ -48,7 +58,38 @@ public class NotificationEngineService : INotificationEngineService
         _pushTokenService = pushTokenService;
         _logger = logger;
         _configuration = configuration;
+        _serviceProvider = serviceProvider;
+        _backgroundJobs = backgroundJobs;
     }
+
+    // BE-09: when true, SendAsync persists the notification and enqueues a
+    // Hangfire job for the channel fan-out instead of sending inline. Default
+    // false — inline behavior is unchanged unless explicitly enabled.
+    private bool UseQueue =>
+        _configuration.GetValue("Notifications:UseQueue", false);
+
+    // BE-10: when > 0, a notification with the same (user, type, reference) sent
+    // within this window is treated as a duplicate and skipped. Default 0 = off.
+    private int DeduplicationWindowMinutes =>
+        _configuration.GetValue("Notifications:DeduplicationWindowMinutes", 0);
+
+    // Per-user, per-channel rate limiting. When enabled, once a user has been
+    // sent more than the per-channel cap within the rolling window, that channel
+    // is suppressed for further non-critical notifications (in-app always still
+    // records them). Prevents notification storms — e.g. a GST sync importing
+    // 200 notices firing 200 pushes. Default off.
+    // Marker used in a SendNotificationResponse's deliveries when a send was
+    // deferred to a ScheduledNotification instead of dispatched (audit BE-27).
+    private const string ScheduledChannelMarker = "scheduled";
+
+    private bool RateLimitEnabled =>
+        _configuration.GetValue("Notifications:RateLimitEnabled", false);
+    private int RateLimitWindowMinutes =>
+        _configuration.GetValue("Notifications:RateLimitWindowMinutes", 60);
+    private int RateLimitEmail => _configuration.GetValue("Notifications:RateLimitEmailPerWindow", 100);
+    private int RateLimitSms => _configuration.GetValue("Notifications:RateLimitSmsPerWindow", 10);
+    private int RateLimitPush => _configuration.GetValue("Notifications:RateLimitPushPerWindow", 50);
+    private int RateLimitWhatsApp => _configuration.GetValue("Notifications:RateLimitWhatsAppPerWindow", 20);
 
     /// <inheritdoc />
     public async Task<SendNotificationResponse> SendAsync(SendNotificationRequest request, CancellationToken cancellationToken = default)
@@ -70,18 +111,56 @@ public class NotificationEngineService : INotificationEngineService
         var channelDecision = await _preferencesService.EvaluateChannelsAsync(
             request.UserId, request.Type, priority, cancellationToken);
 
+        // Suppress noisy channels once the user is over their per-channel rate
+        // limit (storm control). Critical notifications always bypass so
+        // deadlines can't be throttled. In-app is never rate-limited.
+        if (RateLimitEnabled && priority != NotificationPriority.Critical)
+        {
+            channelDecision = await ApplyRateLimitsAsync(request.UserId, channelDecision, cancellationToken);
+        }
+
         // If quiet hours and not critical, schedule for later
         if (channelDecision.IsQuietHours && priority != NotificationPriority.Critical && channelDecision.DeliveryTime.HasValue)
         {
             var scheduledId = await ScheduleAsync(request, channelDecision.DeliveryTime.Value, cancellationToken);
             _logger.LogInformation("Notification scheduled for {Time} due to quiet hours", channelDecision.DeliveryTime.Value);
+            // NOTE: the returned id is a ScheduledNotification id, not a
+            // Notification id. The "scheduled" delivery marker lets callers (and
+            // ProcessScheduledNotificationsAsync) detect this and avoid treating
+            // it as a Notification id (audit BE-27).
             return new SendNotificationResponse(scheduledId, [
-                new DeliveryResultDto("scheduled", "pending", null)
+                new DeliveryResultDto(ScheduledChannelMarker, "pending", null)
             ]);
         }
 
+        // Deduplicate repeat events / job retries within the configured window
+        // (audit BE-10). Off by default (window = 0).
+        var referenceId = GetReferenceId(request.Data);
+        if (DeduplicationWindowMinutes > 0 && referenceId.HasValue)
+        {
+            var since = DateTime.UtcNow.AddMinutes(-DeduplicationWindowMinutes);
+            var duplicate = await _dbContext.Notifications
+                .AsNoTracking()
+                .Where(n => n.UserId == request.UserId
+                            && n.Type == request.Type
+                            && n.ReferenceId == referenceId
+                            && n.DeletedAt == null
+                            && n.CreatedAt >= since)
+                .OrderByDescending(n => n.CreatedAt)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (duplicate != null)
+            {
+                _logger.LogInformation(
+                    "Skipping duplicate notification (type {Type}, ref {Ref}) for user {UserId} within {Window}m window",
+                    request.Type, referenceId, request.UserId, DeduplicationWindowMinutes);
+                return new SendNotificationResponse(duplicate.Id, []);
+            }
+        }
+
         // Render notification content
-        var rendered = await RenderNotificationContentAsync(request.Type, request.Data, "en", cancellationToken);
+        var rendered = await RenderNotificationContentAsync(
+            request.Type, request.Data, ResolveLanguage(request.Data), cancellationToken);
 
         // Create notification record
         var notification = new Notification
@@ -95,7 +174,7 @@ public class NotificationEngineService : INotificationEngineService
             Body = rendered.Body,
             Data = request.Data,
             ActionUrl = GetActionUrl(request.Type, request.Data),
-            ReferenceId = GetReferenceId(request.Data),
+            ReferenceId = referenceId,
             ReferenceType = GetReferenceType(request.Type),
             ExpiresAt = DateTime.UtcNow.AddDays(90)
         };
@@ -103,46 +182,165 @@ public class NotificationEngineService : INotificationEngineService
         _dbContext.Notifications.Add(notification);
         await _dbContext.SaveChangesAsync(cancellationToken);
 
-        var deliveries = new List<DeliveryResultDto>();
-
-        // Send to each enabled channel
-        var tasks = new List<Task<DeliveryResultDto>>();
-
-        if (channelDecision.ShouldSendEmail || request.OverridePreferences)
+        // BE-09: enqueue the channel fan-out instead of sending inline, so the
+        // caller's request/scope isn't held for provider I/O and a crash mid-send
+        // is resumable. The notification row is already committed, so the job can
+        // reconstruct everything it needs from it.
+        if (UseQueue)
         {
-            tasks.Add(SendEmailAsync(notification, user, rendered, cancellationToken));
+            _backgroundJobs.Enqueue<INotificationEngineService>(
+                e => e.DispatchQueuedNotificationAsync(notification.Id, request.OverridePreferences, CancellationToken.None));
+
+            _logger.LogInformation(
+                "Queued notification {NotificationId} of type {Type} for user {UserId}",
+                notification.Id, request.Type, request.UserId);
+
+            return new SendNotificationResponse(notification.Id, [
+                new DeliveryResultDto("queued", "queued", null)
+            ]);
         }
 
-        if (channelDecision.ShouldSendSms || (request.OverridePreferences && priority == NotificationPriority.Critical))
-        {
-            tasks.Add(SendSmsAsync(notification, user, rendered, cancellationToken));
-        }
-
-        if (channelDecision.ShouldSendPush || request.OverridePreferences)
-        {
-            tasks.Add(SendPushAsync(notification, user, request.Data, rendered, cancellationToken));
-        }
-
-        if (channelDecision.ShouldSendWhatsApp || (request.OverridePreferences && priority == NotificationPriority.Critical))
-        {
-            tasks.Add(SendWhatsAppAsync(notification, user, request.Type, request.Data, cancellationToken));
-        }
-
-        // In-app is always sent (unless explicitly disabled)
-        if (channelDecision.ShouldSendInApp)
-        {
-            tasks.Add(SendInAppAsync(notification, user, cancellationToken));
-        }
-
-        // Wait for all deliveries to complete
-        var results = await Task.WhenAll(tasks);
-        deliveries.AddRange(results);
+        var deliveries = await DispatchChannelsAsync(
+            notification, user, rendered, channelDecision, request.OverridePreferences, cancellationToken);
 
         _logger.LogInformation(
             "Sent notification {NotificationId} of type {Type} to user {UserId} via {ChannelCount} channels",
             notification.Id, request.Type, request.UserId, deliveries.Count);
 
         return new SendNotificationResponse(notification.Id, deliveries);
+    }
+
+    /// <summary>
+    /// Downgrades a channel decision to respect per-user, per-channel rate limits.
+    /// Counts the user's actually-sent deliveries in the rolling window and turns
+    /// off any channel already at or over its cap. In-app is never limited, so
+    /// the notification is always still recorded and visible in the centre.
+    /// </summary>
+    private async Task<ChannelDecision> ApplyRateLimitsAsync(
+        Guid userId, ChannelDecision decision, CancellationToken cancellationToken)
+    {
+        // Nothing to limit if only in-app is active.
+        if (!decision.ShouldSendEmail && !decision.ShouldSendSms
+            && !decision.ShouldSendPush && !decision.ShouldSendWhatsApp)
+        {
+            return decision;
+        }
+
+        var windowStart = DateTime.UtcNow.AddMinutes(-RateLimitWindowMinutes);
+        var counts = await _dbContext.NotificationDeliveries
+            .Where(d => d.Notification.UserId == userId && d.SentAt >= windowStart)
+            .GroupBy(d => d.Channel)
+            .Select(g => new { Channel = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.Channel, x => x.Count, cancellationToken);
+
+        bool Over(string channel, int limit) => counts.GetValueOrDefault(channel) >= limit;
+
+        var email = decision.ShouldSendEmail && !Over(NotificationChannel.Email, RateLimitEmail);
+        var sms = decision.ShouldSendSms && !Over(NotificationChannel.Sms, RateLimitSms);
+        var push = decision.ShouldSendPush && !Over(NotificationChannel.Push, RateLimitPush);
+        var whatsApp = decision.ShouldSendWhatsApp && !Over(NotificationChannel.WhatsApp, RateLimitWhatsApp);
+
+        if (email != decision.ShouldSendEmail || sms != decision.ShouldSendSms
+            || push != decision.ShouldSendPush || whatsApp != decision.ShouldSendWhatsApp)
+        {
+            _logger.LogInformation(
+                "Rate limit suppressed channels for user {UserId} (email:{E} sms:{S} push:{P} whatsapp:{W}); in-app preserved",
+                userId, !email, !sms, !push, !whatsApp);
+        }
+
+        return decision with
+        {
+            ShouldSendEmail = email,
+            ShouldSendSms = sms,
+            ShouldSendPush = push,
+            ShouldSendWhatsApp = whatsApp
+        };
+    }
+
+    /// <summary>
+    /// Runs the per-channel fan-out for a notification. Channels are sent
+    /// SEQUENTIALLY because they share the scoped DbContext, which is not
+    /// thread-safe (audit BE-02).
+    /// </summary>
+    private async Task<List<DeliveryResultDto>> DispatchChannelsAsync(
+        Notification notification, ApplicationUser user, RenderedTemplate rendered,
+        ChannelDecision channelDecision, bool overridePreferences, CancellationToken cancellationToken)
+    {
+        var priority = notification.Priority;
+        var deliveries = new List<DeliveryResultDto>();
+
+        if (channelDecision.ShouldSendEmail || overridePreferences)
+        {
+            deliveries.Add(await SendEmailAsync(notification, user, rendered, cancellationToken));
+        }
+
+        if (channelDecision.ShouldSendSms || (overridePreferences && priority == NotificationPriority.Critical))
+        {
+            deliveries.Add(await SendSmsAsync(notification, user, rendered, cancellationToken));
+        }
+
+        if (channelDecision.ShouldSendPush || overridePreferences)
+        {
+            deliveries.Add(await SendPushAsync(notification, user, notification.Data, rendered, cancellationToken));
+        }
+
+        if (channelDecision.ShouldSendWhatsApp || (overridePreferences && priority == NotificationPriority.Critical))
+        {
+            deliveries.Add(await SendWhatsAppAsync(notification, user, notification.Type, notification.Data, cancellationToken));
+        }
+
+        // In-app is always sent (unless explicitly disabled)
+        if (channelDecision.ShouldSendInApp)
+        {
+            deliveries.Add(await SendInAppAsync(notification, user, cancellationToken));
+        }
+
+        return deliveries;
+    }
+
+    /// <inheritdoc />
+    public async Task DispatchQueuedNotificationAsync(Guid notificationId, bool overridePreferences, CancellationToken cancellationToken = default)
+    {
+        var notification = await _dbContext.Notifications
+            .FirstOrDefaultAsync(n => n.Id == notificationId, cancellationToken);
+
+        if (notification == null)
+        {
+            _logger.LogWarning("Queued notification {NotificationId} not found; skipping", notificationId);
+            return;
+        }
+
+        // Idempotency for job retries: if this notification already has delivery
+        // rows, a prior run already dispatched it — don't re-send (audit BE-10).
+        var alreadyDispatched = await _dbContext.NotificationDeliveries
+            .AnyAsync(d => d.NotificationId == notificationId, cancellationToken);
+        if (alreadyDispatched)
+        {
+            _logger.LogInformation("Notification {NotificationId} already dispatched; skipping duplicate job", notificationId);
+            return;
+        }
+
+        var user = await _dbContext.Users
+            .AsNoTracking()
+            .FirstOrDefaultAsync(u => u.Id == notification.UserId, cancellationToken);
+        if (user == null)
+        {
+            _logger.LogWarning("User {UserId} not found for queued notification {NotificationId}", notification.UserId, notificationId);
+            return;
+        }
+
+        var channelDecision = await _preferencesService.EvaluateChannelsAsync(
+            notification.UserId, notification.Type, notification.Priority, cancellationToken);
+
+        // Content was already rendered and stored on the notification.
+        var rendered = new RenderedTemplate(notification.Title, notification.Body, notification.Title);
+
+        var deliveries = await DispatchChannelsAsync(
+            notification, user, rendered, channelDecision, overridePreferences, cancellationToken);
+
+        _logger.LogInformation(
+            "Dispatched queued notification {NotificationId} via {ChannelCount} channels",
+            notificationId, deliveries.Count);
     }
 
     /// <inheritdoc />
@@ -263,6 +461,29 @@ public class NotificationEngineService : INotificationEngineService
     }
 
     /// <inheritdoc />
+    public async Task<bool> DeleteNotificationAsync(Guid notificationId, Guid userId, CancellationToken cancellationToken = default)
+    {
+        // Owner-scoped soft delete.
+        var notification = await _dbContext.Notifications
+            .FirstOrDefaultAsync(n => n.Id == notificationId && n.UserId == userId && n.DeletedAt == null, cancellationToken);
+
+        if (notification == null)
+            return false;
+
+        notification.DeletedAt = DateTime.UtcNow;
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        // Deleting an unread notification changes the unread count.
+        if (!notification.IsRead)
+        {
+            var unreadCount = await GetUnreadCountAsync(userId, cancellationToken);
+            await _inAppService.SendBadgeUpdateAsync(userId, unreadCount, cancellationToken);
+        }
+
+        return true;
+    }
+
+    /// <inheritdoc />
     public async Task<MarkAllReadResponse> MarkAllAsReadAsync(Guid userId, MarkAllReadRequest request, CancellationToken cancellationToken = default)
     {
         var query = _dbContext.Notifications
@@ -326,6 +547,7 @@ public class NotificationEngineService : INotificationEngineService
     {
         var dueNotifications = await _dbContext.ScheduledNotifications
             .Where(s => s.Status == "pending" && s.ScheduledFor <= DateTime.UtcNow)
+            .OrderBy(s => s.ScheduledFor)  // oldest first — don't starve old rows (audit BE-28)
             .Take(100)  // Process in batches
             .ToListAsync(cancellationToken);
 
@@ -340,19 +562,44 @@ public class NotificationEngineService : INotificationEngineService
 
                 var response = await SendAsync(request, cancellationToken);
 
+                // If the inner send re-entered quiet hours it created a NEW
+                // ScheduledNotification and returned THAT id. That is not a
+                // Notification, so it must not be written to the SentNotificationId
+                // FK or SaveChanges throws and rolls back the whole batch (audit BE-27).
+                var wasRescheduled = response.Deliveries.Any(d => d.Channel == ScheduledChannelMarker);
+
                 scheduled.Status = "sent";
-                scheduled.SentNotificationId = response.NotificationId;
+                scheduled.SentNotificationId = wasRescheduled ? null : response.NotificationId;
 
                 _logger.LogInformation("Processed scheduled notification {Id}", scheduled.Id);
+            }
+            catch (KeyNotFoundException)
+            {
+                // Recipient no longer exists (e.g. user deleted since scheduling).
+                // Terminal — mark failed so it stops retrying every cycle (audit BE-28).
+                _logger.LogWarning("Scheduled notification {Id} failed permanently (recipient missing)", scheduled.Id);
+                scheduled.Status = "failed";
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to process scheduled notification {Id}", scheduled.Id);
-                // Keep as pending for retry
+                scheduled.Status = "failed";
+            }
+
+            // Persist each item independently so one failure can't roll back the
+            // others or block the whole batch (audit BE-27 / BE-28).
+            try
+            {
+                await _dbContext.SaveChangesAsync(cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to persist result for scheduled notification {Id}", scheduled.Id);
+                // Drop only this entity's pending change so the loop can continue
+                // and the other rows (still tracked) still persist their updates.
+                _dbContext.Entry(scheduled).State = EntityState.Unchanged;
             }
         }
-
-        await _dbContext.SaveChangesAsync(cancellationToken);
     }
 
     /// <inheritdoc />
@@ -367,6 +614,7 @@ public class NotificationEngineService : INotificationEngineService
                          (d.Channel == NotificationChannel.Sms && d.RetryCount < 3) ||
                          (d.Channel == NotificationChannel.Push && d.RetryCount < 2) ||
                          (d.Channel == NotificationChannel.WhatsApp && d.RetryCount < 1)))
+            .OrderBy(d => d.NextRetryAt)
             .Take(50)
             .ToListAsync(cancellationToken);
 
@@ -381,25 +629,73 @@ public class NotificationEngineService : INotificationEngineService
                     delivery.Status = DeliveryStatus.Sent;
                     delivery.ProviderMessageId = result.MessageId;
                     delivery.SentAt = DateTime.UtcNow;
+                    delivery.NextRetryAt = null;
                     _logger.LogInformation("Retry successful for delivery {Id}", delivery.Id);
                 }
                 else
                 {
                     delivery.RetryCount++;
-                    delivery.NextRetryAt = CalculateNextRetry(delivery.RetryCount, delivery.Channel);
                     delivery.FailureReason = result.ErrorMessage;
-                    _logger.LogWarning("Retry failed for delivery {Id}, attempt {Attempt}", delivery.Id, delivery.RetryCount);
+                    await HandleRetryFailureAsync(delivery, cancellationToken);
                 }
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error retrying delivery {Id}", delivery.Id);
                 delivery.RetryCount++;
-                delivery.NextRetryAt = CalculateNextRetry(delivery.RetryCount, delivery.Channel);
+                await HandleRetryFailureAsync(delivery, cancellationToken);
             }
         }
 
         await _dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// After a retry attempt fails, either schedule the next retry or, once the
+    /// channel's retry budget is exhausted, escalate the delivery to the dead
+    /// letter queue so it stops being stranded in Failed forever (audit BE-04).
+    /// </summary>
+    private async Task HandleRetryFailureAsync(NotificationDelivery delivery, CancellationToken cancellationToken)
+    {
+        delivery.FailedAt ??= DateTime.UtcNow;
+
+        if (delivery.RetryCount >= GetMaxRetries(delivery.Channel))
+        {
+            try
+            {
+                var deadLetterService = _serviceProvider.GetRequiredService<IDeadLetterService>();
+                var recipient = GetRecipientForChannel(delivery);
+                await deadLetterService.MoveToDeadLetterAsync(delivery, recipient, cancellationToken);
+                _logger.LogWarning(
+                    "Delivery {Id} moved to dead letter after {Attempts} attempts",
+                    delivery.Id, delivery.RetryCount);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to move delivery {Id} to dead letter", delivery.Id);
+                // Stop retrying regardless so it does not loop forever.
+                delivery.NextRetryAt = null;
+            }
+        }
+        else
+        {
+            delivery.NextRetryAt = CalculateNextRetry(delivery.RetryCount, delivery.Channel);
+            _logger.LogWarning("Retry failed for delivery {Id}, attempt {Attempt}", delivery.Id, delivery.RetryCount);
+        }
+    }
+
+    private static string GetRecipientForChannel(NotificationDelivery delivery)
+    {
+        var user = delivery.Notification?.User;
+        if (user == null)
+            return "unknown";
+
+        return delivery.Channel switch
+        {
+            NotificationChannel.Email => user.Email ?? "unknown",
+            NotificationChannel.Sms or NotificationChannel.WhatsApp => user.Mobile ?? "unknown",
+            _ => $"user:{user.Id}"
+        };
     }
 
     #region Private Helper Methods
@@ -407,16 +703,28 @@ public class NotificationEngineService : INotificationEngineService
     private async Task<RenderedTemplate> RenderNotificationContentAsync(
         string type, Dictionary<string, object> data, string language, CancellationToken cancellationToken)
     {
-        // Try to render from template service
-        try
+        // Render the shared, channel-agnostic content from a DB template if one
+        // exists (with language → English fallback), otherwise use built-in
+        // content. TryRenderAsync returns null rather than throwing, so the
+        // template path is real instead of exception-driven (audit BE-08).
+        var rendered = await _templateService.TryRenderAsync(
+            type, NotificationChannel.Default, data, language, cancellationToken);
+
+        return rendered ?? GenerateDefaultContent(type, data);
+    }
+
+    private static string ResolveLanguage(Dictionary<string, object> data)
+    {
+        // No per-user language column yet; honour an explicit "language" hint in
+        // the event data, else default to English (audit BE-08 — a stored user
+        // language preference is a follow-up).
+        if (data.TryGetValue("language", out var lang) && lang is not null)
         {
-            return await _templateService.RenderAsync(type, "default", data, language, cancellationToken);
+            var value = lang.ToString();
+            if (!string.IsNullOrWhiteSpace(value))
+                return value!.ToLowerInvariant();
         }
-        catch
-        {
-            // Fallback to default content generation
-            return GenerateDefaultContent(type, data);
-        }
+        return "en";
     }
 
     private RenderedTemplate GenerateDefaultContent(string type, Dictionary<string, object> data)
@@ -591,6 +899,11 @@ public class NotificationEngineService : INotificationEngineService
             delivery.ProviderMessageId = result.MessageId;
             delivery.SentAt = result.Success ? DateTime.UtcNow : null;
             delivery.FailureReason = result.ErrorMessage;
+            if (!result.Success)
+            {
+                delivery.FailedAt = DateTime.UtcNow;
+                delivery.NextRetryAt = CalculateNextRetry(0, NotificationChannel.Sms);
+            }
 
             await _dbContext.SaveChangesAsync(cancellationToken);
 
@@ -601,6 +914,8 @@ public class NotificationEngineService : INotificationEngineService
             _logger.LogError(ex, "Failed to send SMS for notification {NotificationId}", notification.Id);
             delivery.Status = DeliveryStatus.Failed;
             delivery.FailureReason = ex.Message;
+            delivery.FailedAt = DateTime.UtcNow;
+            delivery.NextRetryAt = CalculateNextRetry(0, NotificationChannel.Sms);
             await _dbContext.SaveChangesAsync(cancellationToken);
             return new DeliveryResultDto(NotificationChannel.Sms, "failed", null);
         }
@@ -634,25 +949,44 @@ public class NotificationEngineService : INotificationEngineService
             {
                 ["notificationId"] = notification.Id.ToString(),
                 ["type"] = notification.Type,
-                ["category"] = notification.Category
+                ["category"] = notification.Category,
+                ["deepLink"] = $"effortlessinsight://notification/{notification.Id}",
             };
 
-            foreach (var kvp in data.Where(k => k.Value != null))
+            // Only forward non-sensitive routing identifiers. Never copy business
+            // data (gstin, demandAmount, clientName, errorMessage, ...): FCM/Expo
+            // store and relay the payload and it is readable on-device. The client
+            // fetches details in-app after tapping (audit BE-15).
+            foreach (var key in PushDataAllowlist)
             {
-                pushData[kvp.Key] = kvp.Value.ToString()!;
+                if (data.TryGetValue(key, out var value) && value != null)
+                {
+                    var stringValue = value.ToString();
+                    if (!string.IsNullOrEmpty(stringValue))
+                        pushData[key] = stringValue;
+                }
             }
 
             if (notification.ActionUrl != null)
                 pushData["actionUrl"] = notification.ActionUrl;
 
+            // Server-driven badge so iOS reflects the unread count (audit BE-19).
+            var unreadCount = await GetUnreadCountAsync(user.Id, cancellationToken);
+
+            var isUrgent = notification.Priority == NotificationPriority.Critical
+                || notification.Priority == NotificationPriority.High;
+
             var message = new PushNotificationMessage(
                 rendered.Title,
                 rendered.Body,
                 pushData,
-                Priority: notification.Priority == NotificationPriority.Critical ? "high" : "normal",
+                Priority: isUrgent ? "high" : "normal",   // High also gets high priority (audit BE-32)
                 ChannelId: GetAndroidChannelId(notification.Type),
+                BadgeCount: unreadCount,
                 DeepLink: $"effortlessinsight://notification/{notification.Id}",
                 ActionUrl: notification.ActionUrl,
+                TimeToLive: GetPushTtl(notification.Type),
+                CollapseKey: notification.ReferenceId?.ToString(),
                 NotificationId: notification.Id.ToString());
 
             var tokenStrings = tokens.Select(t => t.Token).ToList();
@@ -667,10 +1001,43 @@ public class NotificationEngineService : INotificationEngineService
                 }
             }
 
+            // Refresh LastUsedAt for tokens that delivered, so the hygiene job can
+            // distinguish live devices from stale ones (audit BE-21).
+            var deliveredTokens = new List<string>();
+            // Map Expo ticket ids to their tokens so the receipt poller can later
+            // resolve DeviceNotRegistered back to a token (audit BE-25).
+            var expoTickets = new Dictionary<string, string>();
+            for (int i = 0; i < results.Count && i < tokenStrings.Count; i++)
+            {
+                if (!results[i].Success)
+                    continue;
+                deliveredTokens.Add(tokenStrings[i]);
+                if (tokenStrings[i].StartsWith("ExponentPushToken[", StringComparison.Ordinal)
+                    && !string.IsNullOrEmpty(results[i].MessageId))
+                {
+                    expoTickets[results[i].MessageId!] = tokenStrings[i];
+                }
+            }
+            if (deliveredTokens.Count > 0)
+                await _pushTokenService.TouchTokensAsync(deliveredTokens, cancellationToken);
+            if (expoTickets.Count > 0)
+            {
+                delivery.Metadata["expoTickets"] = expoTickets;
+                delivery.Metadata["expoReceiptsChecked"] = false;
+            }
+
             var anySuccess = results.Any(r => r.Success);
             delivery.Status = anySuccess ? DeliveryStatus.Sent : DeliveryStatus.Failed;
             delivery.ProviderMessageId = results.FirstOrDefault(r => r.Success)?.MessageId;
             delivery.SentAt = anySuccess ? DateTime.UtcNow : null;
+            if (!anySuccess)
+            {
+                // Schedule a retry so the retry job actually picks this up; a
+                // NULL NextRetryAt previously stranded push failures (audit BE-03).
+                delivery.FailedAt = DateTime.UtcNow;
+                delivery.FailureReason = results.FirstOrDefault(r => !r.Success)?.ErrorMessage ?? "All push tokens failed";
+                delivery.NextRetryAt = CalculateNextRetry(0, NotificationChannel.Push);
+            }
 
             await _dbContext.SaveChangesAsync(cancellationToken);
 
@@ -681,6 +1048,8 @@ public class NotificationEngineService : INotificationEngineService
             _logger.LogError(ex, "Failed to send push for notification {NotificationId}", notification.Id);
             delivery.Status = DeliveryStatus.Failed;
             delivery.FailureReason = ex.Message;
+            delivery.FailedAt = DateTime.UtcNow;
+            delivery.NextRetryAt = CalculateNextRetry(0, NotificationChannel.Push);
             await _dbContext.SaveChangesAsync(cancellationToken);
             return new DeliveryResultDto(NotificationChannel.Push, "failed", null);
         }
@@ -734,6 +1103,11 @@ public class NotificationEngineService : INotificationEngineService
             delivery.ProviderMessageId = result.MessageId;
             delivery.SentAt = result.Success ? DateTime.UtcNow : null;
             delivery.FailureReason = result.ErrorMessage;
+            if (!result.Success)
+            {
+                delivery.FailedAt = DateTime.UtcNow;
+                delivery.NextRetryAt = CalculateNextRetry(0, NotificationChannel.WhatsApp);
+            }
 
             await _dbContext.SaveChangesAsync(cancellationToken);
 
@@ -744,6 +1118,8 @@ public class NotificationEngineService : INotificationEngineService
             _logger.LogError(ex, "Failed to send WhatsApp for notification {NotificationId}", notification.Id);
             delivery.Status = DeliveryStatus.Failed;
             delivery.FailureReason = ex.Message;
+            delivery.FailedAt = DateTime.UtcNow;
+            delivery.NextRetryAt = CalculateNextRetry(0, NotificationChannel.WhatsApp);
             await _dbContext.SaveChangesAsync(cancellationToken);
             return new DeliveryResultDto(NotificationChannel.WhatsApp, "failed", null);
         }
@@ -853,15 +1229,36 @@ public class NotificationEngineService : INotificationEngineService
         if (!tokens.Any())
             return new ChannelSendResult(false, null, "NO_TOKENS", "No active push tokens");
 
-        var rendered = GenerateDefaultContent(notification.Type, notification.Data);
+        var tokenStrings = tokens.Select(t => t.Token).ToList();
+
+        // Reuse the stored notification content instead of regenerating defaults,
+        // and carry enough data for the client to route (audit BE-29).
         var message = new PushNotificationMessage(
-            rendered.Title,
-            rendered.Body,
-            new Dictionary<string, string> { ["notificationId"] = notification.Id.ToString() },
+            notification.Title,
+            notification.Body,
+            new Dictionary<string, string>
+            {
+                ["notificationId"] = notification.Id.ToString(),
+                ["type"] = notification.Type,
+                ["category"] = notification.Category
+            },
+            ChannelId: GetAndroidChannelId(notification.Type),
             NotificationId: notification.Id.ToString());
 
-        var results = await _pushService.SendToTokensAsync(message, tokens.Select(t => t.Token).ToList(), cancellationToken);
-        return results.FirstOrDefault() ?? new ChannelSendResult(false, null, "NO_RESULT", "No result from push service");
+        var results = await _pushService.SendToTokensAsync(message, tokenStrings, cancellationToken);
+
+        // Deactivate tokens FCM/Expo report as unregistered, exactly as the
+        // primary send path does (audit BE-29).
+        for (int i = 0; i < results.Count && i < tokenStrings.Count; i++)
+        {
+            if (!results[i].Success && results[i].ErrorCode == "UNREGISTERED")
+                await _pushTokenService.MarkTokenInvalidAsync(tokenStrings[i], cancellationToken);
+        }
+
+        // Success if ANY token delivered, not just the first.
+        return results.FirstOrDefault(r => r.Success)
+            ?? results.FirstOrDefault()
+            ?? new ChannelSendResult(false, null, "NO_RESULT", "No result from push service");
     }
 
     private async Task<ChannelSendResult> RetryWhatsAppAsync(NotificationDelivery delivery, CancellationToken cancellationToken)
@@ -907,6 +1304,21 @@ public class NotificationEngineService : INotificationEngineService
         var truncated = body[..(availableLength - 3)] + "...";
         return actionUrl != null ? $"{truncated} {actionUrl}" : truncated;
     }
+
+    // Routing identifiers that are safe to place in a push payload. Excludes all
+    // business/PII fields (audit BE-15).
+    private static readonly string[] PushDataAllowlist =
+    {
+        "noticeId", "taskId", "commentId", "workflowId", "documentId", "referenceId"
+    };
+
+    private static TimeSpan? GetPushTtl(string type) => type switch
+    {
+        NotificationType.DeadlineToday or NotificationType.DeadlineMissed => TimeSpan.FromHours(12),
+        NotificationType.Deadline1Day => TimeSpan.FromHours(24),
+        NotificationType.Deadline3Day or NotificationType.Deadline7Day => TimeSpan.FromDays(3),
+        _ => null // FCM default (4 weeks)
+    };
 
     private static string GetAndroidChannelId(string notificationType)
     {
@@ -965,6 +1377,14 @@ public class NotificationEngineService : INotificationEngineService
             ? $"https://app.effortlessinsight.com{notification.ActionUrl}"
             : "https://app.effortlessinsight.com";
 
+        // If the one-click unsubscribe token cannot be generated (secret not
+        // configured), fall back to the preferences page so the email footer
+        // stays valid instead of the whole email build throwing (audit BE-30).
+        var unsubscribeToken = GenerateUnsubscribeToken(user.Id);
+        var unsubscribeUrl = unsubscribeToken != null
+            ? $"https://app.effortlessinsight.com/unsubscribe?token={unsubscribeToken}"
+            : "https://app.effortlessinsight.com/settings/notifications";
+
         return $@"
 <!DOCTYPE html>
 <html>
@@ -994,7 +1414,7 @@ public class NotificationEngineService : INotificationEngineService
       <p>You're receiving this because you have notifications enabled.</p>
       <p>
         <a href=""https://app.effortlessinsight.com/settings/notifications"" style=""color: #1e40af;"">Manage Preferences</a> |
-        <a href=""https://app.effortlessinsight.com/unsubscribe?token={GenerateUnsubscribeToken(user.Id)}"" style=""color: #1e40af;"">Unsubscribe</a>
+        <a href=""{unsubscribeUrl}"" style=""color: #1e40af;"">Unsubscribe</a>
       </p>
       <p>© {DateTime.UtcNow.Year} EffortlessInsight. All rights reserved.</p>
     </div>
@@ -1003,10 +1423,34 @@ public class NotificationEngineService : INotificationEngineService
 </html>";
     }
 
-    private string GenerateUnsubscribeToken(Guid userId)
+    /// <summary>
+    /// Resolves the secret used to sign unsubscribe tokens. Prefers a dedicated
+    /// secret so it is not coupled to the JWT signing key (which may be an RSA
+    /// key pair with no symmetric secret at all). Falls back to the JWT symmetric
+    /// secret, then the legacy "Jwt:Key" name for backward compatibility.
+    /// </summary>
+    private string? GetUnsubscribeSecret()
     {
-        // Use HMAC-SHA256 to create a signed, non-guessable token
-        var secret = _configuration["Jwt:Key"] ?? throw new InvalidOperationException("JWT key not configured");
+        var secret = _configuration["Notifications:UnsubscribeSecret"]
+            ?? _configuration["Jwt:Secret"]
+            ?? _configuration["Jwt:Key"];
+        return string.IsNullOrEmpty(secret) ? null : secret;
+    }
+
+    private string? GenerateUnsubscribeToken(Guid userId)
+    {
+        // Use HMAC-SHA256 to create a signed, non-guessable token. If no secret
+        // is configured, degrade gracefully (return null) rather than throwing,
+        // so a missing key cannot break every outgoing email (audit BE-30).
+        var secret = GetUnsubscribeSecret();
+        if (secret == null)
+        {
+            _logger.LogWarning(
+                "Unsubscribe secret not configured (set Notifications:UnsubscribeSecret or Jwt:Secret); " +
+                "omitting one-click unsubscribe link from notification email");
+            return null;
+        }
+
         var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var payload = $"{userId}:{timestamp}";
 
@@ -1040,8 +1484,9 @@ public class NotificationEngineService : INotificationEngineService
             if (!Guid.TryParse(payloadParts[0], out var userId)) return (false, null);
             if (!long.TryParse(payloadParts[1], out var timestamp)) return (false, null);
 
-            // Verify signature
-            var secret = _configuration["Jwt:Key"] ?? throw new InvalidOperationException("JWT key not configured");
+            // Verify signature using the same resolution as generation
+            var secret = GetUnsubscribeSecret();
+            if (secret == null) return (false, null);
             using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
             var expectedSignature = Convert.ToBase64String(hmac.ComputeHash(Encoding.UTF8.GetBytes(payload)));
 

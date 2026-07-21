@@ -49,6 +49,10 @@ public static class NotificationServiceExtensions
         // Note: With Redis backplane, connection state is managed by SignalR itself
         services.AddSingleton<IConnectionManager, InMemoryConnectionManager>();
 
+        // Route Clients.User(...) by the JWT "sub" claim so real-time delivery
+        // works across the Redis backplane (audit BE-11).
+        services.AddSingleton<Microsoft.AspNetCore.SignalR.IUserIdProvider, SignalRUserIdProvider>();
+
         // Background jobs
         services.AddScoped<NotificationJobs>();
 
@@ -81,7 +85,7 @@ public static class NotificationServiceExtensions
     /// </summary>
     public static IEndpointRouteBuilder MapNotificationEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapHub<NotificationHub>("/hubs/notifications");
+        endpoints.MapHub<NotificationHub>("/hubs/notifications").RequireAuthorization();
         return endpoints;
     }
 

@@ -14,6 +14,13 @@ public interface INotificationEngineService
     Task<SendNotificationResponse> SendAsync(SendNotificationRequest request, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Dispatch the channel fan-out for an already-persisted notification. Called
+    /// by the Hangfire queue when Notifications:UseQueue is enabled (audit BE-09).
+    /// Idempotent: skips notifications that already have delivery rows.
+    /// </summary>
+    Task DispatchQueuedNotificationAsync(Guid notificationId, bool overridePreferences, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Send bulk notifications (for scheduled jobs)
     /// </summary>
     Task<BulkNotificationResponse> SendBulkAsync(BulkNotificationRequest request, CancellationToken cancellationToken = default);
@@ -44,6 +51,13 @@ public interface INotificationEngineService
     /// Mark all notifications as read for a user
     /// </summary>
     Task<MarkAllReadResponse> MarkAllAsReadAsync(Guid userId, MarkAllReadRequest request, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Soft-delete a notification for a user. Returns false if it doesn't exist
+    /// or isn't owned by the user. Backs the DELETE /notifications/{id} endpoint
+    /// used by the web and mobile clients.
+    /// </summary>
+    Task<bool> DeleteNotificationAsync(Guid notificationId, Guid userId, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Schedule a notification for future delivery
@@ -140,9 +154,11 @@ public interface IPushTokenService
     Task<List<PushToken>> GetActiveTokensAsync(Guid userId, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Deactivate a push token (e.g., on logout)
+    /// Deactivate a push token (e.g., on logout). Scoped to the owning user so a
+    /// caller cannot deactivate another user's token by value (audit BE-13).
+    /// Returns true if a token owned by the user was deactivated.
     /// </summary>
-    Task DeactivateTokenAsync(string token, CancellationToken cancellationToken = default);
+    Task<bool> DeactivateTokenAsync(string token, Guid userId, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Mark token as invalid (after Firebase returns invalid token error)
@@ -153,6 +169,11 @@ public interface IPushTokenService
     /// Update last used timestamp
     /// </summary>
     Task UpdateLastUsedAsync(string token, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Refresh LastUsedAt for a set of tokens after a successful send (audit BE-21)
+    /// </summary>
+    Task TouchTokensAsync(IEnumerable<string> tokens, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Cleanup old inactive tokens
@@ -174,6 +195,13 @@ public interface INotificationTemplateService
     /// Render template with variables
     /// </summary>
     Task<RenderedTemplate> RenderAsync(string type, string channel, Dictionary<string, object> variables, string language = "en", CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Render a template if one exists (with language → English fallback),
+    /// otherwise return null so the caller can fall back to built-in content
+    /// without exception-driven control flow (audit BE-08).
+    /// </summary>
+    Task<RenderedTemplate?> TryRenderAsync(string type, string channel, Dictionary<string, object> variables, string language = "en", CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Create or update a template

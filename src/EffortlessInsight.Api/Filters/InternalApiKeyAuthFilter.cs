@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
 
@@ -28,22 +30,12 @@ public class InternalApiKeyAuthFilter : IAsyncActionFilter
         // Get configured API key
         var configuredApiKey = _configuration["InternalApi:ApiKey"];
 
-        // In development, if no key is configured, allow requests (with warning)
+        // Fail closed when unconfigured — no Development bypass. A misconfigured
+        // environment must never expose an unauthenticated "send any notification
+        // to any user" endpoint (audit BE-31).
         if (string.IsNullOrEmpty(configuredApiKey))
         {
-            var environment = _configuration["ASPNETCORE_ENVIRONMENT"]
-                ?? Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT");
-
-            if (environment == "Development")
-            {
-                _logger.LogWarning(
-                    "Internal API key not configured. Allowing request in Development mode. " +
-                    "Configure 'InternalApi:ApiKey' for production.");
-                await next();
-                return;
-            }
-
-            _logger.LogError("Internal API key not configured in production");
+            _logger.LogError("Internal API key not configured; rejecting request");
             context.Result = new UnauthorizedObjectResult(new
             {
                 success = false,
@@ -69,8 +61,8 @@ public class InternalApiKeyAuthFilter : IAsyncActionFilter
             return;
         }
 
-        // Validate API key
-        if (!string.Equals(configuredApiKey, providedApiKey.ToString(), StringComparison.Ordinal))
+        // Validate API key with a constant-time comparison (audit BE-31)
+        if (!FixedTimeEquals(configuredApiKey, providedApiKey.ToString()))
         {
             _logger.LogWarning(
                 "Invalid internal API key from {IP}",
@@ -87,5 +79,12 @@ public class InternalApiKeyAuthFilter : IAsyncActionFilter
 
         // API key is valid, proceed
         await next();
+    }
+
+    private static bool FixedTimeEquals(string a, string b)
+    {
+        var ba = Encoding.UTF8.GetBytes(a);
+        var bb = Encoding.UTF8.GetBytes(b);
+        return CryptographicOperations.FixedTimeEquals(ba, bb);
     }
 }

@@ -338,7 +338,12 @@ EffortlessInsight.Api.Jobs.WhatsAppJobsExtensions.ConfigureWhatsAppJobs(app);
 //{
 using var scope = app.Services.CreateScope();
 var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-await dbContext.Database.MigrateAsync();
+// MigrateAsync is relational-only; skip it under a non-relational provider
+// (e.g. the InMemory database used by integration tests).
+if (dbContext.Database.IsRelational())
+{
+    await dbContext.Database.MigrateAsync();
+}
 
 // Seed default workflow template
 var workflowSeeder = scope.ServiceProvider.GetRequiredService<WorkflowTemplateSeeder>();

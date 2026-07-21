@@ -513,6 +513,11 @@ public class NotificationService : INotificationService
 </html>";
     }
 
+    // HTML-encode any user-controlled value before interpolating it into an
+    // email body, so comment text or a crafted display name cannot inject markup
+    // or scripts into the message (audit BE-07).
+    private static string H(string? value) => System.Net.WebUtility.HtmlEncode(value ?? string.Empty);
+
     private static string BuildMentionEmail(Comment comment, Notice notice, ApplicationUser author, ApplicationUser mentionedUser)
     {
         return $@"
@@ -520,11 +525,11 @@ public class NotificationService : INotificationService
 <html>
 <body style='font-family: Arial, sans-serif; line-height: 1.6; color: #333;'>
     <h2>You were mentioned in a comment</h2>
-    <p>Hi {mentionedUser.Name},</p>
-    <p>{author.Name} mentioned you in a comment:</p>
+    <p>Hi {H(mentionedUser.Name)},</p>
+    <p>{H(author.Name)} mentioned you in a comment:</p>
     <div style='background: #f5f5f5; padding: 16px; border-radius: 8px; margin: 16px 0;'>
-        <p style='font-style: italic;'>&quot;{comment.Content}&quot;</p>
-        <p style='font-size: 12px; color: #666;'>Notice: {notice.NoticeType} - {notice.NoticeNumber}</p>
+        <p style='font-style: italic;'>&quot;{H(comment.Content)}&quot;</p>
+        <p style='font-size: 12px; color: #666;'>Notice: {H(notice.NoticeType)} - {H(notice.NoticeNumber)}</p>
     </div>
     <p>Best regards,<br>EffortlessInsight Team</p>
 </body>
@@ -538,15 +543,15 @@ public class NotificationService : INotificationService
 <html>
 <body style='font-family: Arial, sans-serif; line-height: 1.6; color: #333;'>
     <h2>New reply to your comment</h2>
-    <p>Hi {parentAuthor.Name},</p>
-    <p>{replyAuthor.Name} replied to your comment:</p>
+    <p>Hi {H(parentAuthor.Name)},</p>
+    <p>{H(replyAuthor.Name)} replied to your comment:</p>
     <div style='background: #f5f5f5; padding: 16px; border-radius: 8px; margin: 16px 0;'>
         <p style='font-size: 12px; color: #666;'>Your comment:</p>
-        <p style='font-style: italic;'>&quot;{parentComment.Content}&quot;</p>
+        <p style='font-style: italic;'>&quot;{H(parentComment.Content)}&quot;</p>
         <hr style='border: 1px solid #ddd; margin: 12px 0;'>
         <p style='font-size: 12px; color: #666;'>Reply:</p>
-        <p style='font-style: italic;'>&quot;{reply.Content}&quot;</p>
-        <p style='font-size: 12px; color: #666; margin-top: 12px;'>Notice: {notice.NoticeType} - {notice.NoticeNumber}</p>
+        <p style='font-style: italic;'>&quot;{H(reply.Content)}&quot;</p>
+        <p style='font-size: 12px; color: #666; margin-top: 12px;'>Notice: {H(notice.NoticeType)} - {H(notice.NoticeNumber)}</p>
     </div>
     <p>Best regards,<br>EffortlessInsight Team</p>
 </body>

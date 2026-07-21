@@ -129,13 +129,13 @@ public class SubscriptionServiceTests : IDisposable
 
         _planService.GetPlanByCodeAsync("starter").Returns(plan);
 
-        // Act
-        var result = await _sut.StartTrialAsync(org.Id, "starter", 14);
+        // Act — third argument is the billing cycle; trial length comes from the plan
+        var result = await _sut.StartTrialAsync(org.Id, "starter", "monthly");
 
         // Assert
         result.Should().NotBeNull();
         result.Status.Should().Be(SubscriptionStatus.Trialing);
-        result.TrialEnd.Should().BeCloseTo(DateTime.UtcNow.AddDays(14), TimeSpan.FromMinutes(1));
+        result.TrialEnd.Should().BeCloseTo(DateTime.UtcNow.AddDays(plan.TrialDays), TimeSpan.FromMinutes(1));
     }
 
     [Fact]
@@ -149,7 +149,7 @@ public class SubscriptionServiceTests : IDisposable
         _planService.GetPlanByCodeAsync("nonexistent").Returns((SubscriptionPlan?)null);
 
         // Act
-        var act = () => _sut.StartTrialAsync(org.Id, "nonexistent", 14);
+        var act = () => _sut.StartTrialAsync(org.Id, "nonexistent", "monthly");
 
         // Assert
         await act.Should().ThrowAsync<InvalidOperationException>();

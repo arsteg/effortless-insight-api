@@ -1,15 +1,15 @@
 -- Migration: Add Full-Text Search Index for Notices
--- Date: 2026-06-27
+-- Date: 2026-06-27 (column names corrected 2026-06-30 to match current Notices schema)
 -- Description: Creates a GIN index on notice content for efficient full-text search
 
 -- Add a generated tsvector column for full-text search
 ALTER TABLE "Notices"
 ADD COLUMN IF NOT EXISTS "SearchVector" tsvector
 GENERATED ALWAYS AS (
-    setweight(to_tsvector('english', COALESCE("NoticeReference", '')), 'A') ||
+    setweight(to_tsvector('english', COALESCE("NoticeNumber", '')), 'A') ||
     setweight(to_tsvector('english', COALESCE("NoticeType", '')), 'B') ||
-    setweight(to_tsvector('english', COALESCE("NoticeSubType", '')), 'B') ||
-    setweight(to_tsvector('english', COALESCE("SummaryText", '')), 'C') ||
+    setweight(to_tsvector('english', COALESCE("NoticeSubCategory", '')), 'B') ||
+    setweight(to_tsvector('english', COALESCE("Summary", '')), 'C') ||
     setweight(to_tsvector('english', COALESCE("Gstin", '')), 'A')
 ) STORED;
 
@@ -36,9 +36,9 @@ BEGIN
     RETURN QUERY
     SELECT
         n."Id",
-        n."NoticeReference",
-        n."NoticeType",
-        n."SummaryText",
+        n."NoticeNumber"::text,
+        n."NoticeType"::text,
+        n."Summary"::text,
         ts_rank(n."SearchVector", plainto_tsquery('english', p_search_query)) as rank
     FROM "Notices" n
     WHERE n."OrganizationId" = p_organization_id
