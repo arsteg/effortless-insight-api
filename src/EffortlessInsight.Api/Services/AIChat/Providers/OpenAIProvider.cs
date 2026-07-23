@@ -38,15 +38,37 @@ public class OpenAIProvider : IAIProvider
         if (_httpClient.BaseAddress == null)
         {
             _httpClient.BaseAddress = new Uri(_options.OpenAI.BaseUrl);
-            _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {_options.OpenAI.ApiKey}");
+            _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {_options.OpenAI.ResolveApiKey()}");
         }
     }
+
+    private const string MissingKeyMessage =
+        "The AI service is not configured: no OpenAI API key found. " +
+        "Set AIChat:OpenAI:ApiKey in appsettings or the OPENAI_API_KEY environment variable.";
+
+    private bool IsConfigured => !string.IsNullOrWhiteSpace(_options.OpenAI.ResolveApiKey());
 
     public async Task<AICompletionResult> CompleteAsync(
         AICompletionRequest request,
         CancellationToken cancellationToken = default)
     {
         var stopwatch = Stopwatch.StartNew();
+
+        if (!IsConfigured)
+        {
+            _logger.LogError("OpenAI request rejected: {Message}", MissingKeyMessage);
+            return new AICompletionResult(
+                Success: false,
+                Content: string.Empty,
+                InputTokens: 0,
+                OutputTokens: 0,
+                TotalTokens: 0,
+                Model: request.Model ?? DefaultModel,
+                ResponseTimeMs: 0,
+                ErrorCode: "NOT_CONFIGURED",
+                ErrorMessage: MissingKeyMessage
+            );
+        }
 
         try
         {
@@ -126,6 +148,13 @@ public class OpenAIProvider : IAIProvider
         AICompletionRequest request,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        if (!IsConfigured)
+        {
+            _logger.LogError("OpenAI streaming request rejected: {Message}", MissingKeyMessage);
+            yield return new AIStreamChunk(string.Empty, IsComplete: true, ErrorMessage: MissingKeyMessage);
+            yield break;
+        }
+
         var model = request.Model ?? DefaultModel;
         var messages = BuildMessages(request.SystemPrompt, request.Messages);
 
@@ -158,10 +187,14 @@ public class OpenAIProvider : IAIProvider
                 _logger.LogError("OpenAI streaming error: {StatusCode} - {Content}",
                     response.StatusCode, errorContent);
 
+                var errorMessage = response.StatusCode == System.Net.HttpStatusCode.Unauthorized
+                    ? "The AI provider rejected the API key (401 Unauthorized). Check AIChat:OpenAI:ApiKey."
+                    : $"AI provider error: {(int)response.StatusCode} {response.StatusCode}";
+
                 yield return new AIStreamChunk(
                     string.Empty,
                     IsComplete: true,
-                    ErrorMessage: $"API error: {response.StatusCode}"
+                    ErrorMessage: errorMessage
                 );
                 yield break;
             }

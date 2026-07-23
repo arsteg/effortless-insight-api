@@ -39,10 +39,29 @@ public interface IConversationService
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Update a conversation's title.
+    /// </summary>
+    Task<ConversationDto?> UpdateTitleAsync(
+        Guid conversationId,
+        Guid userId,
+        string title,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Delete a conversation.
     /// </summary>
     Task<bool> DeleteConversationAsync(
         Guid conversationId,
+        Guid userId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Remove a user message and everything after it, rewinding the conversation
+    /// so the message can be re-sent with edited content.
+    /// </summary>
+    Task TruncateFromMessageAsync(
+        Guid conversationId,
+        Guid messageId,
         Guid userId,
         CancellationToken cancellationToken = default);
 

@@ -84,6 +84,7 @@ public static class ServiceExtensions
         services.AddScoped<INoticeWorkflowService, NoticeWorkflowService>();
         services.AddScoped<IZipProcessingService, ZipProcessingService>();
         services.AddScoped<INoticeResponseDraftService, NoticeResponseDraftService>();
+        services.AddScoped<INoticeBroadcastService, NoticeBroadcastService>();
 
         // Register workflow engine services
         services.AddScoped<IWorkflowEngineService, WorkflowEngineService>();
@@ -155,6 +156,7 @@ public static class ServiceExtensions
         services.AddScoped<Services.AIChat.IContextRetrievalService, Services.AIChat.ContextRetrievalService>();
         services.AddScoped<Services.AIChat.IConversationMemoryService, Services.AIChat.ConversationMemoryService>();
         services.AddScoped<Services.AIChat.IAIChatService, Services.AIChat.AIChatService>();
+        services.AddScoped<Services.AIChat.IChatRateLimiter, Services.AIChat.ChatRateLimiter>();
         services.AddScoped<Services.AIChat.Providers.IAIProvider, Services.AIChat.Providers.OpenAIProvider>();
 
         return services;
@@ -266,6 +268,21 @@ public static class ServiceExtensions
                 NameClaimType = "name",
                 RoleClaimType = "role"
             };
+
+            // SignalR sends JWT via query string since WebSockets don't support headers
+            options.Events = new JwtBearerEvents
+            {
+                OnMessageReceived = context =>
+                {
+                    var accessToken = context.Request.Query["access_token"];
+                    var path = context.HttpContext.Request.Path;
+                    if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs"))
+                    {
+                        context.Token = accessToken;
+                    }
+                    return Task.CompletedTask;
+                }
+            };
         });
 
         // Add Google OAuth if configured
@@ -318,9 +335,11 @@ public static class ServiceExtensions
             options.InstanceName = "EffortlessInsight:";
         });
 
-        // Register IConnectionMultiplexer for direct Redis access
-        services.AddSingleton<IConnectionMultiplexer>(
-            ConnectionMultiplexer.Connect(redisConnection));
+        // Register IConnectionMultiplexer for direct Redis access with retry support
+        var configOptions = ConfigurationOptions.Parse(redisConnection);
+        configOptions.AbortOnConnectFail = false;
+        services.AddSingleton<IConnectionMultiplexer>(sp =>
+            ConnectionMultiplexer.Connect(configOptions));
 
         return services;
     }
@@ -330,9 +349,11 @@ public static class ServiceExtensions
         var redisConnection = configuration.GetConnectionString("Redis")
             ?? throw new InvalidOperationException("Redis connection string not configured");
 
+        var hangfireConfigOptions = ConfigurationOptions.Parse(redisConnection);
+        hangfireConfigOptions.AbortOnConnectFail = false;
         services.AddHangfire(config =>
         {
-            config.UseRedisStorage(redisConnection, new RedisStorageOptions
+            config.UseRedisStorage(ConnectionMultiplexer.Connect(hangfireConfigOptions), new RedisStorageOptions
             {
                 Prefix = "hangfire:",
                 SucceededListSize = 500,
@@ -436,7 +457,7 @@ public static class ServiceExtensions
         {
             client.BaseAddress = new Uri(aiChatOptions.OpenAI.BaseUrl);
             client.Timeout = TimeSpan.FromMinutes(5); // AI responses can take time
-            client.DefaultRequestHeaders.Add("Authorization", $"Bearer {aiChatOptions.OpenAI.ApiKey}");
+            client.DefaultRequestHeaders.Add("Authorization", $"Bearer {aiChatOptions.OpenAI.ResolveApiKey()}");
             client.DefaultRequestHeaders.Add("Accept", "application/json");
             client.DefaultRequestHeaders.Add("User-Agent", "EffortlessInsight-API/1.0");
         })

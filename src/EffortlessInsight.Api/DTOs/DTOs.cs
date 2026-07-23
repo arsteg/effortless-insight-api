@@ -669,6 +669,7 @@ public record NoticeDto(
     decimal? PenaltyAmount,
     string Status,
     string Priority,
+    string ProcessingStatus,
     int? RiskScore,
     string? RiskLevel,
     string? SummaryEn,

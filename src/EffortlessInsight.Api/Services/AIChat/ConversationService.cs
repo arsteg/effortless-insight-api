@@ -153,6 +153,23 @@ public class ConversationService : IConversationService
         return MapToDetailDto(conversation, messages, hasMore, nextCursor);
     }
 
+    public async Task<ConversationDto?> UpdateTitleAsync(
+        Guid conversationId,
+        Guid userId,
+        string title,
+        CancellationToken cancellationToken = default)
+    {
+        var conversation = await GetConversationEntityAsync(conversationId, userId, cancellationToken);
+        if (conversation == null)
+            return null;
+
+        conversation.Title = title;
+        conversation.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(cancellationToken);
+
+        return MapToDto(conversation, null);
+    }
+
     public async Task<bool> DeleteConversationAsync(
         Guid conversationId,
         Guid userId,
@@ -167,6 +184,64 @@ public class ConversationService : IConversationService
 
         _logger.LogInformation("Deleted conversation {ConversationId}", conversationId);
         return true;
+    }
+
+    public async Task TruncateFromMessageAsync(
+        Guid conversationId,
+        Guid messageId,
+        Guid userId,
+        CancellationToken cancellationToken = default)
+    {
+        var conversation = await GetConversationEntityAsync(conversationId, userId, cancellationToken);
+        if (conversation == null)
+            throw new KeyNotFoundException("Conversation not found");
+
+        var target = await _db.NoticeMessages
+            .Where(m => m.Id == messageId && m.ConversationId == conversationId)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (target == null)
+            throw new KeyNotFoundException("Message not found");
+
+        if (target.Role != MessageRole.User)
+            throw new InvalidOperationException("Only user messages can be edited");
+
+        // The edited message and everything after it get removed; the caller
+        // re-sends the edited content as a new message.
+        var toRemove = await _db.NoticeMessages
+            .Where(m => m.ConversationId == conversationId)
+            .Where(m => m.CreatedAt > target.CreatedAt || m.Id == target.Id)
+            .ToListAsync(cancellationToken);
+
+        // Audit logs reference messages without cascade delete — detach them so the
+        // audit trail survives the truncation. (Feedback and summaries cascade.)
+        var removedIds = toRemove.Select(m => m.Id).ToList();
+        var auditLogs = await _db.AIAuditLogs
+            .Where(a => a.MessageId != null && removedIds.Contains(a.MessageId.Value))
+            .ToListAsync(cancellationToken);
+        foreach (var log in auditLogs)
+        {
+            log.MessageId = null;
+        }
+
+        _db.NoticeMessages.RemoveRange(toRemove);
+
+        // Rewind conversation stats
+        conversation.MessageCount = Math.Max(0, conversation.MessageCount - toRemove.Count);
+        conversation.TotalTokens = Math.Max(0, conversation.TotalTokens - toRemove.Sum(m => m.TokenCount ?? 0));
+        conversation.LastMessageAt = await _db.NoticeMessages
+            .Where(m => m.ConversationId == conversationId)
+            .Where(m => !removedIds.Contains(m.Id))
+            .OrderByDescending(m => m.CreatedAt)
+            .Select(m => (DateTime?)m.CreatedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+        conversation.UpdatedAt = DateTime.UtcNow;
+
+        await _db.SaveChangesAsync(cancellationToken);
+
+        _logger.LogInformation(
+            "Truncated {Count} messages from conversation {ConversationId} for edit-and-rewind",
+            toRemove.Count, conversationId);
     }
 
     public async Task<MessageDto> AddUserMessageAsync(

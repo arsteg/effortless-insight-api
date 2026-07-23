@@ -291,12 +291,16 @@ if (app.Environment.IsProduction())
 app.UseAuthentication();
 app.UseAuthorization();
 
+// Tenant context (must come after authentication so the org_id claim is available)
+app.UseTenantContext();
+
 // Subscription enforcement (must come after authentication/authorization)
 app.UseSubscriptionEnforcement();
 
 app.MapControllers();
 app.MapHealthChecks("/health");
 app.MapNotificationEndpoints();
+app.MapNoticeEndpoints();
 
 // Hangfire Dashboard (protected in production)
 app.UseHangfireDashboard("/hangfire", new DashboardOptions

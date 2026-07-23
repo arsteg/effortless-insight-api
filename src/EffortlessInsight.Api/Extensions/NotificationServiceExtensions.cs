@@ -49,10 +49,6 @@ public static class NotificationServiceExtensions
         // Note: With Redis backplane, connection state is managed by SignalR itself
         services.AddSingleton<IConnectionManager, InMemoryConnectionManager>();
 
-        // Route Clients.User(...) by the JWT "sub" claim so real-time delivery
-        // works across the Redis backplane (audit BE-11).
-        services.AddSingleton<Microsoft.AspNetCore.SignalR.IUserIdProvider, SignalRUserIdProvider>();
-
         // Background jobs
         services.AddScoped<NotificationJobs>();
 
@@ -74,6 +70,7 @@ public static class NotificationServiceExtensions
             signalRBuilder.AddStackExchangeRedis(redisConnectionString, options =>
             {
                 options.Configuration.ChannelPrefix = StackExchange.Redis.RedisChannel.Literal("EffortlessInsight:SignalR:");
+                options.Configuration.AbortOnConnectFail = false;
             });
         }
 
@@ -85,7 +82,7 @@ public static class NotificationServiceExtensions
     /// </summary>
     public static IEndpointRouteBuilder MapNotificationEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapHub<NotificationHub>("/hubs/notifications").RequireAuthorization();
+        endpoints.MapHub<NotificationHub>("/hubs/notifications");
         return endpoints;
     }
 
@@ -95,6 +92,15 @@ public static class NotificationServiceExtensions
     public static IEndpointRouteBuilder MapAIChatEndpoints(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapHub<Hubs.ChatHub>("/hubs/chat");
+        return endpoints;
+    }
+
+    /// <summary>
+    /// Map notice endpoints (SignalR hub for real-time notice status updates)
+    /// </summary>
+    public static IEndpointRouteBuilder MapNoticeEndpoints(this IEndpointRouteBuilder endpoints)
+    {
+        endpoints.MapHub<Hubs.NoticeHub>("/hubs/notices");
         return endpoints;
     }
 }

@@ -21,12 +21,20 @@ public class TenantContextMiddleware
 
     public async Task InvokeAsync(HttpContext context, ITenantContext tenantContext)
     {
-        // Try to get organization ID from header
-        if (context.Request.Headers.TryGetValue("X-Organization-Id", out var orgIdHeader) &&
+        // Prefer the org_id claim from the authenticated JWT — it is signed and
+        // cannot be spoofed by the client, unlike the X-Organization-Id header.
+        var orgClaim = context.User?.FindFirst("org_id")?.Value;
+        if (!string.IsNullOrEmpty(orgClaim) && Guid.TryParse(orgClaim, out var claimOrgId))
+        {
+            tenantContext.SetOrganizationId(claimOrgId);
+            _logger.LogDebug("Tenant context set from claim to organization {OrganizationId}", claimOrgId);
+        }
+        // Fall back to the X-Organization-Id header (used by performance tests)
+        else if (context.Request.Headers.TryGetValue("X-Organization-Id", out var orgIdHeader) &&
             Guid.TryParse(orgIdHeader.ToString(), out var organizationId))
         {
             tenantContext.SetOrganizationId(organizationId);
-            _logger.LogDebug("Tenant context set to organization {OrganizationId}", organizationId);
+            _logger.LogDebug("Tenant context set from header to organization {OrganizationId}", organizationId);
         }
 
         await _next(context);

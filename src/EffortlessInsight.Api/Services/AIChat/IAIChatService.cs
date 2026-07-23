@@ -26,6 +26,17 @@ public interface IAIChatService
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Edit a previously sent user message: rewinds the conversation to that point,
+    /// re-sends the edited content, and streams a new AI response.
+    /// </summary>
+    IAsyncEnumerable<ChatStreamEvent> EditMessageStreamAsync(
+        Guid conversationId,
+        Guid messageId,
+        Guid userId,
+        SendMessageRequest request,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Regenerate the last assistant message.
     /// </summary>
     Task<MessageDto> RegenerateMessageAsync(
