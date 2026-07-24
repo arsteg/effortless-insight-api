@@ -1,9 +1,14 @@
+using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.DTOs;
 using EffortlessInsight.Api.Filters;
 using EffortlessInsight.Api.Services.Notifications;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace EffortlessInsight.Api.Controllers;
 
@@ -101,6 +106,22 @@ public class NotificationsController : ControllerBase
         var userId = GetCurrentUserId();
         var result = await _notificationEngine.MarkAllAsReadAsync(userId, request ?? new MarkAllReadRequest(null, null));
         return Ok(new ApiResponse<MarkAllReadResponse>(true, result));
+    }
+
+    /// <summary>
+    /// Delete (soft-delete) a notification. Used by the web and mobile
+    /// notification centres, whose delete calls previously hit a missing route.
+    /// </summary>
+    [HttpDelete("{notificationId:guid}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> DeleteNotification(Guid notificationId)
+    {
+        var userId = GetCurrentUserId();
+        var deleted = await _notificationEngine.DeleteNotificationAsync(notificationId, userId);
+        return deleted
+            ? NoContent()
+            : NotFound(new ApiErrorResponse(false, "NOT_FOUND", "Notification not found"));
     }
 
     private Guid GetCurrentUserId() =>
@@ -210,7 +231,11 @@ public class PushTokensController : ControllerBase
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     public async Task<IActionResult> DeactivateToken(string token)
     {
-        await _pushTokenService.DeactivateTokenAsync(token);
+        // Scoped to the current user so one user cannot deactivate another's
+        // token by value (audit BE-13). Always returns 204 so the endpoint does
+        // not reveal whether a token exists.
+        var userId = GetCurrentUserId();
+        await _pushTokenService.DeactivateTokenAsync(token, userId);
         return NoContent();
     }
 
@@ -288,18 +313,162 @@ public class NotificationWebhooksController : ControllerBase
     private readonly IDeliveryTrackingService _deliveryService;
     private readonly INotificationEngineService _notificationEngine;
     private readonly INotificationPreferencesService _preferencesService;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<NotificationWebhooksController> _logger;
+
+    private static readonly JsonSerializerOptions WebhookJsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true
+    };
 
     public NotificationWebhooksController(
         IDeliveryTrackingService deliveryService,
         INotificationEngineService notificationEngine,
         INotificationPreferencesService preferencesService,
+        IConfiguration configuration,
         ILogger<NotificationWebhooksController> logger)
     {
         _deliveryService = deliveryService;
         _notificationEngine = notificationEngine;
         _preferencesService = preferencesService;
+        _configuration = configuration;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// Resend email delivery/open/click/bounce webhook (audit BE-25). Feeds the
+    /// delivery tracking service so DeliveredAt/OpenedAt/ClickedAt and the
+    /// metrics dashboard are populated.
+    /// </summary>
+    [AllowAnonymous]
+    [HttpPost("resend")]
+    public async Task<IActionResult> ResendWebhook(CancellationToken cancellationToken)
+    {
+        string body;
+        using (var reader = new StreamReader(Request.Body, Encoding.UTF8, leaveOpen: true))
+        {
+            body = await reader.ReadToEndAsync(cancellationToken);
+        }
+
+        // Verify the Svix signature when a secret is configured; reject on
+        // mismatch. If no secret is set, accept but warn (webhook not yet locked
+        // down) rather than silently dropping events.
+        var secret = _configuration["Resend:WebhookSecret"];
+        if (!string.IsNullOrEmpty(secret))
+        {
+            if (!VerifySvixSignature(secret, Request.Headers, body))
+            {
+                _logger.LogWarning("Resend webhook signature verification failed");
+                return Unauthorized();
+            }
+        }
+        else
+        {
+            _logger.LogWarning("Resend webhook secret not configured; accepting event unverified");
+        }
+
+        ResendWebhookEvent? evt;
+        try
+        {
+            evt = JsonSerializer.Deserialize<ResendWebhookEvent>(body, WebhookJsonOptions);
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex, "Malformed Resend webhook payload");
+            return BadRequest();
+        }
+
+        var messageId = evt?.Data?.EmailId;
+        if (evt == null || string.IsNullOrEmpty(messageId))
+            return Ok(); // nothing actionable
+
+        var timestamp = evt.CreatedAt ?? DateTime.UtcNow;
+
+        switch (evt.Type)
+        {
+            case "email.delivered":
+                await _deliveryService.UpdateStatusAsync(NotificationChannel.Email, messageId, DeliveryStatus.Delivered, timestamp, cancellationToken: cancellationToken);
+                break;
+            case "email.opened":
+                await _deliveryService.UpdateStatusAsync(NotificationChannel.Email, messageId, DeliveryStatus.Opened, timestamp, cancellationToken: cancellationToken);
+                break;
+            case "email.clicked":
+                await _deliveryService.RecordClickAsync(NotificationChannel.Email, messageId, evt.Data?.Click?.Link, cancellationToken);
+                break;
+            case "email.bounced":
+                await _deliveryService.UpdateStatusAsync(NotificationChannel.Email, messageId, DeliveryStatus.Bounced, timestamp, "bounced", cancellationToken);
+                break;
+            case "email.complained":
+                await _deliveryService.UpdateStatusAsync(NotificationChannel.Email, messageId, DeliveryStatus.Failed, timestamp, "spam_complaint", cancellationToken);
+                break;
+            default:
+                _logger.LogDebug("Ignoring Resend event {Type}", evt.Type);
+                break;
+        }
+
+        return Ok();
+    }
+
+    /// <summary>
+    /// Verifies a Svix-style webhook signature (used by Resend). Signs
+    /// "{id}.{timestamp}.{body}" with the base64 secret and compares against the
+    /// space-separated v1 signatures in the svix-signature header.
+    /// </summary>
+    private static bool VerifySvixSignature(string secret, IHeaderDictionary headers, string body)
+    {
+        var id = headers["svix-id"].ToString();
+        var timestamp = headers["svix-timestamp"].ToString();
+        var signatureHeader = headers["svix-signature"].ToString();
+
+        if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(timestamp) || string.IsNullOrEmpty(signatureHeader))
+            return false;
+
+        try
+        {
+            var key = secret.StartsWith("whsec_", StringComparison.Ordinal)
+                ? Convert.FromBase64String(secret["whsec_".Length..])
+                : Encoding.UTF8.GetBytes(secret);
+
+            var signedContent = $"{id}.{timestamp}.{body}";
+            using var hmac = new HMACSHA256(key);
+            var expected = Convert.ToBase64String(hmac.ComputeHash(Encoding.UTF8.GetBytes(signedContent)));
+
+            // Header is like "v1,<sig> v1,<sig2>"; any match is acceptable.
+            foreach (var part in signatureHeader.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var sig = part.Contains(',') ? part[(part.IndexOf(',') + 1)..] : part;
+                if (CryptographicOperations.FixedTimeEquals(
+                        Encoding.UTF8.GetBytes(sig), Encoding.UTF8.GetBytes(expected)))
+                {
+                    return true;
+                }
+            }
+        }
+        catch
+        {
+            return false;
+        }
+
+        return false;
+    }
+
+    private sealed record ResendWebhookEvent
+    {
+        [JsonPropertyName("type")] public string? Type { get; init; }
+        [JsonPropertyName("created_at")] public DateTime? CreatedAt { get; init; }
+        [JsonPropertyName("data")] public ResendWebhookData? Data { get; init; }
+    }
+
+    private sealed record ResendWebhookData
+    {
+        [JsonPropertyName("email_id")] public string? EmailId { get; init; }
+        [JsonPropertyName("click")] public ResendWebhookClick? Click { get; init; }
+    }
+
+    private sealed record ResendWebhookClick
+    {
+        [JsonPropertyName("link")] public string? Link { get; init; }
     }
 
     /// <summary>

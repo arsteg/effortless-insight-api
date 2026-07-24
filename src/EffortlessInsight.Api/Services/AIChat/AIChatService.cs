@@ -21,6 +21,7 @@ public class AIChatService : IAIChatService
     private readonly IContextRetrievalService _contextRetrieval;
     private readonly IConversationMemoryService _memoryService;
     private readonly IAIProvider _aiProvider;
+    private readonly IChatRateLimiter _rateLimiter;
     private readonly ApplicationDbContext _db;
     private readonly ITenantContext _tenantContext;
     private readonly AIChatOptions _options;
@@ -32,6 +33,7 @@ public class AIChatService : IAIChatService
         IContextRetrievalService contextRetrieval,
         IConversationMemoryService memoryService,
         IAIProvider aiProvider,
+        IChatRateLimiter rateLimiter,
         ApplicationDbContext db,
         ITenantContext tenantContext,
         IOptions<AIChatOptions> options,
@@ -42,6 +44,7 @@ public class AIChatService : IAIChatService
         _contextRetrieval = contextRetrieval;
         _memoryService = memoryService;
         _aiProvider = aiProvider;
+        _rateLimiter = rateLimiter;
         _db = db;
         _tenantContext = tenantContext;
         _options = options.Value;
@@ -54,6 +57,9 @@ public class AIChatService : IAIChatService
         SendMessageRequest request,
         CancellationToken cancellationToken = default)
     {
+        // 0. Enforce rate limits before doing any work
+        await _rateLimiter.EnforceAsync(userId, cancellationToken);
+
         // 1. Add user message
         var userMessage = await _conversationService.AddUserMessageAsync(
             conversationId, userId, request.Message, cancellationToken);
@@ -111,6 +117,10 @@ public class AIChatService : IAIChatService
         SendMessageRequest request,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        // 0. Enforce rate limits before saving the user message or calling the AI.
+        // Throws ChatRateLimitExceededException, handled by the controller.
+        await _rateLimiter.EnforceAsync(userId, cancellationToken);
+
         // 1. Add user message
         var userMessage = await _conversationService.AddUserMessageAsync(
             conversationId, userId, request.Message, cancellationToken);
@@ -162,6 +172,32 @@ public class AIChatService : IAIChatService
 
         await foreach (var chunk in _aiProvider.StreamCompletionAsync(aiRequest, cancellationToken))
         {
+            // Error chunks also have IsComplete=true, so this check must come first
+            if (!string.IsNullOrEmpty(chunk.ErrorMessage))
+            {
+                startTime.Stop();
+                _logger.LogError(
+                    "AI provider error streaming conversation {ConversationId}: {Error}",
+                    conversationId, chunk.ErrorMessage);
+
+                var errorResult = new AICompletionResult(
+                    Success: false,
+                    Content: contentBuilder.ToString(),
+                    InputTokens: contextTokens,
+                    OutputTokens: 0,
+                    TotalTokens: contextTokens,
+                    Model: _aiProvider.DefaultModel,
+                    ResponseTimeMs: (int)startTime.ElapsedMilliseconds,
+                    ErrorCode: "PROVIDER_ERROR",
+                    ErrorMessage: chunk.ErrorMessage);
+
+                await _conversationService.AddAssistantMessageAsync(
+                    conversationId, errorResult, null, cancellationToken);
+
+                yield return new ChatStreamEvent(ChatEventType.Error, chunk.ErrorMessage);
+                yield break;
+            }
+
             if (chunk.IsComplete)
             {
                 // 6. Save completed message
@@ -195,10 +231,27 @@ public class AIChatService : IAIChatService
                 contentBuilder.Append(chunk.Content);
                 yield return new ChatStreamEvent(ChatEventType.ContentChunk, chunk.Content);
             }
-            else if (!string.IsNullOrEmpty(chunk.ErrorMessage))
-            {
-                yield return new ChatStreamEvent(ChatEventType.Error, chunk.ErrorMessage);
-            }
+        }
+    }
+
+    public async IAsyncEnumerable<ChatStreamEvent> EditMessageStreamAsync(
+        Guid conversationId,
+        Guid messageId,
+        Guid userId,
+        SendMessageRequest request,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        // Rate-limit before rewinding any history (StreamMessageAsync checks again; harmless)
+        await _rateLimiter.EnforceAsync(userId, cancellationToken);
+
+        // Rewind: remove the edited message and everything after it
+        await _conversationService.TruncateFromMessageAsync(
+            conversationId, messageId, userId, cancellationToken);
+
+        // Re-send the edited content through the normal streaming flow
+        await foreach (var evt in StreamMessageAsync(conversationId, userId, request, cancellationToken))
+        {
+            yield return evt;
         }
     }
 
@@ -208,6 +261,9 @@ public class AIChatService : IAIChatService
         Guid userId,
         CancellationToken cancellationToken = default)
     {
+        // Enforce rate limits before doing any work
+        await _rateLimiter.EnforceAsync(userId, cancellationToken);
+
         // Get the context
         var context = await _contextRetrieval.GetContextAsync(conversationId, cancellationToken);
 

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.DTOs;
@@ -716,6 +717,70 @@ public class NotificationJobs
     }
 
     /// <summary>
+    /// Poll Expo push receipts and deactivate tokens Expo reports as
+    /// DeviceNotRegistered (audit BE-25). Complements the immediate ticket
+    /// handling at send time by catching devices that uninstalled after delivery.
+    /// </summary>
+    [AutomaticRetry(Attempts = 1)]
+    [Queue("low")]
+    public async Task PollExpoReceiptsAsync()
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var pushService = scope.ServiceProvider.GetRequiredService<IPushChannelService>();
+        var pushTokenService = scope.ServiceProvider.GetRequiredService<IPushTokenService>();
+
+        // Give Expo time to generate receipts, but don't look back indefinitely.
+        var windowStart = DateTime.UtcNow.AddHours(-24);
+        var windowEnd = DateTime.UtcNow.AddMinutes(-15);
+
+        var candidates = await dbContext.NotificationDeliveries
+            .Where(d => d.Channel == NotificationChannel.Push
+                        && d.CreatedAt >= windowStart && d.CreatedAt <= windowEnd)
+            .OrderBy(d => d.CreatedAt)
+            .Take(200)
+            .ToListAsync();
+
+        var processed = 0;
+        foreach (var delivery in candidates)
+        {
+            if (!delivery.Metadata.TryGetValue("expoTickets", out var ticketsObj))
+                continue;
+            if (delivery.Metadata.TryGetValue("expoReceiptsChecked", out var checkedObj)
+                && string.Equals(checkedObj?.ToString(), "true", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            Dictionary<string, string>? ticketMap = null;
+            try
+            {
+                ticketMap = JsonSerializer.Deserialize<Dictionary<string, string>>(JsonSerializer.Serialize(ticketsObj));
+            }
+            catch (JsonException) { /* corrupt metadata — mark checked below */ }
+
+            if (ticketMap is { Count: > 0 })
+            {
+                var receipts = await pushService.CheckExpoReceiptsAsync(ticketMap.Keys);
+                foreach (var (ticketId, token) in ticketMap)
+                {
+                    if (receipts.TryGetValue(ticketId, out var receipt) && !receipt.Ok
+                        && string.Equals(receipt.Error, "DeviceNotRegistered", StringComparison.OrdinalIgnoreCase))
+                    {
+                        await pushTokenService.MarkTokenInvalidAsync(token);
+                    }
+                }
+            }
+
+            delivery.Metadata["expoReceiptsChecked"] = true;
+            // jsonb dictionary mutated in place — mark the property so EF writes it.
+            dbContext.Entry(delivery).Property(d => d.Metadata).IsModified = true;
+            processed++;
+        }
+
+        await dbContext.SaveChangesAsync();
+        _logger.LogInformation("Expo receipt poll processed {Count} deliveries", processed);
+    }
+
+    /// <summary>
     /// Send task reminder notifications (GAP-TASK-002)
     /// </summary>
     [AutomaticRetry(Attempts = 3)]
@@ -982,5 +1047,11 @@ public static class NotificationJobsExtensions
             "notifications-task-reminders",
             job => job.SendTaskRemindersAsync(),
             "30 3 * * *");
+
+        // Poll Expo push receipts every 20 minutes (audit BE-25)
+        RecurringJob.AddOrUpdate<NotificationJobs>(
+            "notifications-expo-receipts",
+            job => job.PollExpoReceiptsAsync(),
+            "*/20 * * * *");
     }
 }

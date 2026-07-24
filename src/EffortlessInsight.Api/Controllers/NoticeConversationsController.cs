@@ -199,6 +199,78 @@ public class ConversationMessagesController : ControllerBase
         return userId;
     }
 
+    private static readonly JsonSerializerOptions StreamJsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+    };
+
+    /// <summary>
+    /// Get a conversation with messages.
+    /// </summary>
+    [HttpGet]
+    [ProducesResponseType(typeof(ApiResponse<ConversationDetailDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetConversation(
+        Guid conversationId,
+        [FromQuery] int messageLimit = 50,
+        [FromQuery] string? cursor = null,
+        CancellationToken cancellationToken = default)
+    {
+        var userId = GetUserId();
+        var result = await _conversationService.GetConversationAsync(
+            conversationId, userId, messageLimit, cursor, cancellationToken);
+
+        if (result == null)
+            return NotFound(new ApiErrorResponse(false, "NOT_FOUND", "Conversation not found"));
+
+        return Ok(new ApiResponse<ConversationDetailDto>(true, result));
+    }
+
+    /// <summary>
+    /// Update a conversation (rename).
+    /// </summary>
+    [HttpPatch]
+    [ProducesResponseType(typeof(ApiResponse<ConversationDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> UpdateConversation(
+        Guid conversationId,
+        [FromBody] UpdateConversationRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var userId = GetUserId();
+
+        if (string.IsNullOrWhiteSpace(request.Title))
+            return BadRequest(new ApiErrorResponse(false, "INVALID_TITLE", "Title cannot be empty"));
+
+        var result = await _conversationService.UpdateTitleAsync(
+            conversationId, userId, request.Title.Trim(), cancellationToken);
+
+        if (result == null)
+            return NotFound(new ApiErrorResponse(false, "NOT_FOUND", "Conversation not found"));
+
+        return Ok(new ApiResponse<ConversationDto>(true, result));
+    }
+
+    /// <summary>
+    /// Delete a conversation.
+    /// </summary>
+    [HttpDelete]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> DeleteConversation(
+        Guid conversationId,
+        CancellationToken cancellationToken = default)
+    {
+        var userId = GetUserId();
+        var deleted = await _conversationService.DeleteConversationAsync(
+            conversationId, userId, cancellationToken);
+
+        if (!deleted)
+            return NotFound(new ApiErrorResponse(false, "NOT_FOUND", "Conversation not found"));
+
+        return NoContent();
+    }
+
     /// <summary>
     /// Send a message and get AI response (streaming via SSE).
     /// </summary>
@@ -220,27 +292,89 @@ public class ConversationMessagesController : ControllerBase
             await foreach (var evt in _aiChatService.StreamMessageAsync(
                 conversationId, userId, request, cancellationToken))
             {
-                var json = JsonSerializer.Serialize(evt, new JsonSerializerOptions
-                {
-                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-                });
+                var json = JsonSerializer.Serialize(evt, StreamJsonOptions);
                 await Response.WriteAsync($"data: {json}\n\n", cancellationToken);
                 await Response.Body.FlushAsync(cancellationToken);
             }
+
+            await Response.WriteAsync("data: [DONE]\n\n", cancellationToken);
+        }
+        catch (ChatRateLimitExceededException ex)
+        {
+            var errorEvent = new ChatStreamEvent(ChatEventType.Error, ex.Message);
+            var json = JsonSerializer.Serialize(errorEvent, StreamJsonOptions);
+            await Response.WriteAsync($"data: {json}\n\n", cancellationToken);
         }
         catch (KeyNotFoundException ex)
         {
             var errorEvent = new ChatStreamEvent(ChatEventType.Error, ex.Message);
-            var json = JsonSerializer.Serialize(errorEvent);
+            var json = JsonSerializer.Serialize(errorEvent, StreamJsonOptions);
             await Response.WriteAsync($"data: {json}\n\n", cancellationToken);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error streaming message for conversation {ConversationId}", conversationId);
             var errorEvent = new ChatStreamEvent(ChatEventType.Error, "An error occurred processing your message");
-            var json = JsonSerializer.Serialize(errorEvent);
+            var json = JsonSerializer.Serialize(errorEvent, StreamJsonOptions);
             await Response.WriteAsync($"data: {json}\n\n", cancellationToken);
         }
+    }
+
+    /// <summary>
+    /// Edit a user message: rewinds the conversation to that message and streams
+    /// a new AI response for the edited content (SSE).
+    /// </summary>
+    [HttpPost("messages/{messageId:guid}/edit")]
+    [Produces("text/event-stream")]
+    public async Task EditMessage(
+        Guid conversationId,
+        Guid messageId,
+        [FromBody] SendMessageRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        Response.ContentType = "text/event-stream";
+        Response.Headers.CacheControl = "no-cache";
+        Response.Headers.Connection = "keep-alive";
+
+        var userId = GetUserId();
+
+        try
+        {
+            await foreach (var evt in _aiChatService.EditMessageStreamAsync(
+                conversationId, messageId, userId, request, cancellationToken))
+            {
+                var json = JsonSerializer.Serialize(evt, StreamJsonOptions);
+                await Response.WriteAsync($"data: {json}\n\n", cancellationToken);
+                await Response.Body.FlushAsync(cancellationToken);
+            }
+
+            await Response.WriteAsync("data: [DONE]\n\n", cancellationToken);
+        }
+        catch (ChatRateLimitExceededException ex)
+        {
+            await WriteErrorEventAsync(ex.Message, cancellationToken);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            await WriteErrorEventAsync(ex.Message, cancellationToken);
+        }
+        catch (InvalidOperationException ex)
+        {
+            await WriteErrorEventAsync(ex.Message, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error editing message {MessageId} in conversation {ConversationId}",
+                messageId, conversationId);
+            await WriteErrorEventAsync("An error occurred processing your message", cancellationToken);
+        }
+    }
+
+    private async Task WriteErrorEventAsync(string message, CancellationToken cancellationToken)
+    {
+        var errorEvent = new ChatStreamEvent(ChatEventType.Error, message);
+        var json = JsonSerializer.Serialize(errorEvent, StreamJsonOptions);
+        await Response.WriteAsync($"data: {json}\n\n", cancellationToken);
     }
 
     /// <summary>
@@ -265,6 +399,12 @@ public class ConversationMessagesController : ControllerBase
         catch (KeyNotFoundException ex)
         {
             return NotFound(new ApiErrorResponse(false, "NOT_FOUND", ex.Message));
+        }
+        catch (ChatRateLimitExceededException ex)
+        {
+            Response.Headers.RetryAfter = ex.RetryAfterSeconds.ToString();
+            return StatusCode(StatusCodes.Status429TooManyRequests,
+                new ApiErrorResponse(false, "RATE_LIMITED", ex.Message));
         }
     }
 
@@ -320,6 +460,12 @@ public class ConversationMessagesController : ControllerBase
         catch (InvalidOperationException ex)
         {
             return BadRequest(new ApiErrorResponse(false, "INVALID_OPERATION", ex.Message));
+        }
+        catch (ChatRateLimitExceededException ex)
+        {
+            Response.Headers.RetryAfter = ex.RetryAfterSeconds.ToString();
+            return StatusCode(StatusCodes.Status429TooManyRequests,
+                new ApiErrorResponse(false, "RATE_LIMITED", ex.Message));
         }
     }
 

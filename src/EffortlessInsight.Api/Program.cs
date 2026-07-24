@@ -291,12 +291,16 @@ if (app.Environment.IsProduction())
 app.UseAuthentication();
 app.UseAuthorization();
 
+// Tenant context (must come after authentication so the org_id claim is available)
+app.UseTenantContext();
+
 // Subscription enforcement (must come after authentication/authorization)
 app.UseSubscriptionEnforcement();
 
 app.MapControllers();
 app.MapHealthChecks("/health");
 app.MapNotificationEndpoints();
+app.MapNoticeEndpoints();
 
 // Hangfire Dashboard (protected in production)
 app.UseHangfireDashboard("/hangfire", new DashboardOptions
@@ -338,7 +342,12 @@ EffortlessInsight.Api.Jobs.WhatsAppJobsExtensions.ConfigureWhatsAppJobs(app);
 //{
 using var scope = app.Services.CreateScope();
 var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-await dbContext.Database.MigrateAsync();
+// MigrateAsync is relational-only; skip it under a non-relational provider
+// (e.g. the InMemory database used by integration tests).
+if (dbContext.Database.IsRelational())
+{
+    await dbContext.Database.MigrateAsync();
+}
 
 // Seed default workflow template
 var workflowSeeder = scope.ServiceProvider.GetRequiredService<WorkflowTemplateSeeder>();

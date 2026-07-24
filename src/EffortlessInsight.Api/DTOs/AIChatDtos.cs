@@ -76,6 +76,10 @@ public record CreateConversationRequest(
     string? Title
 );
 
+public record UpdateConversationRequest(
+    string Title
+);
+
 public record SendMessageRequest(
     string Message,
     bool Stream = true

@@ -249,6 +249,13 @@ public static class NotificationChannel
     public const string WhatsApp = "whatsapp";
     public const string InApp = "inApp";
 
+    /// <summary>
+    /// Canonical channel for the shared, channel-agnostic notification content
+    /// (title/body) rendered once and used across channels. Not a delivery
+    /// channel, so it is intentionally excluded from <see cref="All"/>.
+    /// </summary>
+    public const string Default = "default";
+
     public static readonly string[] All = [Email, Sms, Push, WhatsApp, InApp];
 }
 

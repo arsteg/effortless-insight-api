@@ -70,6 +70,7 @@ public static class NotificationServiceExtensions
             signalRBuilder.AddStackExchangeRedis(redisConnectionString, options =>
             {
                 options.Configuration.ChannelPrefix = StackExchange.Redis.RedisChannel.Literal("EffortlessInsight:SignalR:");
+                options.Configuration.AbortOnConnectFail = false;
             });
         }
 
@@ -91,6 +92,15 @@ public static class NotificationServiceExtensions
     public static IEndpointRouteBuilder MapAIChatEndpoints(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapHub<Hubs.ChatHub>("/hubs/chat");
+        return endpoints;
+    }
+
+    /// <summary>
+    /// Map notice endpoints (SignalR hub for real-time notice status updates)
+    /// </summary>
+    public static IEndpointRouteBuilder MapNoticeEndpoints(this IEndpointRouteBuilder endpoints)
+    {
+        endpoints.MapHub<Hubs.NoticeHub>("/hubs/notices");
         return endpoints;
     }
 }

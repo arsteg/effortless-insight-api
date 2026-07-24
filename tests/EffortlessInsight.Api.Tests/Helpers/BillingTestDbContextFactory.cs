@@ -490,5 +490,57 @@ public class TestableApplicationDbContext : ApplicationDbContext
         modelBuilder.Ignore<EscalationAction>();
         modelBuilder.Ignore<WorkflowCondition>();
         modelBuilder.Ignore<AssigneeMetrics>();
+
+        // Catch-all: give every complex property (dictionaries, lists of complex
+        // types, value objects) a JSON value converter so the InMemory provider
+        // can map it — npgsql stores these as jsonb in production. This prevents
+        // the recurring per-entity drift where a newly added complex property that
+        // isn't registered above breaks EnsureCreated() for the whole suite
+        // (e.g. GstExtensionEvent.EventData, NoticeMessage.Citations). Properties
+        // already given an explicit converter above are left untouched. EF skips
+        // converters for null, so nullable properties keep null semantics.
+        foreach (var entityType in modelBuilder.Model.GetEntityTypes())
+        {
+            foreach (var property in entityType.GetProperties())
+            {
+                if (property.GetValueConverter() != null)
+                    continue;
+                if (NeedsJsonConversion(property.ClrType))
+                    property.SetValueConverter(BuildJsonConverter(property.ClrType));
+            }
+        }
+    }
+
+    private static readonly HashSet<Type> NativelyMappedTypes = new()
+    {
+        typeof(string), typeof(bool), typeof(byte), typeof(sbyte), typeof(short), typeof(ushort),
+        typeof(int), typeof(uint), typeof(long), typeof(ulong), typeof(float), typeof(double),
+        typeof(decimal), typeof(char), typeof(DateTime), typeof(DateTimeOffset), typeof(TimeSpan),
+        typeof(DateOnly), typeof(TimeOnly), typeof(Guid), typeof(byte[])
+    };
+
+    private static bool NeedsJsonConversion(Type clrType)
+    {
+        var underlying = Nullable.GetUnderlyingType(clrType) ?? clrType;
+        if (NativelyMappedTypes.Contains(underlying) || underlying.IsEnum)
+            return false;
+        // Complex types EF can't map to a scalar column: custom classes and
+        // generic collections (List<T>, Dictionary<,>, etc.).
+        return underlying.IsClass || (underlying.IsGenericType && !underlying.IsPrimitive);
+    }
+
+    private static ValueConverter BuildJsonConverter(Type clrType)
+    {
+        var factory = typeof(TestableApplicationDbContext)
+            .GetMethod(nameof(CreateJsonConverter), System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!
+            .MakeGenericMethod(clrType);
+        return (ValueConverter)factory.Invoke(null, null)!;
+    }
+
+    private static ValueConverter CreateJsonConverter<T>()
+    {
+        return new ValueConverter<T, string>(
+            v => JsonSerializer.Serialize(v, (JsonSerializerOptions?)null),
+            v => JsonSerializer.Deserialize<T>(v, (JsonSerializerOptions?)null)!);
     }
 }

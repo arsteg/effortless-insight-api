@@ -12,14 +12,17 @@ namespace EffortlessInsight.Api.Services.Notifications;
 public class NotificationPreferencesService : INotificationPreferencesService
 {
     private readonly ApplicationDbContext _dbContext;
+    private readonly IChannelUnsubscribeService _channelUnsubscribe;
     private readonly ILogger<NotificationPreferencesService> _logger;
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
     public NotificationPreferencesService(
         ApplicationDbContext dbContext,
+        IChannelUnsubscribeService channelUnsubscribe,
         ILogger<NotificationPreferencesService> logger)
     {
         _dbContext = dbContext;
+        _channelUnsubscribe = channelUnsubscribe;
         _logger = logger;
     }
 
@@ -78,7 +81,7 @@ public class NotificationPreferencesService : INotificationPreferencesService
         if (request.Channels != null)
         {
             var channels = ParseChannelSettings(prefs.ChannelSettings);
-            MergeChannelUpdates(channels, request.Channels);
+            channels = MergeChannelUpdates(channels, request.Channels);
             prefs.ChannelSettings = SerializeToDict(channels);
         }
 
@@ -219,13 +222,26 @@ public class NotificationPreferencesService : INotificationPreferencesService
         var shouldWhatsApp = channels.WhatsApp.Enabled && typePref.WhatsApp && !string.IsNullOrEmpty(user.Mobile);
         var shouldInApp = typePref.InApp;  // Always check type pref for in-app
 
-        // Check unsubscribes for email
+        // Check legacy email unsubscribe table (address-based)
         if (shouldEmail && !string.IsNullOrEmpty(user.Email))
         {
             var isUnsubscribed = await IsUnsubscribedAsync(user.Email, notificationType, cancellationToken);
             if (isUnsubscribed)
                 shouldEmail = false;
         }
+
+        // Consult per-channel / per-category / per-type opt-outs for every
+        // channel (audit BE-24). This is what honours SMS STOP webhooks and
+        // granular "mute this category on push" choices.
+        var category = NotificationType.GetCategory(notificationType);
+        if (shouldEmail && await _channelUnsubscribe.IsUnsubscribedAsync(userId, NotificationChannel.Email, category, notificationType, cancellationToken))
+            shouldEmail = false;
+        if (shouldSms && await _channelUnsubscribe.IsUnsubscribedAsync(userId, NotificationChannel.Sms, category, notificationType, cancellationToken))
+            shouldSms = false;
+        if (shouldPush && await _channelUnsubscribe.IsUnsubscribedAsync(userId, NotificationChannel.Push, category, notificationType, cancellationToken))
+            shouldPush = false;
+        if (shouldWhatsApp && await _channelUnsubscribe.IsUnsubscribedAsync(userId, NotificationChannel.WhatsApp, category, notificationType, cancellationToken))
+            shouldWhatsApp = false;
 
         return new ChannelDecision(
             shouldEmail,
@@ -548,10 +564,55 @@ public class NotificationPreferencesService : INotificationPreferencesService
         return JsonSerializer.Deserialize<DigestPreferencesDto>(json, JsonOptions) ?? new DigestPreferencesDto();
     }
 
-    private static void MergeChannelUpdates(ChannelPreferencesDto channels, UpdateChannelPreferencesDto updates)
+    private static ChannelPreferencesDto MergeChannelUpdates(
+        ChannelPreferencesDto channels, UpdateChannelPreferencesDto updates)
     {
-        // Channels are records, so we create new instances with merged values
-        // This is handled by the caller when serializing back to dictionary
+        // The channel DTOs are immutable records (init-only), so merge by building
+        // new instances with `with`. Only fields present on the update DTO are
+        // changed; everything else (verified flags, tokens) is preserved.
+        var email = channels.Email;
+        if (updates.Email != null)
+        {
+            email = email with
+            {
+                Enabled = updates.Email.Enabled ?? email.Enabled,
+                Address = updates.Email.Address ?? email.Address,
+            };
+        }
+
+        var sms = channels.Sms;
+        if (updates.Sms != null)
+        {
+            sms = sms with
+            {
+                Enabled = updates.Sms.Enabled ?? sms.Enabled,
+                Phone = updates.Sms.Phone ?? sms.Phone,
+            };
+        }
+
+        var whatsApp = channels.WhatsApp;
+        if (updates.WhatsApp != null)
+        {
+            whatsApp = whatsApp with
+            {
+                Enabled = updates.WhatsApp.Enabled ?? whatsApp.Enabled,
+                Phone = updates.WhatsApp.Phone ?? whatsApp.Phone,
+            };
+        }
+
+        var push = channels.Push;
+        if (updates.Push != null)
+        {
+            push = push with { Enabled = updates.Push.Enabled ?? push.Enabled };
+        }
+
+        return channels with
+        {
+            Email = email,
+            Sms = sms,
+            WhatsApp = whatsApp,
+            Push = push,
+        };
     }
 
     private static Dictionary<string, object> SerializeToDict<T>(T obj)

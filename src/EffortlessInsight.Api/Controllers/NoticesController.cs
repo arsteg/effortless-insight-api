@@ -1988,6 +1988,7 @@ public class NoticesController : ControllerBase
             PenaltyAmount: notice.PenaltyAmount,
             Status: notice.Status,
             Priority: notice.Priority,
+            ProcessingStatus: notice.ProcessingStatus,
             RiskScore: notice.AiReport?.RiskScore,
             RiskLevel: notice.AiReport?.RiskLevel,
             SummaryEn: notice.AiReport?.SummaryEn,

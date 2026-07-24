@@ -6,18 +6,21 @@ using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.Data.Entities.Billing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using Pgvector;
 
 #nullable disable
 
-namespace EffortlessInsight.Api.Data.Migrations
+namespace EffortlessInsight.Api.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260701060004_AddWebhookEventDeletedAt")]
+    partial class AddWebhookEventDeletedAt
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -26,82 +29,6 @@ namespace EffortlessInsight.Api.Data.Migrations
 
             NpgsqlModelBuilderExtensions.HasPostgresExtension(modelBuilder, "vector");
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
-
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.AIAuditLog", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid?>("ConversationId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime?>("DeletedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("ErrorCode")
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.Property<string>("ErrorMessage")
-                        .HasColumnType("text");
-
-                    b.Property<decimal?>("EstimatedCost")
-                        .HasColumnType("decimal(10,6)");
-
-                    b.Property<int>("InputTokens")
-                        .HasColumnType("integer");
-
-                    b.Property<Guid?>("MessageId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("ModelId")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<Guid>("OrganizationId")
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("OutputTokens")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("PromptVersion")
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
-
-                    b.Property<int>("ResponseTimeMs")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
-
-                    b.Property<int>("TotalTokens")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid>("UserId")
-                        .HasColumnType("uuid");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ConversationId");
-
-                    b.HasIndex("MessageId");
-
-                    b.HasIndex("OrganizationId");
-
-                    b.HasIndex("UserId");
-
-                    b.ToTable("AIAuditLogs");
-                });
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.ActivityLog", b =>
                 {
@@ -1263,25 +1190,6 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Property<string>("UserName")
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
-
-                    b.Property<DateTime?>("WhatsAppLastMessageAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<bool>("WhatsAppOptedIn")
-                        .HasColumnType("boolean");
-
-                    b.Property<DateTime?>("WhatsAppOptedInAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("WhatsAppPhoneNumber")
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
-
-                    b.Property<bool>("WhatsAppVerified")
-                        .HasColumnType("boolean");
-
-                    b.Property<DateTime?>("WhatsAppVerifiedAt")
-                        .HasColumnType("timestamp with time zone");
 
                     b.HasKey("Id");
 
@@ -2968,46 +2876,6 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.ToTable("CommentReactions");
                 });
 
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.ConversationSummary", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid>("ConversationId")
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("CoveredMessageCount")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime?>("DeletedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid>("LastMessageId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Summary")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<int>("TokenCount")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ConversationId");
-
-                    b.HasIndex("LastMessageId");
-
-                    b.ToTable("ConversationSummaries");
-                });
-
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.CustomRole", b =>
                 {
                     b.Property<Guid>("Id")
@@ -3629,507 +3497,6 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.ToTable("FileFolders");
                 });
 
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.GstSync.GstClient", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<bool>("AutoImportToNotices")
-                        .HasColumnType("boolean");
-
-                    b.Property<int>("ConsecutiveFailures")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid>("CreatedByUserId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime?>("DeletedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Gstin")
-                        .IsRequired()
-                        .HasMaxLength(15)
-                        .HasColumnType("character varying(15)");
-
-                    b.Property<DateTime?>("LastSuccessfulSyncAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime?>("LastSyncAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("LastSyncSource")
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.Property<string>("LegalName")
-                        .HasMaxLength(255)
-                        .HasColumnType("character varying(255)");
-
-                    b.Property<DateTime?>("NextSyncDueAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid>("OrganizationId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("StateCode")
-                        .HasMaxLength(2)
-                        .HasColumnType("character varying(2)");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.Property<string>("StatusMessage")
-                        .HasColumnType("text");
-
-                    b.Property<bool>("SyncEnabled")
-                        .HasColumnType("boolean");
-
-                    b.Property<int>("SyncFrequencyHours")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("TotalNoticesSynced")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("TotalSyncsPerformed")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("TradeName")
-                        .HasMaxLength(255)
-                        .HasColumnType("character varying(255)");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CreatedByUserId");
-
-                    b.HasIndex("Gstin")
-                        .HasFilter("\"DeletedAt\" IS NULL");
-
-                    b.HasIndex("NextSyncDueAt")
-                        .HasDatabaseName("IX_GstClients_NextSyncDue")
-                        .HasFilter("\"DeletedAt\" IS NULL AND \"SyncEnabled\" = true AND \"Status\" = 'active'");
-
-                    b.HasIndex("OrganizationId")
-                        .HasFilter("\"DeletedAt\" IS NULL");
-
-                    b.HasIndex("Status")
-                        .HasDatabaseName("IX_GstClients_Active")
-                        .HasFilter("\"DeletedAt\" IS NULL AND \"Status\" = 'active'");
-
-                    b.HasIndex("OrganizationId", "Gstin")
-                        .IsUnique()
-                        .HasDatabaseName("IX_GstClients_Org_Gstin_Unique")
-                        .HasFilter("\"DeletedAt\" IS NULL");
-
-                    b.ToTable("gst_clients", (string)null);
-                });
-
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.GstSync.GstExtensionEvent", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("BrowserInfo")
-                        .HasMaxLength(255)
-                        .HasColumnType("character varying(255)");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime?>("DeletedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("ErrorMessage")
-                        .HasColumnType("text");
-
-                    b.Property<string>("ErrorStack")
-                        .HasColumnType("text");
-
-                    b.Property<string>("ErrorType")
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<Dictionary<string, object>>("EventData")
-                        .HasColumnType("jsonb");
-
-                    b.Property<string>("EventType")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.Property<string>("ExtensionVersion")
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
-
-                    b.Property<Guid?>("OrganizationId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("PageUrl")
-                        .HasColumnType("text");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid?>("UserId")
-                        .HasColumnType("uuid");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CreatedAt")
-                        .IsDescending()
-                        .HasDatabaseName("IX_GstExtensionEvents_CreatedAt_Desc")
-                        .HasFilter("\"DeletedAt\" IS NULL");
-
-                    b.HasIndex("EventType")
-                        .HasFilter("\"DeletedAt\" IS NULL");
-
-                    b.HasIndex("OrganizationId")
-                        .HasFilter("\"DeletedAt\" IS NULL");
-
-                    b.HasIndex("UserId");
-
-                    b.ToTable("gst_extension_events", (string)null);
-                });
-
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.GstSync.GstNoticeRaw", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("ContentHash")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime?>("DeletedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<decimal?>("DemandAmount")
-                        .HasColumnType("decimal(18,2)");
-
-                    b.Property<DateOnly?>("DueDate")
-                        .HasColumnType("date");
-
-                    b.Property<string>("FinancialYear")
-                        .HasMaxLength(10)
-                        .HasColumnType("character varying(10)");
-
-                    b.Property<DateTime>("FirstSyncedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid>("GstClientId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Gstin")
-                        .IsRequired()
-                        .HasMaxLength(15)
-                        .HasColumnType("character varying(15)");
-
-                    b.Property<DateTime?>("ImportedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid?>("ImportedNoticeId")
-                        .HasColumnType("uuid");
-
-                    b.Property<bool>("ImportedToNotices")
-                        .HasColumnType("boolean");
-
-                    b.Property<decimal?>("InterestAmount")
-                        .HasColumnType("decimal(18,2)");
-
-                    b.Property<DateOnly>("IssueDate")
-                        .HasColumnType("date");
-
-                    b.Property<string>("Jurisdiction")
-                        .HasMaxLength(255)
-                        .HasColumnType("character varying(255)");
-
-                    b.Property<Guid?>("LastSyncSessionId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("LastSyncedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("NoticeCategory")
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.Property<string>("NoticeType")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.Property<string>("OfficerDesignation")
-                        .HasMaxLength(255)
-                        .HasColumnType("character varying(255)");
-
-                    b.Property<string>("OfficerName")
-                        .HasMaxLength(255)
-                        .HasColumnType("character varying(255)");
-
-                    b.Property<Guid>("OrganizationId")
-                        .HasColumnType("uuid");
-
-                    b.Property<bool>("PdfAvailable")
-                        .HasColumnType("boolean");
-
-                    b.Property<DateTime?>("PdfDownloadedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("PdfS3Key")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<int?>("PdfSizeBytes")
-                        .HasColumnType("integer");
-
-                    b.Property<decimal?>("PenaltyAmount")
-                        .HasColumnType("decimal(18,2)");
-
-                    b.Property<string>("PortalNoticeId")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<Dictionary<string, object>>("RawData")
-                        .HasColumnType("jsonb");
-
-                    b.Property<string>("ReferenceNumber")
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<string>("SectionRule")
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<string>("StatusOnPortal")
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.Property<int>("SyncCount")
-                        .HasColumnType("integer");
-
-                    b.Property<decimal?>("TaxAmount")
-                        .HasColumnType("decimal(18,2)");
-
-                    b.Property<string>("TaxPeriod")
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("DueDate")
-                        .HasDatabaseName("IX_GstNoticesRaw_DueDate")
-                        .HasFilter("\"DeletedAt\" IS NULL AND \"DueDate\" IS NOT NULL");
-
-                    b.HasIndex("GstClientId")
-                        .HasFilter("\"DeletedAt\" IS NULL");
-
-                    b.HasIndex("Gstin")
-                        .HasFilter("\"DeletedAt\" IS NULL");
-
-                    b.HasIndex("ImportedToNotices")
-                        .HasDatabaseName("IX_GstNoticesRaw_NotImported")
-                        .HasFilter("\"DeletedAt\" IS NULL AND \"ImportedToNotices\" = false");
-
-                    b.HasIndex("LastSyncSessionId");
-
-                    b.HasIndex("NoticeType")
-                        .HasFilter("\"DeletedAt\" IS NULL");
-
-                    b.HasIndex("OrganizationId")
-                        .HasFilter("\"DeletedAt\" IS NULL");
-
-                    b.HasIndex("PortalNoticeId")
-                        .HasFilter("\"DeletedAt\" IS NULL");
-
-                    b.HasIndex("GstClientId", "PortalNoticeId")
-                        .IsUnique()
-                        .HasDatabaseName("IX_GstNoticesRaw_Client_PortalId_Unique")
-                        .HasFilter("\"DeletedAt\" IS NULL");
-
-                    b.ToTable("gst_notices_raw", (string)null);
-                });
-
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.GstSync.GstSyncReminder", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Channel")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.Property<DateTime?>("ClickedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime?>("DeletedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime?>("DismissedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid>("GstClientId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("MessageContent")
-                        .HasColumnType("text");
-
-                    b.Property<Guid>("OrganizationId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("ReminderType")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.Property<DateTime?>("SentAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid>("UserId")
-                        .HasColumnType("uuid");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("GstClientId")
-                        .HasFilter("\"DeletedAt\" IS NULL");
-
-                    b.HasIndex("OrganizationId")
-                        .HasFilter("\"DeletedAt\" IS NULL");
-
-                    b.HasIndex("Status")
-                        .HasDatabaseName("IX_GstSyncReminders_Pending")
-                        .HasFilter("\"DeletedAt\" IS NULL AND \"Status\" = 'pending'");
-
-                    b.HasIndex("UserId");
-
-                    b.ToTable("gst_sync_reminders", (string)null);
-                });
-
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.GstSync.GstSyncSession", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime?>("CompletedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime?>("DeletedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int?>("DurationMs")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("ErrorCode")
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.Property<string>("ErrorMessage")
-                        .HasColumnType("text");
-
-                    b.Property<Guid>("GstClientId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Gstin")
-                        .IsRequired()
-                        .HasMaxLength(15)
-                        .HasColumnType("character varying(15)");
-
-                    b.Property<int>("NoticesFound")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("NoticesNew")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("NoticesUnchanged")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("NoticesUpdated")
-                        .HasColumnType("integer");
-
-                    b.Property<Guid>("OrganizationId")
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("PdfsDownloaded")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("PdfsFailed")
-                        .HasColumnType("integer");
-
-                    b.Property<Dictionary<string, object>>("SourceMetadata")
-                        .HasColumnType("jsonb");
-
-                    b.Property<string>("SourceVersion")
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
-
-                    b.Property<DateTime>("StartedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.Property<string>("SyncSource")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("GstClientId")
-                        .HasFilter("\"DeletedAt\" IS NULL");
-
-                    b.HasIndex("OrganizationId")
-                        .HasFilter("\"DeletedAt\" IS NULL");
-
-                    b.HasIndex("StartedAt")
-                        .IsDescending()
-                        .HasDatabaseName("IX_GstSyncSessions_StartedAt_Desc")
-                        .HasFilter("\"DeletedAt\" IS NULL");
-
-                    b.HasIndex("Status")
-                        .HasFilter("\"DeletedAt\" IS NULL");
-
-                    b.ToTable("gst_sync_sessions", (string)null);
-                });
-
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.GstinStateCode", b =>
                 {
                     b.Property<string>("Code")
@@ -4385,275 +3752,6 @@ namespace EffortlessInsight.Api.Data.Migrations
                         });
                 });
 
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.GstnConnection", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<bool>("AutoSyncEnabled")
-                        .HasColumnType("boolean");
-
-                    b.Property<DateTime?>("ConnectedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid?>("ConnectedById")
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("ConsecutiveFailures")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime?>("DeletedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime?>("DisconnectedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid?>("DisconnectedById")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("DisconnectionReason")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<string>("EncryptedAccessToken")
-                        .HasMaxLength(2000)
-                        .HasColumnType("character varying(2000)");
-
-                    b.Property<string>("EncryptedRefreshToken")
-                        .HasMaxLength(2000)
-                        .HasColumnType("character varying(2000)");
-
-                    b.Property<string>("GspProvider")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.Property<string>("GspSessionId")
-                        .HasMaxLength(255)
-                        .HasColumnType("character varying(255)");
-
-                    b.Property<DateTime?>("LastSyncAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("LastSyncError")
-                        .HasColumnType("text");
-
-                    b.Property<DateTime?>("NextScheduledSyncAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid>("OrganizationGstinId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime?>("RefreshTokenExpiresAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(30)
-                        .HasColumnType("character varying(30)");
-
-                    b.Property<int>("SyncIntervalHours")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("TokenExpiresAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ConnectedById");
-
-                    b.HasIndex("DisconnectedById");
-
-                    b.HasIndex("NextScheduledSyncAt")
-                        .HasFilter("\"Status\" = 'connected' AND \"AutoSyncEnabled\" = true");
-
-                    b.HasIndex("OrganizationGstinId")
-                        .IsUnique();
-
-                    b.HasIndex("Status");
-
-                    b.HasIndex("TokenExpiresAt")
-                        .HasFilter("\"Status\" = 'connected'");
-
-                    b.ToTable("GstnConnections");
-                });
-
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.GstnOtpSession", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("Attempts")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime?>("DeletedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("ErrorMessage")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<DateTime>("ExpiresAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("GspSessionId")
-                        .IsRequired()
-                        .HasMaxLength(255)
-                        .HasColumnType("character varying(255)");
-
-                    b.Property<Guid>("InitiatedById")
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("MaxAttempts")
-                        .HasColumnType("integer");
-
-                    b.Property<Guid>("OrganizationGstinId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("OtpDestination")
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<string>("OtpDestinationType")
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
-
-                    b.Property<string>("RequestIpAddress")
-                        .HasMaxLength(45)
-                        .HasColumnType("character varying(45)");
-
-                    b.Property<string>("RequestUserAgent")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime?>("VerifiedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ExpiresAt");
-
-                    b.HasIndex("InitiatedById");
-
-                    b.HasIndex("OrganizationGstinId", "Status")
-                        .HasFilter("\"Status\" = 'pending'");
-
-                    b.ToTable("GstnOtpSessions");
-                });
-
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.GstnSyncLog", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime?>("CompletedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime?>("DeletedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<long?>("DurationMs")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("ErrorDetails")
-                        .HasColumnType("text");
-
-                    b.Property<string>("ErrorMessage")
-                        .HasColumnType("text");
-
-                    b.Property<string>("GspCorrelationId")
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<Guid>("GstnConnectionId")
-                        .HasColumnType("uuid");
-
-                    b.Property<List<Guid>>("ImportedNoticeIds")
-                        .HasColumnType("jsonb");
-
-                    b.Property<Dictionary<string, object>>("Metadata")
-                        .HasColumnType("jsonb");
-
-                    b.Property<int>("NoticesFailed")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("NoticesFound")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("NoticesImported")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("NoticesSkipped")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime>("StartedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
-
-                    b.Property<DateTime?>("SyncPeriodFrom")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime?>("SyncPeriodTo")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("SyncType")
-                        .IsRequired()
-                        .HasMaxLength(30)
-                        .HasColumnType("character varying(30)");
-
-                    b.Property<string>("TriggerSource")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
-
-                    b.Property<Guid?>("TriggeredById")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CreatedAt");
-
-                    b.HasIndex("GstnConnectionId");
-
-                    b.HasIndex("StartedAt");
-
-                    b.HasIndex("Status");
-
-                    b.HasIndex("TriggeredById");
-
-                    b.ToTable("GstnSyncLogs");
-                });
-
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.KnowledgeBase", b =>
                 {
                     b.Property<Guid>("Id")
@@ -4763,43 +3861,6 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.ToTable("LoginAudits");
                 });
 
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.MessageFeedback", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime?>("DeletedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("FeedbackText")
-                        .HasMaxLength(2000)
-                        .HasColumnType("character varying(2000)");
-
-                    b.Property<Guid>("MessageId")
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("Rating")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid>("UserId")
-                        .HasColumnType("uuid");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("MessageId");
-
-                    b.HasIndex("UserId");
-
-                    b.ToTable("MessageFeedbacks");
-                });
-
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Notice", b =>
                 {
                     b.Property<Guid>("Id")
@@ -4838,9 +3899,6 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Property<DateOnly?>("ExtendedDeadline")
                         .HasColumnType("date");
 
-                    b.Property<DateTime?>("FetchedFromGstnAt")
-                        .HasColumnType("timestamp with time zone");
-
                     b.Property<string>("FileHash")
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
@@ -4866,10 +3924,6 @@ namespace EffortlessInsight.Api.Data.Migrations
                         .HasMaxLength(10)
                         .HasColumnType("character varying(10)");
 
-                    b.Property<string>("GspCorrelationId")
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
                     b.Property<string>("Gstin")
                         .HasMaxLength(15)
                         .HasColumnType("character varying(15)");
@@ -4877,22 +3931,11 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Property<Guid?>("GstinId")
                         .HasColumnType("uuid");
 
-                    b.Property<string>("GstnNoticeId")
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<string>("GstnReferenceNumber")
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
                     b.Property<DateOnly?>("HearingDate")
                         .HasColumnType("date");
 
                     b.Property<decimal?>("InterestAmount")
                         .HasColumnType("decimal(15,2)");
-
-                    b.Property<bool>("IsDocumentArchived")
-                        .HasColumnType("boolean");
 
                     b.Property<bool>("IsManualEntry")
                         .HasColumnType("boolean");
@@ -4992,11 +4035,6 @@ namespace EffortlessInsight.Api.Data.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)");
 
-                    b.Property<string>("Source")
-                        .IsRequired()
-                        .HasMaxLength(30)
-                        .HasColumnType("character varying(30)");
-
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(30)
@@ -5059,10 +4097,6 @@ namespace EffortlessInsight.Api.Data.Migrations
                         .HasFilter("\"DeletedAt\" IS NULL");
 
                     b.HasIndex("UploadedById");
-
-                    b.HasIndex("OrganizationId", "GstnNoticeId")
-                        .HasDatabaseName("IX_Notices_Org_GstnNoticeId")
-                        .HasFilter("\"DeletedAt\" IS NULL AND \"GstnNoticeId\" IS NOT NULL");
 
                     b.HasIndex("OrganizationId", "Status", "ResponseDeadline")
                         .HasDatabaseName("IX_Notices_Org_Status_Deadline")
@@ -5136,63 +4170,6 @@ namespace EffortlessInsight.Api.Data.Migrations
                         .IsUnique();
 
                     b.ToTable("NoticeAiReports");
-                });
-
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.NoticeConversation", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime?>("DeletedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<bool>("IsArchived")
-                        .HasColumnType("boolean");
-
-                    b.Property<DateTime?>("LastMessageAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("MessageCount")
-                        .HasColumnType("integer");
-
-                    b.Property<Guid>("NoticeId")
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid>("OrganizationId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
-
-                    b.Property<string>("Title")
-                        .IsRequired()
-                        .HasMaxLength(255)
-                        .HasColumnType("character varying(255)");
-
-                    b.Property<int>("TotalTokens")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid>("UserId")
-                        .HasColumnType("uuid");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("NoticeId");
-
-                    b.HasIndex("OrganizationId");
-
-                    b.HasIndex("UserId");
-
-                    b.ToTable("NoticeConversations");
                 });
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.NoticeDeadline", b =>
@@ -5374,66 +4351,6 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.HasIndex("UploadedById");
 
                     b.ToTable("NoticeFiles");
-                });
-
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.NoticeMessage", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<List<Citation>>("Citations")
-                        .HasColumnType("jsonb");
-
-                    b.Property<string>("Content")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("ContentHtml")
-                        .HasColumnType("text");
-
-                    b.Property<Guid>("ConversationId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime?>("DeletedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("ErrorMessage")
-                        .HasColumnType("text");
-
-                    b.Property<bool>("IsError")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("ModelId")
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<string>("PromptVersion")
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
-
-                    b.Property<int?>("ResponseTimeMs")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("Role")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
-
-                    b.Property<int?>("TokenCount")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ConversationId");
-
-                    b.ToTable("NoticeMessages");
                 });
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.NoticeRelationship", b =>
@@ -6187,6 +5104,9 @@ namespace EffortlessInsight.Api.Data.Migrations
                         .HasMaxLength(10)
                         .HasColumnType("character varying(10)");
 
+                    b.Property<Guid?>("PlanId")
+                        .HasColumnType("uuid");
+
                     b.Property<Dictionary<string, object>>("Settings")
                         .HasColumnType("jsonb");
 
@@ -6228,6 +5148,8 @@ namespace EffortlessInsight.Api.Data.Migrations
                         .IsUnique()
                         .HasDatabaseName("IX_Organizations_NameNormalized_Unique")
                         .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("PlanId");
 
                     b.HasIndex("State")
                         .HasFilter("\"DeletedAt\" IS NULL");
@@ -6275,9 +5197,6 @@ namespace EffortlessInsight.Api.Data.Migrations
 
                     b.Property<bool>("IsVerified")
                         .HasColumnType("boolean");
-
-                    b.Property<DateTime?>("LastSyncedAt")
-                        .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("LegalName")
                         .HasMaxLength(255)
@@ -6605,6 +5524,116 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.ToTable("PasswordResetTokens");
                 });
 
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Plan", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Dictionary<string, object>>("Features")
+                        .HasColumnType("jsonb");
+
+                    b.Property<int?>("GstinLimit")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<int?>("NoticeLimit")
+                        .HasColumnType("integer");
+
+                    b.Property<decimal?>("PriceMonthly")
+                        .HasColumnType("numeric");
+
+                    b.Property<decimal?>("PriceYearly")
+                        .HasColumnType("numeric");
+
+                    b.Property<int?>("StorageLimitGb")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int?>("UserLimit")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("Plans");
+
+                    b.HasData(
+                        new
+                        {
+                            Id = new Guid("11111111-1111-1111-1111-111111111111"),
+                            Code = "free",
+                            CreatedAt = new DateTime(2024, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
+                            GstinLimit = 1,
+                            IsActive = true,
+                            Name = "Free",
+                            NoticeLimit = 3,
+                            PriceMonthly = 0m,
+                            PriceYearly = 0m,
+                            StorageLimitGb = 1,
+                            UserLimit = 1
+                        },
+                        new
+                        {
+                            Id = new Guid("22222222-2222-2222-2222-222222222222"),
+                            Code = "starter",
+                            CreatedAt = new DateTime(2024, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
+                            GstinLimit = 1,
+                            IsActive = true,
+                            Name = "Starter",
+                            NoticeLimit = 10,
+                            PriceMonthly = 499m,
+                            PriceYearly = 4999m,
+                            StorageLimitGb = 5,
+                            UserLimit = 2
+                        },
+                        new
+                        {
+                            Id = new Guid("33333333-3333-3333-3333-333333333333"),
+                            Code = "growth",
+                            CreatedAt = new DateTime(2024, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
+                            GstinLimit = 3,
+                            IsActive = true,
+                            Name = "Growth",
+                            NoticeLimit = 30,
+                            PriceMonthly = 999m,
+                            PriceYearly = 9999m,
+                            StorageLimitGb = 20,
+                            UserLimit = 5
+                        },
+                        new
+                        {
+                            Id = new Guid("44444444-4444-4444-4444-444444444444"),
+                            Code = "professional",
+                            CreatedAt = new DateTime(2024, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
+                            IsActive = true,
+                            Name = "Professional",
+                            NoticeLimit = 150,
+                            PriceMonthly = 4999m,
+                            PriceYearly = 49999m,
+                            StorageLimitGb = 100
+                        });
+                });
+
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.PushToken", b =>
                 {
                     b.Property<Guid>("Id")
@@ -6726,155 +5755,6 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.ToTable("RefreshTokens");
                 });
 
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.ReportSchedule", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("ConsecutiveFailures")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid>("CreatedById")
-                        .HasColumnType("uuid");
-
-                    b.Property<int?>("DayOfMonth")
-                        .HasColumnType("integer");
-
-                    b.Property<int?>("DayOfWeek")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("DeletedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("ExportFormat")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
-
-                    b.Property<string>("Frequency")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("boolean");
-
-                    b.Property<DateTime?>("LastRunAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("LastRunError")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<string>("LastRunStatus")
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
-
-                    b.Property<DateTime?>("NextRunAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.PrimitiveCollection<List<string>>("Recipients")
-                        .IsRequired()
-                        .HasColumnType("jsonb");
-
-                    b.Property<Guid>("SavedReportId")
-                        .HasColumnType("uuid");
-
-                    b.Property<TimeOnly>("TimeOfDay")
-                        .HasColumnType("time without time zone");
-
-                    b.Property<string>("TimeZone")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CreatedById")
-                        .HasFilter("\"DeletedAt\" IS NULL");
-
-                    b.HasIndex("SavedReportId")
-                        .HasFilter("\"DeletedAt\" IS NULL");
-
-                    b.HasIndex("IsActive", "NextRunAt")
-                        .HasDatabaseName("IX_ReportSchedules_Active_NextRun")
-                        .HasFilter("\"DeletedAt\" IS NULL AND \"IsActive\" = true AND \"NextRunAt\" IS NOT NULL");
-
-                    b.ToTable("ReportSchedules");
-                });
-
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.SavedReport", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<ReportConfiguration>("Configuration")
-                        .IsRequired()
-                        .HasColumnType("jsonb");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid>("CreatedById")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime?>("DeletedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Description")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<bool>("IsPublic")
-                        .HasColumnType("boolean");
-
-                    b.Property<DateTime?>("LastRunAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(255)
-                        .HasColumnType("character varying(255)");
-
-                    b.Property<Guid>("OrganizationId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("ReportType")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.Property<int>("RunCount")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CreatedById")
-                        .HasFilter("\"DeletedAt\" IS NULL");
-
-                    b.HasIndex("IsPublic")
-                        .HasFilter("\"DeletedAt\" IS NULL AND \"IsPublic\" = true");
-
-                    b.HasIndex("OrganizationId")
-                        .HasFilter("\"DeletedAt\" IS NULL");
-
-                    b.HasIndex("ReportType")
-                        .HasFilter("\"DeletedAt\" IS NULL");
-
-                    b.ToTable("SavedReports");
-                });
-
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.ScheduledNotification", b =>
                 {
                     b.Property<Guid>("Id")
@@ -6928,6 +5808,62 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.HasIndex("UserId");
 
                     b.ToTable("ScheduledNotifications");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Subscription", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("BillingCycle")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<bool>("CancelAtPeriodEnd")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateOnly?>("CurrentPeriodEnd")
+                        .HasColumnType("date");
+
+                    b.Property<DateOnly?>("CurrentPeriodStart")
+                        .HasColumnType("date");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PaymentProvider")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<Guid>("PlanId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ProviderSubscriptionId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.HasIndex("PlanId");
+
+                    b.ToTable("Subscriptions");
                 });
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.TaskAssignee", b =>
@@ -7502,403 +6438,6 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.HasIndex("UserId");
 
                     b.ToTable("UserSessions");
-                });
-
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.WhatsAppMessageLog", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Command")
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.Property<string>("Content")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<string>("CorrelationId")
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime?>("DeletedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime?>("DeliveredAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Direction")
-                        .IsRequired()
-                        .HasMaxLength(10)
-                        .HasColumnType("character varying(10)");
-
-                    b.Property<string>("ErrorCode")
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.Property<string>("ErrorMessage")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<string>("FullPhoneNumber")
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
-
-                    b.Property<bool>("IsRetryable")
-                        .HasColumnType("boolean");
-
-                    b.Property<DateTime?>("LastRetryAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("MaxRetryAttempts")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("MessageType")
-                        .IsRequired()
-                        .HasMaxLength(30)
-                        .HasColumnType("character varying(30)");
-
-                    b.Property<DateTime?>("NextRetryAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid?>("OrganizationId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("PhoneNumber")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
-
-                    b.Property<int?>("ProcessingTimeMs")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("ReadAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid?>("ReferenceId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("ReferenceType")
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.Property<int>("RetryCount")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
-
-                    b.Property<string>("TemplateLanguage")
-                        .HasMaxLength(10)
-                        .HasColumnType("character varying(10)");
-
-                    b.Property<string>("TemplateName")
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<List<string>>("TemplateParameters")
-                        .HasColumnType("jsonb");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid?>("UserId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("WamId")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CreatedAt");
-
-                    b.HasIndex("OrganizationId");
-
-                    b.HasIndex("PhoneNumber");
-
-                    b.HasIndex("Status");
-
-                    b.HasIndex("UserId");
-
-                    b.HasIndex("WamId")
-                        .IsUnique()
-                        .HasDatabaseName("IX_WhatsAppMessageLogs_WamId_Unique")
-                        .HasFilter("\"WamId\" IS NOT NULL AND \"WamId\" != ''");
-
-                    b.HasIndex("Status", "RetryCount", "CreatedAt")
-                        .HasDatabaseName("IX_WhatsAppMessageLogs_FailedRetry")
-                        .HasFilter("\"Direction\" = 'outbound' AND \"Status\" = 'failed'");
-
-                    b.ToTable("WhatsAppMessageLogs");
-                });
-
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.WhatsAppSession", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<Dictionary<string, object>>("Context")
-                        .IsRequired()
-                        .HasColumnType("jsonb");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("CurrentPage")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("CurrentState")
-                        .IsRequired()
-                        .HasMaxLength(30)
-                        .HasColumnType("character varying(30)");
-
-                    b.Property<DateTime?>("DeletedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime>("LastInteractionAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("MessageCount")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("PendingEmail")
-                        .HasMaxLength(255)
-                        .HasColumnType("character varying(255)");
-
-                    b.Property<Guid?>("PendingVerificationId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("PhoneNumber")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
-
-                    b.Property<DateTime>("SessionExpiresAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid?>("UserId")
-                        .HasColumnType("uuid");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("LastInteractionAt");
-
-                    b.HasIndex("PhoneNumber")
-                        .IsUnique()
-                        .HasDatabaseName("IX_WhatsAppSessions_Phone_Unique")
-                        .HasFilter("\"DeletedAt\" IS NULL");
-
-                    b.HasIndex("SessionExpiresAt")
-                        .HasFilter("\"DeletedAt\" IS NULL");
-
-                    b.HasIndex("UserId");
-
-                    b.ToTable("WhatsAppSessions");
-                });
-
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.WhatsAppTemplate", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("BodyText")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<List<WhatsAppTemplateButton>>("Buttons")
-                        .IsRequired()
-                        .HasColumnType("jsonb");
-
-                    b.Property<string>("Category")
-                        .IsRequired()
-                        .HasMaxLength(30)
-                        .HasColumnType("character varying(30)");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime?>("DeletedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("FooterText")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<string>("HeaderFormat")
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
-
-                    b.Property<string>("HeaderText")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("Language")
-                        .IsRequired()
-                        .HasMaxLength(10)
-                        .HasColumnType("character varying(10)");
-
-                    b.Property<DateTime?>("LastUsedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<string>("RejectionReason")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
-
-                    b.Property<DateTime>("SyncedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("TemplateId")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("UsageCount")
-                        .HasColumnType("integer");
-
-                    b.Property<List<string>>("Variables")
-                        .IsRequired()
-                        .HasColumnType("jsonb");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("IsActive")
-                        .HasFilter("\"IsActive\" = true");
-
-                    b.HasIndex("Status");
-
-                    b.HasIndex("TemplateId");
-
-                    b.HasIndex("Name", "Language")
-                        .IsUnique()
-                        .HasDatabaseName("IX_WhatsAppTemplates_Name_Language_Unique");
-
-                    b.ToTable("WhatsAppTemplates");
-                });
-
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.WhatsAppVerification", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("AttemptCount")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime?>("DeletedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime>("ExpiresAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("InitiatedFrom")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
-
-                    b.Property<bool>("IsVerified")
-                        .HasColumnType("boolean");
-
-                    b.Property<int>("MaxAttempts")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("PhoneNumber")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid>("UserId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("VerificationCode")
-                        .IsRequired()
-                        .HasMaxLength(10)
-                        .HasColumnType("character varying(10)");
-
-                    b.Property<DateTime?>("VerifiedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ExpiresAt")
-                        .HasFilter("\"IsVerified\" = false AND \"DeletedAt\" IS NULL");
-
-                    b.HasIndex("PhoneNumber");
-
-                    b.HasIndex("UserId");
-
-                    b.HasIndex("PhoneNumber", "IsVerified", "DeletedAt")
-                        .HasDatabaseName("IX_WhatsAppVerifications_Phone_Active");
-
-                    b.ToTable("WhatsAppVerifications");
-                });
-
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.WhatsAppWebhookEvent", b =>
-                {
-                    b.Property<string>("PayloadHash")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<string>("EntryId")
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<string>("ErrorMessage")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<string>("EventType")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
-
-                    b.Property<DateTime?>("ProcessedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("ProcessingResult")
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
-
-                    b.Property<DateTime>("ReceivedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("PayloadHash");
-
-                    b.ToTable("WhatsAppWebhookEvents");
                 });
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.WorkflowAssignmentRule", b =>
@@ -8599,37 +7138,6 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.ToTable("AspNetUserTokens", (string)null);
                 });
 
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.AIAuditLog", b =>
-                {
-                    b.HasOne("EffortlessInsight.Api.Data.Entities.NoticeConversation", "Conversation")
-                        .WithMany()
-                        .HasForeignKey("ConversationId");
-
-                    b.HasOne("EffortlessInsight.Api.Data.Entities.NoticeMessage", "Message")
-                        .WithMany()
-                        .HasForeignKey("MessageId");
-
-                    b.HasOne("EffortlessInsight.Api.Data.Entities.Organization", "Organization")
-                        .WithMany()
-                        .HasForeignKey("OrganizationId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "User")
-                        .WithMany()
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Conversation");
-
-                    b.Navigation("Message");
-
-                    b.Navigation("Organization");
-
-                    b.Navigation("User");
-                });
-
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.ActivityLog", b =>
                 {
                     b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "Actor")
@@ -9240,25 +7748,6 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Navigation("User");
                 });
 
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.ConversationSummary", b =>
-                {
-                    b.HasOne("EffortlessInsight.Api.Data.Entities.NoticeConversation", "Conversation")
-                        .WithMany("Summaries")
-                        .HasForeignKey("ConversationId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("EffortlessInsight.Api.Data.Entities.NoticeMessage", "LastMessage")
-                        .WithMany()
-                        .HasForeignKey("LastMessageId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Conversation");
-
-                    b.Navigation("LastMessage");
-                });
-
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.CustomRole", b =>
                 {
                     b.HasOne("EffortlessInsight.Api.Data.Entities.Organization", "Organization")
@@ -9456,169 +7945,11 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Navigation("ParentFolder");
                 });
 
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.GstSync.GstClient", b =>
-                {
-                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "CreatedByUser")
-                        .WithMany()
-                        .HasForeignKey("CreatedByUserId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("EffortlessInsight.Api.Data.Entities.Organization", "Organization")
-                        .WithMany()
-                        .HasForeignKey("OrganizationId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("CreatedByUser");
-
-                    b.Navigation("Organization");
-                });
-
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.GstSync.GstExtensionEvent", b =>
-                {
-                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "User")
-                        .WithMany()
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.Navigation("User");
-                });
-
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.GstSync.GstNoticeRaw", b =>
-                {
-                    b.HasOne("EffortlessInsight.Api.Data.Entities.GstSync.GstClient", "GstClient")
-                        .WithMany("Notices")
-                        .HasForeignKey("GstClientId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("EffortlessInsight.Api.Data.Entities.GstSync.GstSyncSession", "LastSyncSession")
-                        .WithMany("Notices")
-                        .HasForeignKey("LastSyncSessionId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.Navigation("GstClient");
-
-                    b.Navigation("LastSyncSession");
-                });
-
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.GstSync.GstSyncReminder", b =>
-                {
-                    b.HasOne("EffortlessInsight.Api.Data.Entities.GstSync.GstClient", "GstClient")
-                        .WithMany("Reminders")
-                        .HasForeignKey("GstClientId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "User")
-                        .WithMany()
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("GstClient");
-
-                    b.Navigation("User");
-                });
-
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.GstSync.GstSyncSession", b =>
-                {
-                    b.HasOne("EffortlessInsight.Api.Data.Entities.GstSync.GstClient", "GstClient")
-                        .WithMany("SyncSessions")
-                        .HasForeignKey("GstClientId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("GstClient");
-                });
-
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.GstnConnection", b =>
-                {
-                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "ConnectedBy")
-                        .WithMany()
-                        .HasForeignKey("ConnectedById")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "DisconnectedBy")
-                        .WithMany()
-                        .HasForeignKey("DisconnectedById")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.HasOne("EffortlessInsight.Api.Data.Entities.OrganizationGstin", "OrganizationGstin")
-                        .WithOne("GstnConnection")
-                        .HasForeignKey("EffortlessInsight.Api.Data.Entities.GstnConnection", "OrganizationGstinId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("ConnectedBy");
-
-                    b.Navigation("DisconnectedBy");
-
-                    b.Navigation("OrganizationGstin");
-                });
-
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.GstnOtpSession", b =>
-                {
-                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "InitiatedBy")
-                        .WithMany()
-                        .HasForeignKey("InitiatedById")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("EffortlessInsight.Api.Data.Entities.OrganizationGstin", "OrganizationGstin")
-                        .WithMany()
-                        .HasForeignKey("OrganizationGstinId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("InitiatedBy");
-
-                    b.Navigation("OrganizationGstin");
-                });
-
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.GstnSyncLog", b =>
-                {
-                    b.HasOne("EffortlessInsight.Api.Data.Entities.GstnConnection", "GstnConnection")
-                        .WithMany("SyncLogs")
-                        .HasForeignKey("GstnConnectionId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "TriggeredBy")
-                        .WithMany()
-                        .HasForeignKey("TriggeredById")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.Navigation("GstnConnection");
-
-                    b.Navigation("TriggeredBy");
-                });
-
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.LoginAudit", b =>
                 {
                     b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "User")
                         .WithMany()
                         .HasForeignKey("UserId");
-
-                    b.Navigation("User");
-                });
-
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.MessageFeedback", b =>
-                {
-                    b.HasOne("EffortlessInsight.Api.Data.Entities.NoticeMessage", "Message")
-                        .WithMany("Feedbacks")
-                        .HasForeignKey("MessageId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "User")
-                        .WithMany()
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Message");
 
                     b.Navigation("User");
                 });
@@ -9680,33 +8011,6 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Navigation("Notice");
                 });
 
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.NoticeConversation", b =>
-                {
-                    b.HasOne("EffortlessInsight.Api.Data.Entities.Notice", "Notice")
-                        .WithMany("Conversations")
-                        .HasForeignKey("NoticeId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("EffortlessInsight.Api.Data.Entities.Organization", "Organization")
-                        .WithMany()
-                        .HasForeignKey("OrganizationId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "User")
-                        .WithMany()
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Notice");
-
-                    b.Navigation("Organization");
-
-                    b.Navigation("User");
-                });
-
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.NoticeDeadline", b =>
                 {
                     b.HasOne("EffortlessInsight.Api.Data.Entities.Notice", "Notice")
@@ -9756,17 +8060,6 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Navigation("Organization");
 
                     b.Navigation("UploadedBy");
-                });
-
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.NoticeMessage", b =>
-                {
-                    b.HasOne("EffortlessInsight.Api.Data.Entities.NoticeConversation", "Conversation")
-                        .WithMany("Messages")
-                        .HasForeignKey("ConversationId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Conversation");
                 });
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.NoticeRelationship", b =>
@@ -9961,6 +8254,15 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Navigation("Notification");
                 });
 
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Organization", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Plan", "Plan")
+                        .WithMany()
+                        .HasForeignKey("PlanId");
+
+                    b.Navigation("Plan");
+                });
+
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.OrganizationGstin", b =>
                 {
                     b.HasOne("EffortlessInsight.Api.Data.Entities.Organization", "Organization")
@@ -10094,44 +8396,6 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Navigation("User");
                 });
 
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.ReportSchedule", b =>
-                {
-                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "CreatedBy")
-                        .WithMany()
-                        .HasForeignKey("CreatedById")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("EffortlessInsight.Api.Data.Entities.SavedReport", "SavedReport")
-                        .WithMany("Schedules")
-                        .HasForeignKey("SavedReportId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("CreatedBy");
-
-                    b.Navigation("SavedReport");
-                });
-
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.SavedReport", b =>
-                {
-                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "CreatedBy")
-                        .WithMany()
-                        .HasForeignKey("CreatedById")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("EffortlessInsight.Api.Data.Entities.Organization", "Organization")
-                        .WithMany()
-                        .HasForeignKey("OrganizationId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("CreatedBy");
-
-                    b.Navigation("Organization");
-                });
-
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.ScheduledNotification", b =>
                 {
                     b.HasOne("EffortlessInsight.Api.Data.Entities.Notification", "SentNotification")
@@ -10148,6 +8412,25 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Navigation("SentNotification");
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Subscription", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Organization", "Organization")
+                        .WithMany("Subscriptions")
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Plan", "Plan")
+                        .WithMany()
+                        .HasForeignKey("PlanId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Organization");
+
+                    b.Navigation("Plan");
                 });
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.TaskAssignee", b =>
@@ -10326,44 +8609,6 @@ namespace EffortlessInsight.Api.Data.Migrations
                 {
                     b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "User")
                         .WithMany("Sessions")
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("User");
-                });
-
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.WhatsAppMessageLog", b =>
-                {
-                    b.HasOne("EffortlessInsight.Api.Data.Entities.Organization", "Organization")
-                        .WithMany()
-                        .HasForeignKey("OrganizationId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "User")
-                        .WithMany()
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.Navigation("Organization");
-
-                    b.Navigation("User");
-                });
-
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.WhatsAppSession", b =>
-                {
-                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "User")
-                        .WithMany("WhatsAppSessions")
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.Navigation("User");
-                });
-
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.WhatsAppVerification", b =>
-                {
-                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "User")
-                        .WithMany("WhatsAppVerifications")
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
@@ -10585,10 +8830,6 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Navigation("Sessions");
 
                     b.Navigation("UploadedNotices");
-
-                    b.Navigation("WhatsAppSessions");
-
-                    b.Navigation("WhatsAppVerifications");
                 });
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.ApprovalChain", b =>
@@ -10650,25 +8891,6 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Navigation("SubFolders");
                 });
 
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.GstSync.GstClient", b =>
-                {
-                    b.Navigation("Notices");
-
-                    b.Navigation("Reminders");
-
-                    b.Navigation("SyncSessions");
-                });
-
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.GstSync.GstSyncSession", b =>
-                {
-                    b.Navigation("Notices");
-                });
-
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.GstnConnection", b =>
-                {
-                    b.Navigation("SyncLogs");
-                });
-
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Notice", b =>
                 {
                     b.Navigation("ActivityLogs");
@@ -10678,8 +8900,6 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Navigation("Attachments");
 
                     b.Navigation("Comments");
-
-                    b.Navigation("Conversations");
 
                     b.Navigation("DocumentRequests");
 
@@ -10698,21 +8918,9 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Navigation("Tasks");
                 });
 
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.NoticeConversation", b =>
-                {
-                    b.Navigation("Messages");
-
-                    b.Navigation("Summaries");
-                });
-
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.NoticeDeadline", b =>
                 {
                     b.Navigation("Extensions");
-                });
-
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.NoticeMessage", b =>
-                {
-                    b.Navigation("Feedbacks");
                 });
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.NoticeResponse", b =>
@@ -10761,19 +8969,11 @@ namespace EffortlessInsight.Api.Data.Migrations
 
                     b.Navigation("OrganizationGstins");
 
+                    b.Navigation("Subscriptions");
+
                     b.Navigation("Teams");
 
                     b.Navigation("Users");
-                });
-
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.OrganizationGstin", b =>
-                {
-                    b.Navigation("GstnConnection");
-                });
-
-            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.SavedReport", b =>
-                {
-                    b.Navigation("Schedules");
                 });
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Team", b =>

@@ -1,3 +1,6 @@
+using System.Net.Http.Json;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.DTOs;
@@ -355,22 +358,44 @@ public class MetaWhatsAppChannelService : IWhatsAppChannelService
 #region Push Channel Service (Firebase)
 
 /// <summary>
-/// Firebase FCM push notification service implementation
+/// Push notification service. Routes native FCM registration tokens through the
+/// Firebase Admin SDK and Expo push tokens (ExponentPushToken[...]) through
+/// Expo's push service, so the managed Expo mobile app and the FCM web client
+/// can share a single push channel (audit CC-02).
 /// </summary>
 public class FirebasePushService : IPushChannelService
 {
+    private const string ExpoTokenPrefix = "ExponentPushToken[";
+    private const string ExpoTokenPrefixAlt = "ExpoPushToken[";
+    private const string ExpoPushEndpoint = "https://exp.host/--/api/v2/push/send";
+    private const int ExpoChunkSize = 100; // Expo accepts up to 100 messages per request
+
+    private static readonly JsonSerializerOptions ExpoJsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    };
+
     private readonly FirebaseOptions _options;
     private readonly ILogger<FirebasePushService> _logger;
+    private readonly IHttpClientFactory _httpClientFactory;
     private bool _initialized;
 
     public FirebasePushService(
         IOptions<FirebaseOptions> options,
-        ILogger<FirebasePushService> logger)
+        ILogger<FirebasePushService> logger,
+        IHttpClientFactory httpClientFactory)
     {
         _options = options.Value;
         _logger = logger;
+        _httpClientFactory = httpClientFactory;
         InitializeFirebase();
     }
+
+    private static bool IsExpoToken(string token) =>
+        token.StartsWith(ExpoTokenPrefix, StringComparison.Ordinal)
+        || token.StartsWith(ExpoTokenPrefixAlt, StringComparison.Ordinal);
 
     private void InitializeFirebase()
     {
@@ -452,6 +477,49 @@ public class FirebasePushService : IPushChannelService
         if (!tokens.Any())
             return [];
 
+        // Partition tokens by type while remembering their original positions,
+        // so the returned results line up with the input list. The engine's
+        // invalid-token cleanup matches results to tokens by index.
+        var results = new ChannelSendResult[tokens.Count];
+        var fcmIndices = new List<int>();
+        var expoIndices = new List<int>();
+        for (int i = 0; i < tokens.Count; i++)
+        {
+            if (IsExpoToken(tokens[i]))
+                expoIndices.Add(i);
+            else
+                fcmIndices.Add(i);
+        }
+
+        if (fcmIndices.Count > 0)
+        {
+            var fcmTokens = fcmIndices.Select(i => tokens[i]).ToList();
+            var fcmResults = await SendToFcmTokensAsync(message, fcmTokens, cancellationToken);
+            for (int j = 0; j < fcmIndices.Count && j < fcmResults.Count; j++)
+                results[fcmIndices[j]] = fcmResults[j];
+        }
+
+        if (expoIndices.Count > 0)
+        {
+            var expoTokens = expoIndices.Select(i => tokens[i]).ToList();
+            var expoResults = await SendToExpoTokensAsync(message, expoTokens, cancellationToken);
+            for (int j = 0; j < expoIndices.Count && j < expoResults.Count; j++)
+                results[expoIndices[j]] = expoResults[j];
+        }
+
+        // Guard against any position left unset (defensive; both helpers return
+        // one result per input token).
+        for (int i = 0; i < results.Length; i++)
+            results[i] ??= new ChannelSendResult(false, null, "NO_RESULT", "No push result produced");
+
+        return results.ToList();
+    }
+
+    private async Task<List<ChannelSendResult>> SendToFcmTokensAsync(PushNotificationMessage message, List<string> tokens, CancellationToken cancellationToken)
+    {
+        if (!tokens.Any())
+            return [];
+
         try
         {
             InitializeFirebase();
@@ -466,26 +534,9 @@ public class FirebasePushService : IPushChannelService
                     ImageUrl = message.ImageUrl
                 },
                 Data = message.Data,
-                Android = new AndroidConfig
-                {
-                    Priority = message.Priority == "high" ? Priority.High : Priority.Normal,
-                    Notification = new AndroidNotification
-                    {
-                        ChannelId = message.ChannelId ?? "default",
-                        Icon = "ic_notification",
-                        Color = "#1e40af",
-                        Sound = message.Sound ?? "default"
-                    }
-                },
-                Apns = new ApnsConfig
-                {
-                    Aps = new Aps
-                    {
-                        Alert = new ApsAlert { Title = message.Title, Body = message.Body },
-                        Sound = message.Sound ?? "default",
-                        Badge = message.BadgeCount
-                    }
-                }
+                Android = BuildAndroidConfig(message),
+                Apns = BuildApnsConfig(message),
+                Webpush = BuildWebpushConfig(message)
             };
 
             var response = await FirebaseMessaging.DefaultInstance.SendEachForMulticastAsync(multicastMessage, cancellationToken);
@@ -517,6 +568,194 @@ public class FirebasePushService : IPushChannelService
             _logger.LogError(ex, "Failed to send multicast push notification");
             return tokens.Select(_ => new ChannelSendResult(false, null, "EXCEPTION", ex.Message)).ToList();
         }
+    }
+
+    /// <summary>
+    /// Delivers to Expo push tokens via Expo's push service, chunked at 100 per
+    /// request. Returns one result per input token, in order. Expo's
+    /// "DeviceNotRegistered" is mapped to "UNREGISTERED" so the engine's
+    /// existing invalid-token cleanup deactivates the token, exactly as it does
+    /// for FCM. Note: this inspects the immediate push *tickets*; authoritative
+    /// invalid-token detection also arrives later via Expo *receipts*, which a
+    /// follow-up background job should poll (audit BE-25 / Phase 2).
+    /// </summary>
+    private async Task<List<ChannelSendResult>> SendToExpoTokensAsync(PushNotificationMessage message, List<string> tokens, CancellationToken cancellationToken)
+    {
+        var results = new List<ChannelSendResult>(tokens.Count);
+
+        try
+        {
+            using var http = _httpClientFactory.CreateClient();
+            if (!string.IsNullOrEmpty(_options.ExpoAccessToken))
+            {
+                http.DefaultRequestHeaders.Authorization =
+                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _options.ExpoAccessToken);
+            }
+
+            for (int start = 0; start < tokens.Count; start += ExpoChunkSize)
+            {
+                var chunk = tokens.Skip(start).Take(ExpoChunkSize).ToList();
+                var payload = new ExpoPushRequest
+                {
+                    To = chunk,
+                    Title = message.Title,
+                    Body = message.Body,
+                    Data = message.Data,
+                    Sound = message.Sound ?? "default",
+                    Priority = message.Priority == "high" ? "high" : "default",
+                    ChannelId = message.ChannelId,
+                    Badge = message.BadgeCount,
+                    Ttl = message.TimeToLive.HasValue ? (int)message.TimeToLive.Value.TotalSeconds : null
+                };
+
+                using var response = await http.PostAsJsonAsync(
+                    ExpoPushEndpoint, payload, ExpoJsonOptions, cancellationToken);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    var body = await response.Content.ReadAsStringAsync(cancellationToken);
+                    _logger.LogWarning("Expo push request failed: {Status} {Body}", (int)response.StatusCode, body);
+                    results.AddRange(chunk.Select(_ =>
+                        new ChannelSendResult(false, null, "EXPO_HTTP_ERROR", $"HTTP {(int)response.StatusCode}")));
+                    continue;
+                }
+
+                var parsed = await response.Content.ReadFromJsonAsync<ExpoPushResponse>(ExpoJsonOptions, cancellationToken);
+                var tickets = parsed?.Data;
+
+                if (tickets == null || tickets.Count != chunk.Count)
+                {
+                    _logger.LogWarning(
+                        "Expo push response shape unexpected (expected {Expected} tickets, got {Got})",
+                        chunk.Count, tickets?.Count ?? 0);
+                    results.AddRange(chunk.Select(_ =>
+                        new ChannelSendResult(false, null, "EXPO_BAD_RESPONSE", "Unexpected Expo response")));
+                    continue;
+                }
+
+                foreach (var ticket in tickets)
+                {
+                    if (string.Equals(ticket.Status, "ok", StringComparison.OrdinalIgnoreCase))
+                    {
+                        results.Add(new ChannelSendResult(true, ticket.Id, null, null));
+                    }
+                    else
+                    {
+                        var expoError = ticket.Details?.Error;
+                        var errorCode = string.Equals(expoError, "DeviceNotRegistered", StringComparison.OrdinalIgnoreCase)
+                            ? "UNREGISTERED"
+                            : expoError ?? "EXPO_ERROR";
+                        results.Add(new ChannelSendResult(false, null, errorCode, ticket.Message));
+                    }
+                }
+            }
+
+            _logger.LogInformation("Expo push sent: {Success}/{Total} succeeded",
+                results.Count(r => r.Success), tokens.Count);
+
+            return results;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send Expo push notifications");
+            while (results.Count < tokens.Count)
+                results.Add(new ChannelSendResult(false, null, "EXCEPTION", ex.Message));
+            return results;
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyDictionary<string, ExpoReceiptResult>> CheckExpoReceiptsAsync(
+        IEnumerable<string> ticketIds, CancellationToken cancellationToken = default)
+    {
+        var ids = ticketIds.Distinct().ToList();
+        var results = new Dictionary<string, ExpoReceiptResult>();
+        if (ids.Count == 0)
+            return results;
+
+        try
+        {
+            using var http = _httpClientFactory.CreateClient();
+            if (!string.IsNullOrEmpty(_options.ExpoAccessToken))
+            {
+                http.DefaultRequestHeaders.Authorization =
+                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _options.ExpoAccessToken);
+            }
+
+            // Expo accepts up to 1000 receipt ids per request.
+            for (int start = 0; start < ids.Count; start += 1000)
+            {
+                var chunk = ids.Skip(start).Take(1000).ToList();
+                using var response = await http.PostAsJsonAsync(
+                    "https://exp.host/--/api/v2/push/getReceipts",
+                    new { ids = chunk }, ExpoJsonOptions, cancellationToken);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    _logger.LogWarning("Expo getReceipts failed: {Status}", (int)response.StatusCode);
+                    continue;
+                }
+
+                var parsed = await response.Content.ReadFromJsonAsync<ExpoReceiptsResponse>(ExpoJsonOptions, cancellationToken);
+                if (parsed?.Data == null)
+                    continue;
+
+                foreach (var (ticketId, receipt) in parsed.Data)
+                {
+                    var ok = string.Equals(receipt.Status, "ok", StringComparison.OrdinalIgnoreCase);
+                    results[ticketId] = new ExpoReceiptResult(ok, receipt.Details?.Error);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to check Expo push receipts");
+        }
+
+        return results;
+    }
+
+    private sealed record ExpoReceiptsResponse
+    {
+        public Dictionary<string, ExpoReceipt>? Data { get; init; }
+    }
+
+    private sealed record ExpoReceipt
+    {
+        public string? Status { get; init; }
+        public string? Message { get; init; }
+        public ExpoPushTicketDetails? Details { get; init; }
+    }
+
+    private sealed record ExpoPushRequest
+    {
+        public required List<string> To { get; init; }
+        public string? Title { get; init; }
+        public string? Body { get; init; }
+        public Dictionary<string, string>? Data { get; init; }
+        public string? Sound { get; init; }
+        public string? Priority { get; init; }
+        public string? ChannelId { get; init; }
+        public int? Badge { get; init; }
+        public int? Ttl { get; init; }
+    }
+
+    private sealed record ExpoPushResponse
+    {
+        public List<ExpoPushTicket>? Data { get; init; }
+    }
+
+    private sealed record ExpoPushTicket
+    {
+        public string? Status { get; init; }
+        public string? Id { get; init; }
+        public string? Message { get; init; }
+        public ExpoPushTicketDetails? Details { get; init; }
+    }
+
+    private sealed record ExpoPushTicketDetails
+    {
+        public string? Error { get; init; }
     }
 
     /// <inheritdoc />
@@ -609,25 +848,67 @@ public class FirebasePushService : IPushChannelService
                 ImageUrl = message.ImageUrl
             },
             Data = message.Data,
-            Android = new AndroidConfig
+            Android = BuildAndroidConfig(message),
+            Apns = BuildApnsConfig(message),
+            Webpush = BuildWebpushConfig(message)
+        };
+    }
+
+    // Shared platform-config builders so single-token and multicast sends stay
+    // consistent and carry click action, TTL, collapse key, badge and web link
+    // (audit BE-16 / BE-17 / BE-18 / BE-19).
+    private static AndroidConfig BuildAndroidConfig(PushNotificationMessage message) => new()
+    {
+        Priority = message.Priority == "high" ? Priority.High : Priority.Normal,
+        CollapseKey = message.CollapseKey,
+        TimeToLive = message.TimeToLive,
+        Notification = new AndroidNotification
+        {
+            ChannelId = message.ChannelId ?? "default",
+            Icon = "ic_notification",
+            Color = "#1e40af",
+            Sound = message.Sound ?? "default",
+            ClickAction = "OPEN_NOTIFICATION"
+        }
+    };
+
+    private static ApnsConfig BuildApnsConfig(PushNotificationMessage message)
+    {
+        var config = new ApnsConfig
+        {
+            Aps = new Aps
             {
-                Priority = message.Priority == "high" ? Priority.High : Priority.Normal,
-                Notification = new AndroidNotification
-                {
-                    ChannelId = message.ChannelId ?? "default",
-                    Icon = "ic_notification",
-                    Color = "#1e40af",
-                    Sound = message.Sound ?? "default"
-                }
-            },
-            Apns = new ApnsConfig
+                Alert = new ApsAlert { Title = message.Title, Body = message.Body },
+                Sound = message.Sound ?? "default",
+                Badge = message.BadgeCount
+            }
+        };
+
+        if (message.TimeToLive.HasValue)
+        {
+            config.Headers = new Dictionary<string, string>
             {
-                Aps = new Aps
-                {
-                    Alert = new ApsAlert { Title = message.Title, Body = message.Body },
-                    Sound = message.Sound ?? "default",
-                    Badge = message.BadgeCount
-                }
+                ["apns-expiration"] = DateTimeOffset.UtcNow.Add(message.TimeToLive.Value).ToUnixTimeSeconds().ToString()
+            };
+        }
+
+        return config;
+    }
+
+    private static WebpushConfig? BuildWebpushConfig(PushNotificationMessage message)
+    {
+        var link = message.ActionUrl != null
+            ? $"https://app.effortlessinsight.com{message.ActionUrl}"
+            : null;
+
+        return new WebpushConfig
+        {
+            FcmOptions = link != null ? new WebpushFcmOptions { Link = link } : null,
+            Notification = new WebpushNotification
+            {
+                Title = message.Title,
+                Body = message.Body,
+                Icon = "/small-logo.png"
             }
         };
     }
@@ -661,14 +942,6 @@ public class InAppNotificationService : IInAppChannelService
     {
         try
         {
-            var connections = await _connectionManager.GetConnectionsAsync(message.UserId);
-
-            if (!connections.Any())
-            {
-                _logger.LogDebug("User {UserId} has no active connections, notification stored only", message.UserId);
-                return new ChannelSendResult(true, null, null, null);
-            }
-
             var payload = new
             {
                 type = "notification",
@@ -685,10 +958,13 @@ public class InAppNotificationService : IInAppChannelService
                 }
             };
 
-            await _hubContext.Clients.Clients(connections).SendAsync("notification", payload, cancellationToken);
-
-            _logger.LogDebug("In-app notification sent to {ConnectionCount} connections for user {UserId}",
-                connections.Count, message.UserId);
+            // Target the user through SignalR's user-routing so delivery works
+            // across the Redis backplane regardless of which node holds the
+            // connection (or if this runs in a Hangfire worker). The previous
+            // code targeted only this node's in-memory connection list and
+            // silently dropped everything else (audit BE-11).
+            await _hubContext.Clients.User(message.UserId.ToString())
+                .SendAsync("notification", payload, cancellationToken);
 
             return new ChannelSendResult(true, message.NotificationId.ToString(), null, null);
         }
@@ -704,11 +980,6 @@ public class InAppNotificationService : IInAppChannelService
     {
         try
         {
-            var connections = await _connectionManager.GetOrganizationConnectionsAsync(organizationId);
-
-            if (!connections.Any())
-                return 0;
-
             var payload = new
             {
                 type = "notification",
@@ -725,9 +996,14 @@ public class InAppNotificationService : IInAppChannelService
                 }
             };
 
-            await _hubContext.Clients.Clients(connections).SendAsync("notification", payload, cancellationToken);
+            // Broadcast to the org group (connections join it in the hub's
+            // OnConnectedAsync). Backplane-aware, unlike the per-node connection
+            // list (audit BE-11). The exact recipient count is not known across
+            // the backplane; a best-effort local count is returned for logging.
+            await _hubContext.Clients.Group($"org:{organizationId}")
+                .SendAsync("notification", payload, cancellationToken);
 
-            return connections.Count;
+            return await _connectionManager.GetOnlineUserCountAsync(organizationId);
         }
         catch (Exception ex)
         {
@@ -753,12 +1029,8 @@ public class InAppNotificationService : IInAppChannelService
     {
         try
         {
-            var connections = await _connectionManager.GetConnectionsAsync(userId);
-
-            if (!connections.Any())
-                return;
-
-            await _hubContext.Clients.Clients(connections).SendAsync("badgeUpdate", new { unreadCount }, cancellationToken);
+            await _hubContext.Clients.User(userId.ToString())
+                .SendAsync("badgeUpdate", new { unreadCount }, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -787,18 +1059,39 @@ public class PushTokenService : IPushTokenService
         _logger = logger;
     }
 
+    private const int MaxTokensPerUser = 20;
+    private static readonly string[] ValidPlatforms = { "ios", "android", "web" };
+
     /// <inheritdoc />
     public async Task<PushTokenDto> RegisterTokenAsync(Guid userId, RegisterPushTokenRequest request, CancellationToken cancellationToken = default)
     {
+        // Validate input (audit BE-13): bounded token, known platform.
+        if (string.IsNullOrWhiteSpace(request.Token) || request.Token.Length is < 10 or > 4096)
+            throw new ArgumentException("Invalid push token", nameof(request));
+
+        var platform = (request.Platform ?? string.Empty).ToLowerInvariant();
+        if (!ValidPlatforms.Contains(platform))
+            throw new ArgumentException($"Invalid platform '{request.Platform}'", nameof(request));
+
         // Check if token already exists
         var existing = await _dbContext.PushTokens
             .FirstOrDefaultAsync(t => t.Token == request.Token, cancellationToken);
 
         if (existing != null)
         {
-            // Update existing token (might be from a different user or re-registration)
+            // A device re-registering its own token is normal. Reassigning a
+            // token across users can happen on device handoff but is also the
+            // shape of a hijack attempt, so log it as a security-relevant event
+            // (audit BE-13). Proper device attestation is a larger follow-up.
+            if (existing.UserId != userId)
+            {
+                _logger.LogWarning(
+                    "Push token reassigned from user {OldUser} to user {NewUser}",
+                    existing.UserId, userId);
+            }
+
             existing.UserId = userId;
-            existing.Platform = request.Platform;
+            existing.Platform = platform;
             existing.DeviceInfo = request.DeviceInfo ?? new Dictionary<string, object>();
             existing.IsActive = true;
             existing.LastUsedAt = DateTime.UtcNow;
@@ -806,9 +1099,27 @@ public class PushTokenService : IPushTokenService
 
             await _dbContext.SaveChangesAsync(cancellationToken);
 
-            _logger.LogInformation("Updated push token for user {UserId}, platform {Platform}", userId, request.Platform);
+            _logger.LogInformation("Updated push token for user {UserId}, platform {Platform}", userId, platform);
 
             return new PushTokenDto(existing.Id, existing.Platform, existing.CreatedAt, existing.LastUsedAt, existing.IsActive);
+        }
+
+        // Enforce a per-user cap: deactivate the oldest active tokens beyond the
+        // limit so the token table cannot grow unbounded (audit BE-13/BE-21).
+        var activeCount = await _dbContext.PushTokens
+            .CountAsync(t => t.UserId == userId && t.IsActive, cancellationToken);
+        if (activeCount >= MaxTokensPerUser)
+        {
+            var toRetire = await _dbContext.PushTokens
+                .Where(t => t.UserId == userId && t.IsActive)
+                .OrderBy(t => t.LastUsedAt)
+                .Take(activeCount - MaxTokensPerUser + 1)
+                .ToListAsync(cancellationToken);
+            foreach (var old in toRetire)
+            {
+                old.IsActive = false;
+                old.UpdatedAt = DateTime.UtcNow;
+            }
         }
 
         // Create new token
@@ -816,7 +1127,7 @@ public class PushTokenService : IPushTokenService
         {
             UserId = userId,
             Token = request.Token,
-            Platform = request.Platform,
+            Platform = platform,
             DeviceInfo = request.DeviceInfo ?? new Dictionary<string, object>(),
             IsActive = true,
             LastUsedAt = DateTime.UtcNow
@@ -825,7 +1136,7 @@ public class PushTokenService : IPushTokenService
         _dbContext.PushTokens.Add(token);
         await _dbContext.SaveChangesAsync(cancellationToken);
 
-        _logger.LogInformation("Registered new push token for user {UserId}, platform {Platform}", userId, request.Platform);
+        _logger.LogInformation("Registered new push token for user {UserId}, platform {Platform}", userId, platform);
 
         return new PushTokenDto(token.Id, token.Platform, token.CreatedAt, token.LastUsedAt, token.IsActive);
     }
@@ -840,19 +1151,34 @@ public class PushTokenService : IPushTokenService
     }
 
     /// <inheritdoc />
-    public async Task DeactivateTokenAsync(string token, CancellationToken cancellationToken = default)
+    public async Task<bool> DeactivateTokenAsync(string token, Guid userId, CancellationToken cancellationToken = default)
     {
+        // Scope to the owner so a caller cannot deactivate someone else's token
+        // by knowing its value (audit BE-13).
         var pushToken = await _dbContext.PushTokens
-            .FirstOrDefaultAsync(t => t.Token == token, cancellationToken);
+            .FirstOrDefaultAsync(t => t.Token == token && t.UserId == userId, cancellationToken);
 
-        if (pushToken != null)
-        {
-            pushToken.IsActive = false;
-            pushToken.UpdatedAt = DateTime.UtcNow;
-            await _dbContext.SaveChangesAsync(cancellationToken);
+        if (pushToken == null)
+            return false;
 
-            _logger.LogInformation("Deactivated push token for user {UserId}", pushToken.UserId);
-        }
+        pushToken.IsActive = false;
+        pushToken.UpdatedAt = DateTime.UtcNow;
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        _logger.LogInformation("Deactivated push token for user {UserId}", pushToken.UserId);
+        return true;
+    }
+
+    /// <inheritdoc />
+    public async Task TouchTokensAsync(IEnumerable<string> tokens, CancellationToken cancellationToken = default)
+    {
+        var list = tokens.Distinct().ToList();
+        if (list.Count == 0)
+            return;
+
+        await _dbContext.PushTokens
+            .Where(t => list.Contains(t.Token))
+            .ExecuteUpdateAsync(s => s.SetProperty(t => t.LastUsedAt, DateTime.UtcNow), cancellationToken);
     }
 
     /// <inheritdoc />
@@ -890,7 +1216,19 @@ public class PushTokenService : IPushTokenService
             .Where(t => !t.IsActive && t.UpdatedAt < cutoff)
             .ExecuteDeleteAsync(cancellationToken);
 
-        _logger.LogInformation("Cleaned up {Count} inactive push tokens older than {Days} days", count, daysOld);
+        // Also retire tokens that are still "active" but haven't been used in a
+        // long time — these are almost always uninstalled apps that never sent
+        // an UNREGISTERED signal, and every send keeps fanning out to them
+        // (audit BE-21). FCM guidance is to prune tokens unused ~270 days; we use
+        // a more conservative window.
+        var staleActiveCutoff = DateTime.UtcNow.AddDays(-Math.Max(daysOld, 60));
+        var staleActive = await _dbContext.PushTokens
+            .Where(t => t.IsActive && t.LastUsedAt < staleActiveCutoff)
+            .ExecuteUpdateAsync(s => s.SetProperty(t => t.IsActive, false), cancellationToken);
+
+        _logger.LogInformation(
+            "Cleaned up {Count} inactive push tokens older than {Days} days; retired {Stale} stale-active tokens",
+            count, daysOld, staleActive);
     }
 }
 
@@ -901,6 +1239,7 @@ public class PushTokenService : IPushTokenService
 /// <summary>
 /// SignalR hub for real-time notifications
 /// </summary>
+[Microsoft.AspNetCore.Authorization.Authorize]
 public class NotificationHub : Hub
 {
     private readonly IConnectionManager _connectionManager;
@@ -925,6 +1264,13 @@ public class NotificationHub : Hub
         if (userId.HasValue)
         {
             await _connectionManager.AddConnectionAsync(userId.Value, Context.ConnectionId, organizationId);
+
+            // Join an org group so backplane-aware org broadcasts reach this
+            // connection (audit BE-11). SignalR removes the connection from its
+            // groups automatically on disconnect.
+            if (organizationId.HasValue)
+                await Groups.AddToGroupAsync(Context.ConnectionId, $"org:{organizationId.Value}");
+
             _logger.LogDebug("User {UserId} connected, ConnectionId: {ConnectionId}", userId, Context.ConnectionId);
         }
 
@@ -978,6 +1324,21 @@ public class NotificationHub : Hub
     {
         var claim = Context.User?.FindFirst("organization_id");
         return Guid.TryParse(claim?.Value, out var id) ? id : null;
+    }
+}
+
+/// <summary>
+/// Maps a SignalR connection to a stable user id for Clients.User(...) routing.
+/// The app authenticates with the JWT "sub" claim and disables inbound claim
+/// remapping, so the default provider (which reads ClaimTypes.NameIdentifier)
+/// would return null and Clients.User would target no one (audit BE-11).
+/// </summary>
+public class SignalRUserIdProvider : IUserIdProvider
+{
+    public string? GetUserId(HubConnectionContext connection)
+    {
+        return connection.User?.FindFirst("sub")?.Value
+            ?? connection.User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
     }
 }
 

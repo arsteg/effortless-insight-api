@@ -64,6 +64,15 @@ public class OpenAIOptions
     /// Temperature for response generation (0.0-1.0).
     /// </summary>
     public float Temperature { get; set; } = 0.3f;
+
+    /// <summary>
+    /// Resolves the API key from configuration, falling back to the
+    /// OPENAI_API_KEY environment variable when not set in appsettings.
+    /// </summary>
+    public string ResolveApiKey() =>
+        !string.IsNullOrWhiteSpace(ApiKey)
+            ? ApiKey
+            : Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? string.Empty;
 }
 
 public class AnthropicOptions

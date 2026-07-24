@@ -6,6 +6,18 @@ using Microsoft.EntityFrameworkCore;
 namespace EffortlessInsight.Api.Services.Notifications;
 
 /// <summary>
+/// Lightweight projection of a delivery row for metrics aggregation (BE-25).
+/// </summary>
+internal sealed record DeliveryMetricRow(
+    string Channel,
+    string Status,
+    DateTime? OpenedAt,
+    DateTime? ClickedAt,
+    DateTime? SentAt,
+    DateTime? DeliveredAt,
+    string Type);
+
+/// <summary>
 /// Service for tracking notification delivery status and analytics
 /// </summary>
 public class DeliveryTrackingService : IDeliveryTrackingService
@@ -113,7 +125,6 @@ public class DeliveryTrackingService : IDeliveryTrackingService
 
         var query = _dbContext.NotificationDeliveries
             .AsNoTracking()
-            .Include(d => d.Notification)
             .Where(d => d.CreatedAt >= fromDate && d.CreatedAt <= toDate);
 
         if (organizationId.HasValue)
@@ -121,7 +132,13 @@ public class DeliveryTrackingService : IDeliveryTrackingService
             query = query.Where(d => d.Notification.OrganizationId == organizationId);
         }
 
-        var deliveries = await query.ToListAsync(cancellationToken);
+        // Project to only the columns the aggregation needs, so we don't load
+        // full delivery entities plus the whole Notification navigation into
+        // memory for a wide date range (audit BE-25).
+        var deliveries = await query
+            .Select(d => new DeliveryMetricRow(
+                d.Channel, d.Status, d.OpenedAt, d.ClickedAt, d.SentAt, d.DeliveredAt, d.Notification.Type))
+            .ToListAsync(cancellationToken);
 
         // Calculate channel metrics
         var byChannel = new Dictionary<string, ChannelMetricsDto>();
@@ -159,7 +176,7 @@ public class DeliveryTrackingService : IDeliveryTrackingService
 
         // Calculate type metrics
         var byType = new Dictionary<string, TypeMetricsDto>();
-        var typeGroups = deliveries.GroupBy(d => d.Notification.Type);
+        var typeGroups = deliveries.GroupBy(d => d.Type);
 
         foreach (var group in typeGroups)
         {
@@ -234,21 +251,28 @@ public class NotificationTemplateService : INotificationTemplateService
         string language = "en",
         CancellationToken cancellationToken = default)
     {
+        return await TryRenderAsync(type, channel, variables, language, cancellationToken)
+            ?? throw new InvalidOperationException($"Template not found for {type}/{channel}/{language}");
+    }
+
+    /// <inheritdoc />
+    public async Task<RenderedTemplate?> TryRenderAsync(
+        string type,
+        string channel,
+        Dictionary<string, object> variables,
+        string language = "en",
+        CancellationToken cancellationToken = default)
+    {
         var template = await GetTemplateAsync(type, channel, language, cancellationToken);
 
-        if (template == null)
+        // Fall back to English if a language-specific template isn't found.
+        if (template == null && language != "en")
         {
-            // Fall back to English if language-specific template not found
-            if (language != "en")
-            {
-                template = await GetTemplateAsync(type, channel, "en", cancellationToken);
-            }
-
-            if (template == null)
-            {
-                throw new InvalidOperationException($"Template not found for {type}/{channel}/{language}");
-            }
+            template = await GetTemplateAsync(type, channel, "en", cancellationToken);
         }
+
+        if (template == null)
+            return null;
 
         var renderedBody = RenderVariables(template.Body, variables);
         var renderedSubject = template.Subject != null ? RenderVariables(template.Subject, variables) : null;
@@ -364,8 +388,46 @@ public class NotificationTemplateService : INotificationTemplateService
             });
         }
 
+        // Seed channel-agnostic ("default") content so the engine's primary
+        // render actually resolves a template instead of always falling back to
+        // hardcoded content (audit BE-08). English + Hindi.
+        var defaultTemplates = new (string Type, string Subject, string BodyEn, string BodyHi)[]
+        {
+            (NotificationType.Deadline1Day, "Deadline Tomorrow",
+                "Notice #{noticeNumber} is due tomorrow ({deadline}). Take action to avoid penalties.",
+                "नोटिस #{noticeNumber} की समय-सीमा कल ({deadline}) है। जुर्माने से बचने के लिए कार्रवाई करें।"),
+            (NotificationType.DeadlineToday, "Deadline Today",
+                "Notice #{noticeNumber} is due TODAY. Immediate action required.",
+                "नोटिस #{noticeNumber} की समय-सीमा आज है। तुरंत कार्रवाई आवश्यक है।"),
+            (NotificationType.DeadlineMissed, "Deadline Missed",
+                "Notice #{noticeNumber} deadline has passed. Please respond immediately.",
+                "नोटिस #{noticeNumber} की समय-सीमा बीत चुकी है। कृपया तुरंत उत्तर दें।"),
+            (NotificationType.NoticeHighRisk, "High-Risk Notice Detected",
+                "High-risk notice #{noticeNumber} detected. Review required.",
+                "उच्च-जोखिम वाला नोटिस #{noticeNumber} पाया गया। समीक्षा आवश्यक है।"),
+            (NotificationType.TaskAssigned, "Task Assigned",
+                "You have been assigned a new task for Notice #{noticeNumber}.",
+                "आपको नोटिस #{noticeNumber} के लिए एक नया कार्य सौंपा गया है।"),
+        };
+
+        foreach (var t in defaultTemplates)
+        {
+            _dbContext.NotificationTemplates.Add(new NotificationTemplate
+            {
+                Type = t.Type, Channel = NotificationChannel.Default, Language = "en",
+                Version = 1, Subject = t.Subject, Body = t.BodyEn, IsActive = true
+            });
+            _dbContext.NotificationTemplates.Add(new NotificationTemplate
+            {
+                Type = t.Type, Channel = NotificationChannel.Default, Language = "hi",
+                Version = 1, Subject = t.Subject, Body = t.BodyHi, IsActive = true
+            });
+        }
+
         await _dbContext.SaveChangesAsync(cancellationToken);
-        _logger.LogInformation("Seeded {Count} default notification templates", smsTemplates.Length);
+        _logger.LogInformation(
+            "Seeded {Count} notification templates",
+            smsTemplates.Length + defaultTemplates.Length * 2);
     }
 
     private static string RenderVariables(string template, Dictionary<string, object> variables)

@@ -23,6 +23,7 @@ public class NoticeProcessingJob : INoticeProcessingJob
     private readonly IAuditService _auditService;
     private readonly IBackgroundJobClient _backgroundJobs;
     private readonly INotificationService _notificationService;
+    private readonly INoticeBroadcastService _broadcastService;
     private readonly ILogger<NoticeProcessingJob> _logger;
 
     private const int MaxRetries = 3;
@@ -41,6 +42,7 @@ public class NoticeProcessingJob : INoticeProcessingJob
         IAuditService auditService,
         IBackgroundJobClient backgroundJobs,
         INotificationService notificationService,
+        INoticeBroadcastService broadcastService,
         ILogger<NoticeProcessingJob> logger)
     {
         _db = db;
@@ -50,6 +52,7 @@ public class NoticeProcessingJob : INoticeProcessingJob
         _auditService = auditService;
         _backgroundJobs = backgroundJobs;
         _notificationService = notificationService;
+        _broadcastService = broadcastService;
         _logger = logger;
     }
 
@@ -239,6 +242,16 @@ public class NoticeProcessingJob : INoticeProcessingJob
 
         await _db.SaveChangesAsync(cancellationToken);
 
+        // Broadcast real-time update to connected clients
+        try
+        {
+            await _broadcastService.BroadcastStatusUpdateAsync(notice, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to broadcast status update for notice {NoticeId}", notice.Id);
+        }
+
         // Audit log
         await _auditService.LogAsync(new AuditLogEntry
         {
@@ -306,6 +319,16 @@ public class NoticeProcessingJob : INoticeProcessingJob
 
             await _db.SaveChangesAsync(cancellationToken);
 
+            // Broadcast retry update to connected clients
+            try
+            {
+                await _broadcastService.BroadcastStatusUpdateAsync(notice, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to broadcast retry update for notice {NoticeId}", notice.Id);
+            }
+
             _backgroundJobs.Schedule<INoticeProcessingJob>(
                 job => job.ProcessAsync(notice.Id, CancellationToken.None),
                 delay);
@@ -321,6 +344,16 @@ public class NoticeProcessingJob : INoticeProcessingJob
             notice.ProcessingStatus = NoticeProcessingStatus.Failed;
 
             await _db.SaveChangesAsync(cancellationToken);
+
+            // Broadcast failure update to connected clients
+            try
+            {
+                await _broadcastService.BroadcastStatusUpdateAsync(notice, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to broadcast failure update for notice {NoticeId}", notice.Id);
+            }
 
             // Audit log
             await _auditService.LogAsync(new AuditLogEntry

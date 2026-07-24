@@ -128,10 +128,23 @@ public interface IPushChannelService
     Task<bool> UnsubscribeFromTopicAsync(string token, string topic, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Check Expo push receipts for the given ticket ids (audit BE-25). Returns
+    /// one result per ticket that had a receipt available; missing ids mean the
+    /// receipt is not ready yet and should be retried later.
+    /// </summary>
+    Task<IReadOnlyDictionary<string, ExpoReceiptResult>> CheckExpoReceiptsAsync(
+        IEnumerable<string> ticketIds, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Verify Firebase configuration
     /// </summary>
     Task<bool> VerifyConfigurationAsync(CancellationToken cancellationToken = default);
 }
+
+/// <summary>
+/// Result of an Expo push receipt lookup.
+/// </summary>
+public record ExpoReceiptResult(bool Ok, string? Error);
 
 /// <summary>
 /// Push notification message
@@ -147,7 +160,9 @@ public record PushNotificationMessage(
     string? Sound = null,
     int? BadgeCount = null,
     string? DeepLink = null,
-    string? ActionUrl = null
+    string? ActionUrl = null,
+    TimeSpan? TimeToLive = null, // drop if undelivered after this (BE-17)
+    string? CollapseKey = null   // collapse repeat messages about the same subject (BE-17)
 );
 
 #endregion
@@ -260,6 +275,12 @@ public class ResendOptions
     public string FromEmail { get; set; } = "notifications@effortlessinsight.com";
     public string FromName { get; set; } = "EffortlessInsight";
     public string? ReplyTo { get; set; }
+
+    /// <summary>
+    /// Svix webhook signing secret (whsec_...) used to verify inbound Resend
+    /// delivery/open/click webhooks (audit BE-25).
+    /// </summary>
+    public string? WebhookSecret { get; set; }
 }
 
 
@@ -285,6 +306,15 @@ public class FirebaseOptions
     /// Android notification channel configurations
     /// </summary>
     public Dictionary<string, AndroidChannelConfig> AndroidChannels { get; set; } = new();
+
+    /// <summary>
+    /// Optional Expo access token. When the mobile app registers Expo push
+    /// tokens (ExponentPushToken[...]), the backend delivers them via Expo's
+    /// push service. Setting this token enables Expo's "enhanced security" so
+    /// only requests bearing it can push to your project's tokens. Leave empty
+    /// to send unauthenticated (still functional).
+    /// </summary>
+    public string? ExpoAccessToken { get; set; }
 
     /// <summary>
     /// Generate credentials JSON from individual fields for Firebase Admin SDK
