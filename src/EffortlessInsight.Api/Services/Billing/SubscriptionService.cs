@@ -174,144 +174,152 @@ public class SubscriptionService : ISubscriptionService
         VerifyPaymentRequest request)
     {
         // Fixes Issue #4: Add transaction rollback for payment verification
-        // Wrap entire payment flow in a transaction to ensure atomicity
-        using var transaction = await _dbContext.Database.BeginTransactionAsync();
+        // Use execution strategy to support NpgsqlRetryingExecutionStrategy with transactions
+        var strategy = _dbContext.Database.CreateExecutionStrategy();
 
-        try
+        return await strategy.ExecuteAsync(async () =>
         {
-            // Verify signature
-            var isValid = _razorpayService.VerifyPaymentSignature(
-                request.RazorpayOrderId,
-                request.RazorpayPaymentId,
-                request.RazorpaySignature);
+            // Wrap entire payment flow in a transaction to ensure atomicity
+            using var transaction = await _dbContext.Database.BeginTransactionAsync();
 
-            if (!isValid)
-                throw new InvalidOperationException("Payment signature verification failed");
-
-            var subscription = await GetSubscriptionEntityAsync(organizationId)
-                ?? throw new InvalidOperationException("Subscription not found");
-
-            var plan = await _planService.GetPlanByIdAsync(subscription.PlanId)
-                ?? throw new InvalidOperationException("Plan not found");
-
-            // Capture payment
-            var payment = await _razorpayService.CapturePaymentAsync(request.RazorpayPaymentId);
-
-            // Record payment
-            var paymentRecord = new Payment
+            try
             {
-                OrganizationId = organizationId,
-                SubscriptionId = subscription.Id,
-                Amount = payment.Amount,
-                Currency = payment.Currency,
-                Status = PaymentStatus.Captured,
-                PaymentMethod = payment.Method,
-                RazorpayPaymentId = payment.PaymentId,
-                RazorpayOrderId = request.RazorpayOrderId,
-                RazorpaySignature = request.RazorpaySignature,
-                CapturedAt = DateTime.UtcNow
-            };
-            _dbContext.Payments.Add(paymentRecord);
+                // Verify signature
+                var isValid = _razorpayService.VerifyPaymentSignature(
+                    request.RazorpayOrderId,
+                    request.RazorpayPaymentId,
+                    request.RazorpaySignature);
 
-            // Activate subscription
-            var now = DateTime.UtcNow;
-            var periodEnd = subscription.BillingCycle == BillingCycle.Annually
-                ? now.AddYears(1)
-                : now.AddMonths(1);
+                if (!isValid)
+                    throw new InvalidOperationException("Payment signature verification failed");
 
-            subscription.Status = SubscriptionStatus.Active;
-            subscription.CurrentPeriodStart = now;
-            subscription.CurrentPeriodEnd = periodEnd;
-            subscription.TrialEnd = null;
-            subscription.FailedPaymentAttempts = 0;
-            subscription.Metadata ??= new Dictionary<string, object>();
-            subscription.Metadata["activatedAt"] = now.ToString("O");
-            subscription.Metadata["activatedBy"] = userId.ToString();
+                var subscription = await GetSubscriptionEntityAsync(organizationId)
+                    ?? throw new InvalidOperationException("Subscription not found");
 
-            // Update organization
-            var org = await _dbContext.Organizations.FindAsync(organizationId);
-            if (org != null)
-            {
-                org.SubscriptionStatus = "active";
-            }
+                var plan = await _planService.GetPlanByIdAsync(subscription.PlanId)
+                    ?? throw new InvalidOperationException("Plan not found");
 
-            // Save changes within transaction
-            await _dbContext.SaveChangesAsync();
+                // Capture payment
+                var payment = await _razorpayService.CapturePaymentAsync(request.RazorpayPaymentId);
 
-            // Generate invoice (within same transaction)
-            InvoiceSummaryDto? invoiceSummary = null;
-            var description = $"{plan.DisplayName} Subscription - {subscription.BillingCycle}";
-            var lineItems = new List<InvoiceLineItemRequest>
-            {
-                new()
+                // Record payment
+                var paymentRecord = new Payment
                 {
-                    Type = "subscription",
-                    Description = description,
-                    Quantity = 1,
-                    UnitPrice = (int)(subscription.TotalAmount * 100), // Convert to paise
-                    Amount = (int)(subscription.TotalAmount * 100),
-                    PlanCode = plan.Code,
-                    BillingCycle = subscription.BillingCycle,
-                    PeriodStart = DateOnly.FromDateTime(subscription.CurrentPeriodStart),
-                    PeriodEnd = DateOnly.FromDateTime(subscription.CurrentPeriodEnd)
+                    OrganizationId = organizationId,
+                    SubscriptionId = subscription.Id,
+                    Amount = payment.Amount,
+                    Currency = payment.Currency,
+                    Status = PaymentStatus.Captured,
+                    PaymentMethod = payment.Method,
+                    RazorpayPaymentId = payment.PaymentId,
+                    RazorpayOrderId = request.RazorpayOrderId,
+                    RazorpaySignature = request.RazorpaySignature,
+                    CapturedAt = DateTime.UtcNow
+                };
+                _dbContext.Payments.Add(paymentRecord);
+
+                // Activate subscription
+                var now = DateTime.UtcNow;
+                var periodEnd = subscription.BillingCycle == BillingCycle.Annually
+                    ? now.AddYears(1)
+                    : now.AddMonths(1);
+
+                subscription.Status = SubscriptionStatus.Active;
+                subscription.CurrentPeriodStart = now;
+                subscription.CurrentPeriodEnd = periodEnd;
+                subscription.TrialEnd = null;
+                subscription.FailedPaymentAttempts = 0;
+                subscription.RazorpayOrderId = request.RazorpayOrderId;
+                subscription.RazorpayPaymentId = request.RazorpayPaymentId;
+                subscription.Metadata ??= new Dictionary<string, object>();
+                subscription.Metadata["activatedAt"] = now.ToString("O");
+                subscription.Metadata["activatedBy"] = userId.ToString();
+
+                // Update organization
+                var org = await _dbContext.Organizations.FindAsync(organizationId);
+                if (org != null)
+                {
+                    org.SubscriptionStatus = "active";
                 }
-            };
 
-            var invoice = await _invoiceService.GenerateInvoiceAsync(
-                organizationId,
-                subscription.Id,
-                (int)(subscription.TotalAmount * 100), // Amount in paise
-                description,
-                lineItems);
+                // Save changes within transaction
+                await _dbContext.SaveChangesAsync();
 
-            // Mark invoice as paid
-            await _invoiceService.MarkAsPaidAsync(invoice.Id, request.RazorpayPaymentId);
+                // Generate invoice (within same transaction)
+                InvoiceSummaryDto? invoiceSummary = null;
+                var description = $"{plan.DisplayName} Subscription - {subscription.BillingCycle}";
+                var lineItems = new List<InvoiceLineItemRequest>
+                {
+                    new()
+                    {
+                        Type = "subscription",
+                        Description = description,
+                        Quantity = 1,
+                        UnitPrice = (int)(subscription.TotalAmount * 100), // Convert to paise
+                        Amount = (int)(subscription.TotalAmount * 100),
+                        PlanCode = plan.Code,
+                        BillingCycle = subscription.BillingCycle,
+                        PeriodStart = DateOnly.FromDateTime(subscription.CurrentPeriodStart),
+                        PeriodEnd = DateOnly.FromDateTime(subscription.CurrentPeriodEnd)
+                    }
+                };
 
-            invoiceSummary = new InvoiceSummaryDto(
-                Id: invoice.Id,
-                Number: invoice.InvoiceNumber,
-                DownloadUrl: $"/api/v1/invoices/{invoice.Id}/pdf"
-            );
+                var invoice = await _invoiceService.GenerateInvoiceAsync(
+                    organizationId,
+                    subscription.Id,
+                    (int)(subscription.TotalAmount * 100), // Amount in paise
+                    description,
+                    lineItems);
 
-            // Commit transaction - all or nothing
-            await transaction.CommitAsync();
+                // Mark invoice as paid
+                await _invoiceService.MarkAsPaidAsync(invoice.Id, request.RazorpayPaymentId);
 
-            _logger.LogInformation(
-                "Subscription {SubscriptionId} activated for organization {OrganizationId}",
-                subscription.Id, organizationId);
+                invoiceSummary = new InvoiceSummaryDto(
+                    Id: invoice.Id,
+                    Number: invoice.InvoiceNumber,
+                    DownloadUrl: $"/api/v1/invoices/{invoice.Id}/pdf"
+                );
 
-            return new VerifyPaymentResponse(
-                Success: true,
-                Subscription: new SubscriptionActivatedDto(
-                    Id: subscription.Id,
-                    Status: subscription.Status,
-                    PlanCode: subscription.PlanCode,
-                    ActivatedAt: now
-                ),
-                Invoice: invoiceSummary
-            );
-        }
-        catch (Exception ex)
-        {
-            // Rollback transaction on any error
-            await transaction.RollbackAsync();
+                // Commit transaction - all or nothing
+                await transaction.CommitAsync();
 
-            _logger.LogError(ex,
-                "Failed to verify payment and activate subscription for organization {OrganizationId}. Transaction rolled back.",
-                organizationId);
+                _logger.LogInformation(
+                    "Subscription {SubscriptionId} activated for organization {OrganizationId}",
+                    subscription.Id, organizationId);
 
-            // If payment was captured but DB operations failed, we should ideally refund
-            // For now, log it for manual investigation
-            if (ex.Message.Contains("invoice", StringComparison.OrdinalIgnoreCase) ||
-                ex.Message.Contains("database", StringComparison.OrdinalIgnoreCase))
-            {
-                _logger.LogCritical(
-                    "CRITICAL: Payment {PaymentId} was captured but subscription activation failed. Manual intervention required.",
-                    request.RazorpayPaymentId);
+                return new VerifyPaymentResponse(
+                    Success: true,
+                    Subscription: new SubscriptionActivatedDto(
+                        Id: subscription.Id,
+                        Status: subscription.Status,
+                        PlanCode: subscription.PlanCode,
+                        ActivatedAt: now
+                    ),
+                    Invoice: invoiceSummary
+                );
             }
+            catch (Exception ex)
+            {
+                // Rollback transaction on any error
+                await transaction.RollbackAsync();
 
-            throw;
-        }
+                _logger.LogError(ex,
+                    "Failed to verify payment and activate subscription for organization {OrganizationId}. Transaction rolled back.",
+                    organizationId);
+
+                // If payment was captured but DB operations failed, we should ideally refund
+                // For now, log it for manual investigation
+                if (ex.Message.Contains("invoice", StringComparison.OrdinalIgnoreCase) ||
+                    ex.Message.Contains("database", StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogCritical(
+                        "CRITICAL: Payment {PaymentId} was captured but subscription activation failed. Manual intervention required.",
+                        request.RazorpayPaymentId);
+                }
+
+                throw;
+            }
+        });
     }
 
     public async Task<ChangePlanResponse> ChangePlanAsync(
@@ -566,7 +574,24 @@ public class SubscriptionService : ISubscriptionService
 
         var existingSubscription = await GetSubscriptionEntityAsync(organizationId);
         if (existingSubscription != null)
-            throw new InvalidOperationException("Organization already has a subscription");
+        {
+            // If already trialing, return existing subscription (idempotent behavior)
+            if (existingSubscription.Status == SubscriptionStatus.Trialing)
+            {
+                var existingPlan = await _planService.GetPlanByIdAsync(existingSubscription.PlanId);
+                return MapToSubscriptionDto(existingSubscription, existingPlan!);
+            }
+
+            // If active or past_due, don't allow starting a new trial
+            if (existingSubscription.Status == SubscriptionStatus.Active ||
+                existingSubscription.Status == SubscriptionStatus.PastDue)
+            {
+                throw new InvalidOperationException("Organization already has an active subscription");
+            }
+
+            // For cancelled/expired subscriptions, remove the old one to allow a fresh trial
+            _dbContext.BillingSubscriptions.Remove(existingSubscription);
+        }
 
         // Validate and normalize billing cycle
         var normalizedBillingCycle = billingCycle.ToLowerInvariant();
@@ -1685,6 +1710,62 @@ public class SubscriptionService : ISubscriptionService
         string billingCycle,
         int additionalSeats)
     {
+        var oldPlan = await _planService.GetPlanByIdAsync(subscription.PlanId);
+        var now = DateTime.UtcNow;
+
+        // Calculate remaining value from current plan
+        var totalDays = (subscription.CurrentPeriodEnd - subscription.CurrentPeriodStart).TotalDays;
+        var remainingDays = (subscription.CurrentPeriodEnd - now).TotalDays;
+
+        if (remainingDays > 0 && totalDays > 0 && oldPlan != null)
+        {
+            var remainingFraction = remainingDays / totalDays;
+
+            // Get current plan price (what user paid for current period)
+            var currentPrice = subscription.BillingCycle == BillingCycle.Annually
+                ? oldPlan.PricingAnnually ?? 0
+                : oldPlan.PricingMonthly ?? 0;
+
+            // Add per-seat costs
+            currentPrice += subscription.SeatsAdditional * (subscription.BillingCycle == BillingCycle.Annually
+                ? oldPlan.PerSeatAnnually ?? 0
+                : oldPlan.PerSeatMonthly ?? 0);
+
+            // Remaining value from current plan
+            var remainingValue = currentPrice * remainingFraction;
+
+            // Get new plan price
+            var newPrice = billingCycle == BillingCycle.Annually
+                ? newPlan.PricingAnnually ?? 0
+                : newPlan.PricingMonthly ?? 0;
+
+            // Add per-seat costs for new plan
+            newPrice += additionalSeats * (billingCycle == BillingCycle.Annually
+                ? newPlan.PerSeatAnnually ?? 0
+                : newPlan.PerSeatMonthly ?? 0);
+
+            if (newPrice > 0)
+            {
+                // Calculate new period length in days
+                var newPeriodDays = billingCycle == BillingCycle.Annually ? 365.0 : 30.0;
+
+                // Daily rate of new plan
+                var newDailyRate = newPrice / newPeriodDays;
+
+                // Calculate how many days the remaining value covers on new plan
+                var newRemainingDays = remainingValue / newDailyRate;
+
+                // Update period: start from now, end based on pro-rated days
+                subscription.CurrentPeriodStart = now;
+                subscription.CurrentPeriodEnd = now.AddDays(Math.Max(1, newRemainingDays));
+
+                _logger.LogInformation(
+                    "Plan change period adjustment: Org {OrgId} - Remaining value {RemainingValue:F2}, " +
+                    "New daily rate {DailyRate:F2}, New period ends {PeriodEnd}",
+                    subscription.OrganizationId, remainingValue, newDailyRate, subscription.CurrentPeriodEnd);
+            }
+        }
+
         subscription.PlanCode = newPlan.Code;
         subscription.PlanId = newPlan.Id;
         subscription.BillingCycle = billingCycle;
@@ -1720,7 +1801,7 @@ public class SubscriptionService : ISubscriptionService
         };
 
         // Calculate trial status
-        var isTrialing = subscription.Status == "trial" && subscription.TrialEnd.HasValue && subscription.TrialEnd.Value > DateTime.UtcNow;
+        var isTrialing = subscription.Status == SubscriptionStatus.Trialing && subscription.TrialEnd.HasValue && subscription.TrialEnd.Value > DateTime.UtcNow;
         var trialDaysRemaining = isTrialing && subscription.TrialEnd.HasValue
             ? (int)Math.Ceiling((subscription.TrialEnd.Value - DateTime.UtcNow).TotalDays)
             : (int?)null;

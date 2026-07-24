@@ -107,7 +107,7 @@ public class BillingSubscription : BaseEntity
     public DateTime? ScheduledChangeDate { get; set; }
 
     /// <summary>
-    /// Razorpay subscription ID.
+    /// Razorpay subscription ID (for recurring subscriptions).
     /// </summary>
     [MaxLength(50)]
     public string? RazorpaySubscriptionId { get; set; }
@@ -117,6 +117,18 @@ public class BillingSubscription : BaseEntity
     /// </summary>
     [MaxLength(50)]
     public string? RazorpayCustomerId { get; set; }
+
+    /// <summary>
+    /// Razorpay order ID for the initial/activation payment.
+    /// </summary>
+    [MaxLength(50)]
+    public string? RazorpayOrderId { get; set; }
+
+    /// <summary>
+    /// Razorpay payment ID for the initial/activation payment.
+    /// </summary>
+    [MaxLength(50)]
+    public string? RazorpayPaymentId { get; set; }
 
     /// <summary>
     /// Number of failed payment attempts.

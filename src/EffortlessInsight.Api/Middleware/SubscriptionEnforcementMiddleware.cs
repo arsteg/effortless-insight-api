@@ -16,6 +16,7 @@ public class SubscriptionEnforcementMiddleware
     // Paths that don't require a subscription
     private static readonly HashSet<string> PublicPaths = new(StringComparer.OrdinalIgnoreCase)
     {
+        // Auth endpoints - always allowed
         "/api/v1/auth/login",
         "/api/v1/auth/register",
         "/api/v1/auth/forgot-password",
@@ -23,12 +24,24 @@ public class SubscriptionEnforcementMiddleware
         "/api/v1/auth/verify-email",
         "/api/v1/auth/resend-verification",
         "/api/v1/auth/refresh",
+        "/api/v1/auth/logout",
+        "/api/v1/auth/me",
+        "/api/v1/auth/oauth",
+
+        // Billing/subscription endpoints - needed during checkout
         "/api/v1/plans",
-        "/api/v1/plans/compare",
         "/api/v1/subscriptions/trial",
         "/api/v1/subscriptions",
         "/api/v1/subscriptions/verify",
+        "/api/v1/subscriptions/current",
+        "/api/v1/coupons/validate",
+        "/api/v1/invoices",
+        "/api/v1/payment-methods",
+
+        // Organization endpoints - needed during onboarding
         "/api/v1/organizations",
+
+        // Health/monitoring endpoints
         "/health",
         "/metrics",
         "/hangfire"
