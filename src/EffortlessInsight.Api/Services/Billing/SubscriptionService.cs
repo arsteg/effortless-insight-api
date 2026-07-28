@@ -552,8 +552,20 @@ public class SubscriptionService : ISubscriptionService
         var plan = await _planService.GetPlanByIdAsync(subscription.PlanId)
             ?? throw new InvalidOperationException("Plan not found");
 
+        // Block adding seats for trial subscriptions - user must convert to paid first
+        if (subscription.Status == SubscriptionStatus.Trialing)
+            throw new InvalidOperationException("TRIAL_ACTIVE: Cannot add seats during trial period. Please subscribe to a paid plan first.");
+
+        // Block adding seats for free plans
+        if (plan.PricingMonthly == 0 && plan.PricingAnnually == 0)
+            throw new InvalidOperationException("FREE_PLAN: Cannot add seats on a free plan. Please upgrade to a paid plan first.");
+
+        // Block adding seats for cancelled/expired subscriptions
+        if (subscription.Status == SubscriptionStatus.Cancelled || subscription.Status == SubscriptionStatus.Expired)
+            throw new InvalidOperationException("INACTIVE_SUBSCRIPTION: Cannot add seats to an inactive subscription. Please reactivate or create a new subscription.");
+
         if (!plan.Limits.AdditionalUsersAllowed)
-            throw new InvalidOperationException("This plan does not allow additional seats");
+            throw new InvalidOperationException("ADDITIONAL_USERS_NOT_ALLOWED: This plan does not allow additional seats. Please upgrade to a higher tier plan.");
 
         // Calculate proration for additional seats
         var currentSeats = subscription.SeatsIncluded + subscription.SeatsAdditional;
@@ -1842,6 +1854,96 @@ public class SubscriptionService : ISubscriptionService
                 NewLimit: newStorageLimit,
                 ExcessAmount: currentStorageGb - newStorageLimit
             ));
+        }
+
+        // Check organizations count limit
+        var currentOrgLimit = currentPlan.Limits.OrganizationsCount;
+        var newOrgLimit = newPlan.Limits.OrganizationsCount;
+        var isOrgDowngrade = (currentOrgLimit == -1 && newOrgLimit != -1) ||
+                             (currentOrgLimit != -1 && newOrgLimit != -1 && newOrgLimit < currentOrgLimit);
+
+        if (isOrgDowngrade && newOrgLimit > 0)
+        {
+            // Count organizations owned by users in this organization
+            var orgOwnerUserIds = await _dbContext.OrganizationMembers
+                .Where(m => m.OrganizationId == organizationId && m.Role == "owner" && m.Status == "active")
+                .Select(m => m.UserId)
+                .ToListAsync();
+
+            var totalOwnedOrgs = await _dbContext.OrganizationMembers
+                .CountAsync(m => orgOwnerUserIds.Contains(m.UserId) && m.Role == "owner" && m.Status == "active" && m.Organization.DeletedAt == null);
+
+            if (totalOwnedOrgs > newOrgLimit)
+            {
+                blockers.Add(new PlanChangeBlocker(
+                    Type: "organizations",
+                    Message: $"You own {totalOwnedOrgs} organization(s) but the new plan allows only {newOrgLimit}. Please delete {totalOwnedOrgs - newOrgLimit} organization(s) before downgrading.",
+                    CurrentUsage: totalOwnedOrgs,
+                    NewLimit: newOrgLimit,
+                    ExcessAmount: totalOwnedOrgs - newOrgLimit
+                ));
+            }
+        }
+
+        // Check notices per month limit
+        var currentNoticesLimit = currentPlan.Limits.NoticesPerMonth;
+        var newNoticesLimit = newPlan.Limits.NoticesPerMonth;
+        var currentNoticesCount = usage?.NoticesCount ?? 0;
+        var isNoticesDowngrade = (currentNoticesLimit == -1 && newNoticesLimit != -1) ||
+                                 (currentNoticesLimit != -1 && newNoticesLimit != -1 && newNoticesLimit < currentNoticesLimit);
+
+        if (isNoticesDowngrade && newNoticesLimit != -1 && currentNoticesCount > newNoticesLimit)
+        {
+            blockers.Add(new PlanChangeBlocker(
+                Type: "notices",
+                Message: $"You have uploaded {currentNoticesCount} notices this billing period but the new plan allows only {newNoticesLimit}. This change will take effect at the start of your next billing period.",
+                CurrentUsage: currentNoticesCount,
+                NewLimit: newNoticesLimit,
+                ExcessAmount: currentNoticesCount - newNoticesLimit
+            ));
+        }
+
+        // Check API calls limit
+        var currentApiLimit = currentPlan.Limits.ApiCalls;
+        var newApiLimit = newPlan.Limits.ApiCalls;
+        var currentApiCalls = usage?.ApiCalls ?? 0;
+        var isApiDowngrade = (currentApiLimit == -1 && newApiLimit != -1) ||
+                             (currentApiLimit != -1 && newApiLimit != -1 && newApiLimit < currentApiLimit);
+
+        if (isApiDowngrade && newApiLimit != -1 && currentApiCalls > newApiLimit)
+        {
+            blockers.Add(new PlanChangeBlocker(
+                Type: "api_calls",
+                Message: $"You have made {currentApiCalls} API calls this billing period but the new plan allows only {newApiLimit}. This change will take effect at the start of your next billing period.",
+                CurrentUsage: currentApiCalls,
+                NewLimit: newApiLimit,
+                ExcessAmount: currentApiCalls - newApiLimit
+            ));
+        }
+
+        // Check if additionalUsersAllowed is being lost
+        if (currentPlan.Limits.AdditionalUsersAllowed && !newPlan.Limits.AdditionalUsersAllowed)
+        {
+            // Get current subscription to check if they have additional seats
+            var subscription = await _dbContext.BillingSubscriptions
+                .FirstOrDefaultAsync(s => s.OrganizationId == organizationId && s.DeletedAt == null);
+
+            if (subscription != null && subscription.SeatsAdditional > 0)
+            {
+                var totalSeatsInUse = currentUsers;
+                var newPlanBaseSeats = newPlan.Limits.Users;
+
+                if (totalSeatsInUse > newPlanBaseSeats)
+                {
+                    blockers.Add(new PlanChangeBlocker(
+                        Type: "additional_seats",
+                        Message: $"You have {totalSeatsInUse} users but the new plan only includes {newPlanBaseSeats} seats and does not allow additional users. Please remove {totalSeatsInUse - newPlanBaseSeats} user(s) before downgrading.",
+                        CurrentUsage: totalSeatsInUse,
+                        NewLimit: newPlanBaseSeats,
+                        ExcessAmount: totalSeatsInUse - newPlanBaseSeats
+                    ));
+                }
+            }
         }
 
         // Check features that will be lost (informational, but also block if currently using them)

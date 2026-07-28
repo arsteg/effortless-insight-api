@@ -135,6 +135,36 @@ public class SubscriptionsController : ControllerBase
     }
 
     /// <summary>
+    /// Validate a plan change before executing it.
+    /// Returns validation result with any blockers that would prevent the change.
+    /// </summary>
+    [HttpPost("current/plan/validate")]
+    [ProducesResponseType(typeof(ApiResponse<PlanChangeValidationResult>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ValidatePlanChange([FromBody] ValidatePlanChangeRequest request)
+    {
+        try
+        {
+            var orgId = _currentOrganization.OrganizationId;
+            if (orgId == null)
+            {
+                return BadRequest(new ApiErrorResponse(false, "NO_ORG", "No organization selected"));
+            }
+
+            var result = await _subscriptionService.ValidatePlanChangeAsync(
+                orgId.Value,
+                request.NewPlanCode,
+                request.AdditionalSeats);
+
+            return Ok(new ApiResponse<PlanChangeValidationResult>(true, result));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new ApiErrorResponse(false, "VALIDATION_FAILED", ex.Message));
+        }
+    }
+
+    /// <summary>
     /// Change subscription plan (upgrade/downgrade).
     /// </summary>
     [HttpPut("current/plan")]

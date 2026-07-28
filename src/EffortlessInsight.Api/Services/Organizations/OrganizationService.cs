@@ -111,6 +111,31 @@ public class OrganizationManagementService : IOrganizationManagementService
         var user = await _userManager.FindByIdAsync(userId.ToString())
             ?? throw new KeyNotFoundException("USER_NOT_FOUND");
 
+        // Check organization limit based on user's current subscription
+        // Count organizations where the user is the owner
+        var ownedOrgsCount = await _dbContext.OrganizationMembers
+            .CountAsync(m => m.UserId == userId && m.Role == "owner" && m.Status == "active" && m.Organization.DeletedAt == null);
+
+        // Get user's current organization subscription to check limits
+        if (user.OrganizationId.HasValue)
+        {
+            var subscription = await _dbContext.BillingSubscriptions
+                .Include(s => s.Plan)
+                .FirstOrDefaultAsync(s => s.OrganizationId == user.OrganizationId.Value
+                    && s.Status == "active"
+                    && s.DeletedAt == null);
+
+            if (subscription?.Plan?.Limits.OrganizationsCount > 0)
+            {
+                var orgLimit = subscription.Plan.Limits.OrganizationsCount;
+                if (ownedOrgsCount >= orgLimit)
+                {
+                    throw new InvalidOperationException(
+                        $"ORGANIZATION_LIMIT_EXCEEDED: Maximum {orgLimit} organization(s) allowed on your plan. Please upgrade to create more organizations.");
+                }
+            }
+        }
+
         // Get state name from database
         var stateName = await _gstinValidator.GetStateNameAsync(gstinResult.StateCode!) ?? gstinResult.StateName!;
 
@@ -1041,18 +1066,47 @@ public class OrganizationManagementService : IOrganizationManagementService
 
         var effectiveCount = currentMemberCount + pendingInvitationCount;
 
-        // Get active subscription to check user limit
+        // Get active subscription to check user limit and additionalUsersAllowed
         var subscription = await _dbContext.BillingSubscriptions
             .Include(s => s.Plan)
             .FirstOrDefaultAsync(s => s.OrganizationId == organizationId
                 && s.Status == "active"
                 && s.DeletedAt == null);
 
-        var maxMembers = subscription?.Plan?.Limits.Users ?? DefaultMaxMembers;
+        var baseUserLimit = subscription?.Plan?.Limits.Users ?? DefaultMaxMembers;
+        var additionalUsersAllowed = subscription?.Plan?.Limits.AdditionalUsersAllowed ?? false;
+        var additionalSeats = subscription?.SeatsAdditional ?? 0;
+
+        // Calculate effective limit based on whether additional users are allowed
+        int maxMembers;
+        if (baseUserLimit == -1)
+        {
+            // Unlimited users
+            maxMembers = -1;
+        }
+        else if (additionalUsersAllowed)
+        {
+            // Can have base + purchased additional seats
+            maxMembers = baseUserLimit + additionalSeats;
+        }
+        else
+        {
+            // Cannot exceed base limit at all
+            maxMembers = baseUserLimit;
+        }
 
         if (maxMembers > 0 && effectiveCount >= maxMembers)
         {
-            throw new InvalidOperationException($"USER_LIMIT_EXCEEDED: Maximum {maxMembers} users allowed on your plan (including pending invitations)");
+            if (!additionalUsersAllowed)
+            {
+                throw new InvalidOperationException(
+                    $"ADDITIONAL_USERS_NOT_ALLOWED: Your plan allows {baseUserLimit} user(s) and does not support additional users. Please upgrade to a plan that allows additional users.");
+            }
+            else
+            {
+                throw new InvalidOperationException(
+                    $"USER_LIMIT_EXCEEDED: You have used all {maxMembers} seats ({baseUserLimit} included + {additionalSeats} additional). Please add more seats to invite users.");
+            }
         }
 
         // Admin cannot invite admin or owner
@@ -1271,18 +1325,44 @@ public class OrganizationManagementService : IOrganizationManagementService
                 var currentMemberCount = await _dbContext.OrganizationMembers
                     .CountAsync(m => m.OrganizationId == invitation.OrganizationId && m.Status == "active");
 
-                // Get active subscription to check user limit
+                // Get active subscription to check user limit and additionalUsersAllowed
                 var subscription = await _dbContext.BillingSubscriptions
                     .Include(s => s.Plan)
                     .FirstOrDefaultAsync(s => s.OrganizationId == invitation.OrganizationId
                         && s.Status == "active"
                         && s.DeletedAt == null);
 
-                var maxMembers = subscription?.Plan?.Limits.Users ?? DefaultMaxMembers;
+                var baseUserLimit = subscription?.Plan?.Limits.Users ?? DefaultMaxMembers;
+                var additionalUsersAllowed = subscription?.Plan?.Limits.AdditionalUsersAllowed ?? false;
+                var additionalSeats = subscription?.SeatsAdditional ?? 0;
+
+                // Calculate effective limit
+                int maxMembers;
+                if (baseUserLimit == -1)
+                {
+                    maxMembers = -1;
+                }
+                else if (additionalUsersAllowed)
+                {
+                    maxMembers = baseUserLimit + additionalSeats;
+                }
+                else
+                {
+                    maxMembers = baseUserLimit;
+                }
 
                 if (maxMembers > 0 && currentMemberCount >= maxMembers)
                 {
-                    throw new InvalidOperationException($"USER_LIMIT_EXCEEDED: Organization has reached maximum {maxMembers} members");
+                    if (!additionalUsersAllowed)
+                    {
+                        throw new InvalidOperationException(
+                            $"USER_LIMIT_EXCEEDED: Organization has reached maximum {baseUserLimit} users and the plan does not allow additional users.");
+                    }
+                    else
+                    {
+                        throw new InvalidOperationException(
+                            $"USER_LIMIT_EXCEEDED: Organization has used all {maxMembers} seats ({baseUserLimit} included + {additionalSeats} additional).");
+                    }
                 }
             }
 

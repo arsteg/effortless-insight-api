@@ -519,6 +519,7 @@ public class NoticeServiceImpl : INoticeServiceExtended
     private readonly INoticeWorkflowService _workflowService;
     private readonly IAuditService _auditService;
     private readonly IBackgroundJobClient _backgroundJobs;
+    private readonly Billing.IUsageService _usageService;
     private readonly ILogger<NoticeServiceImpl> _logger;
 
     private const int MaxProcessingAttempts = 3;
@@ -530,6 +531,7 @@ public class NoticeServiceImpl : INoticeServiceExtended
         INoticeWorkflowService workflowService,
         IAuditService auditService,
         IBackgroundJobClient backgroundJobs,
+        Billing.IUsageService usageService,
         ILogger<NoticeServiceImpl> logger)
     {
         _db = db;
@@ -538,6 +540,7 @@ public class NoticeServiceImpl : INoticeServiceExtended
         _workflowService = workflowService;
         _auditService = auditService;
         _backgroundJobs = backgroundJobs;
+        _usageService = usageService;
         _logger = logger;
     }
 
@@ -561,6 +564,16 @@ public class NoticeServiceImpl : INoticeServiceExtended
             return NoticeUploadResult.Failed(
                 validationResult.ErrorCode!,
                 validationResult.ErrorMessage!);
+        }
+
+        // Check storage limit before uploading
+        var (canUpload, storageReason) = await _usageService.CanUploadFileAsync(
+            organizationId, validationResult.FileSize);
+        if (!canUpload)
+        {
+            return NoticeUploadResult.Failed(
+                "STORAGE_LIMIT_EXCEEDED",
+                storageReason ?? "Storage limit reached. Please upgrade your plan or delete some files.");
         }
 
         // Reset stream position for upload
@@ -687,6 +700,14 @@ public class NoticeServiceImpl : INoticeServiceExtended
             throw new InvalidOperationException(validationResult.ErrorMessage);
         }
 
+        // Check storage limit before generating presigned URL
+        var (canUpload, storageReason) = await _usageService.CanUploadFileAsync(organizationId, contentLength);
+        if (!canUpload)
+        {
+            throw new InvalidOperationException(
+                storageReason ?? "STORAGE_LIMIT_EXCEEDED: Storage limit reached. Please upgrade your plan or delete some files.");
+        }
+
         // Generate a temporary notice ID for the S3 key
         var tempNoticeId = Guid.NewGuid();
 
@@ -719,6 +740,15 @@ public class NoticeServiceImpl : INoticeServiceExtended
             return NoticeUploadResult.Failed(
                 "UPLOAD_NOT_FOUND",
                 "Upload not found or expired");
+        }
+
+        // Check storage limit before confirming upload
+        var (canUpload, storageReason) = await _usageService.CanUploadFileAsync(organizationId, fileSize);
+        if (!canUpload)
+        {
+            return NoticeUploadResult.Failed(
+                "STORAGE_LIMIT_EXCEEDED",
+                storageReason ?? "Storage limit reached. Please upgrade your plan or delete some files.");
         }
 
         // Check for duplicates

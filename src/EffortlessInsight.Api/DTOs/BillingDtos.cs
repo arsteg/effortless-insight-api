@@ -252,6 +252,14 @@ public record ChangePlanRequest(
     int? AdditionalSeats
 );
 
+/// <summary>
+/// Request to validate a plan change before executing it.
+/// </summary>
+public record ValidatePlanChangeRequest(
+    string NewPlanCode,
+    int? AdditionalSeats = null
+);
+
 public record ChangePlanResponse(
     string Type, // Always "changed" - plan changes are immediate with prorated end date
     int? ProrationAmount, // Not used - proration is handled via end date adjustment
