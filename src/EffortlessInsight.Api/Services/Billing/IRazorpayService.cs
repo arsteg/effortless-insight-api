@@ -62,6 +62,24 @@ public interface IRazorpayService
     /// Gets the public key for client-side checkout.
     /// </summary>
     string GetPublicKey();
+
+    /// <summary>
+    /// Gets order details including notes.
+    /// </summary>
+    Task<OrderDetails> GetOrderAsync(string orderId);
+}
+
+/// <summary>
+/// Details of a Razorpay order including notes.
+/// </summary>
+public record OrderDetails
+{
+    public string OrderId { get; init; } = string.Empty;
+    public int Amount { get; init; }
+    public string Currency { get; init; } = "INR";
+    public string Receipt { get; init; } = string.Empty;
+    public string Status { get; init; } = string.Empty;
+    public Dictionary<string, string> Notes { get; init; } = new();
 }
 
 /// <summary>
@@ -75,6 +93,18 @@ public record CreateOrderRequest
     public Guid OrganizationId { get; init; }
     public string PlanCode { get; init; } = string.Empty;
     public Guid? SubscriptionId { get; init; }
+    /// <summary>
+    /// Type of payment: "new_subscription", "upgrade", "renewal", "addon"
+    /// </summary>
+    public string PaymentType { get; init; } = "new_subscription";
+    /// <summary>
+    /// Billing cycle for the new plan (for upgrades/changes)
+    /// </summary>
+    public string? BillingCycle { get; init; }
+    /// <summary>
+    /// Additional seats being purchased (for upgrades)
+    /// </summary>
+    public int? AdditionalSeats { get; init; }
 }
 
 /// <summary>

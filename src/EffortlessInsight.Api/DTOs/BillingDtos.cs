@@ -249,20 +249,39 @@ public record InvoiceSummaryDto(
 public record ChangePlanRequest(
     string NewPlanCode,
     string BillingCycle,
-    int? AdditionalSeats,
-    string EffectiveDate // "immediate" or "period_end"
+    int? AdditionalSeats
 );
 
 public record ChangePlanResponse(
-    string Type, // "upgrade" or "downgrade"
-    int? ProrationAmount,
+    string Type, // Always "changed" - plan changes are immediate with prorated end date
+    int? ProrationAmount, // Not used - proration is handled via end date adjustment
     int? NewPlanAmount,
-    int? TotalDue,
-    bool EffectiveImmediately,
-    RazorpayOrderDto? RazorpayOrder,
-    string? ScheduledPlanCode,
-    DateTime? EffectiveDate,
+    int? TotalDue, // Not used - no payment collected, end date adjusted instead
+    bool EffectiveImmediately, // Always true
+    RazorpayOrderDto? RazorpayOrder, // Not used - no payment collected
+    string? ScheduledPlanCode, // Not used - changes are always immediate
+    DateTime? EffectiveDate, // New subscription end date after proration
     string? Message
+);
+
+/// <summary>
+/// Result of validating a plan change request.
+/// </summary>
+public record PlanChangeValidationResult(
+    bool CanChange,
+    List<PlanChangeBlocker>? Blockers,
+    List<string>? FeaturesToLose
+);
+
+/// <summary>
+/// A specific blocker preventing plan change.
+/// </summary>
+public record PlanChangeBlocker(
+    string Type, // "users", "storage", "notices", "api_calls"
+    string Message,
+    int CurrentUsage,
+    int NewLimit,
+    int ExcessAmount
 );
 
 // ============================================================================

@@ -196,8 +196,10 @@ public class SubscriptionService : ISubscriptionService
                 var subscription = await GetSubscriptionEntityAsync(organizationId)
                     ?? throw new InvalidOperationException("Subscription not found");
 
-                var plan = await _planService.GetPlanByIdAsync(subscription.PlanId)
-                    ?? throw new InvalidOperationException("Plan not found");
+                // Get order details to check payment type
+                var orderDetails = await _razorpayService.GetOrderAsync(request.RazorpayOrderId);
+                var paymentType = orderDetails.Notes.GetValueOrDefault("payment_type", "new_subscription");
+                var isUpgradePayment = paymentType == "upgrade";
 
                 // Capture payment
                 var payment = await _razorpayService.CapturePaymentAsync(request.RazorpayPaymentId);
@@ -218,24 +220,131 @@ public class SubscriptionService : ISubscriptionService
                 };
                 _dbContext.Payments.Add(paymentRecord);
 
-                // Activate subscription
                 var now = DateTime.UtcNow;
-                var periodEnd = subscription.BillingCycle == BillingCycle.Annually
-                    ? now.AddYears(1)
-                    : now.AddMonths(1);
+                InvoiceSummaryDto? invoiceSummary = null;
+                SubscriptionPlan plan;
 
-                subscription.Status = SubscriptionStatus.Active;
-                subscription.CurrentPeriodStart = now;
-                subscription.CurrentPeriodEnd = periodEnd;
-                subscription.TrialEnd = null;
-                subscription.FailedPaymentAttempts = 0;
-                subscription.RazorpayOrderId = request.RazorpayOrderId;
-                subscription.RazorpayPaymentId = request.RazorpayPaymentId;
-                subscription.Metadata ??= new Dictionary<string, object>();
-                subscription.Metadata["activatedAt"] = now.ToString("O");
-                subscription.Metadata["activatedBy"] = userId.ToString();
+                if (isUpgradePayment)
+                {
+                    // Handle upgrade payment - apply plan change without resetting period
+                    var newPlanCode = orderDetails.Notes.GetValueOrDefault("plan_code", "");
+                    var newBillingCycle = orderDetails.Notes.GetValueOrDefault("billing_cycle", subscription.BillingCycle);
+                    var additionalSeatsStr = orderDetails.Notes.GetValueOrDefault("additional_seats", "0");
+                    var additionalSeats = int.TryParse(additionalSeatsStr, out var seats) ? seats : subscription.SeatsAdditional;
 
-                // Update organization
+                    var newPlan = await _planService.GetPlanByCodeAsync(newPlanCode)
+                        ?? throw new InvalidOperationException($"Plan '{newPlanCode}' not found");
+                    plan = newPlan;
+
+                    // For upgrades: keep the same period end date (customer paid prorated difference)
+                    var originalEndDate = subscription.CurrentPeriodEnd;
+
+                    subscription.PlanCode = newPlan.Code;
+                    subscription.PlanId = newPlan.Id;
+                    subscription.BillingCycle = newBillingCycle;
+                    subscription.SeatsIncluded = newPlan.Limits.Users;
+                    subscription.SeatsAdditional = additionalSeats;
+                    subscription.Status = SubscriptionStatus.Active;
+                    subscription.RazorpayOrderId = request.RazorpayOrderId;
+                    subscription.RazorpayPaymentId = request.RazorpayPaymentId;
+                    subscription.Metadata ??= new Dictionary<string, object>();
+                    subscription.Metadata["lastUpgradedAt"] = now.ToString("O");
+                    subscription.Metadata["upgradedBy"] = userId.ToString();
+
+                    // Period end stays the same for upgrades
+                    _logger.LogInformation(
+                        "Plan upgrade applied: Org {OrgId} - Changed to {PlanCode}, Period end remains {EndDate}",
+                        organizationId, newPlan.Code, originalEndDate);
+
+                    // Generate proration invoice
+                    var description = $"Plan Upgrade to {newPlan.DisplayName} - Prorated Amount";
+                    var lineItems = new List<InvoiceLineItemRequest>
+                    {
+                        new()
+                        {
+                            Type = "proration",
+                            Description = description,
+                            Quantity = 1,
+                            UnitPrice = payment.Amount,
+                            Amount = payment.Amount,
+                            PlanCode = newPlan.Code,
+                            BillingCycle = newBillingCycle,
+                            PeriodStart = DateOnly.FromDateTime(now),
+                            PeriodEnd = DateOnly.FromDateTime(subscription.CurrentPeriodEnd)
+                        }
+                    };
+
+                    var invoice = await _invoiceService.GenerateInvoiceAsync(
+                        organizationId,
+                        subscription.Id,
+                        payment.Amount,
+                        description,
+                        lineItems);
+
+                    await _invoiceService.MarkAsPaidAsync(invoice.Id, request.RazorpayPaymentId);
+
+                    invoiceSummary = new InvoiceSummaryDto(
+                        Id: invoice.Id,
+                        Number: invoice.InvoiceNumber,
+                        DownloadUrl: $"/api/v1/invoices/{invoice.Id}/pdf"
+                    );
+                }
+                else
+                {
+                    // New subscription payment - set full billing period
+                    plan = await _planService.GetPlanByIdAsync(subscription.PlanId)
+                        ?? throw new InvalidOperationException("Plan not found");
+
+                    var periodEnd = subscription.BillingCycle == BillingCycle.Annually
+                        ? now.AddYears(1)
+                        : now.AddMonths(1);
+
+                    subscription.Status = SubscriptionStatus.Active;
+                    subscription.CurrentPeriodStart = now;
+                    subscription.CurrentPeriodEnd = periodEnd;
+                    subscription.TrialEnd = null;
+                    subscription.FailedPaymentAttempts = 0;
+                    subscription.RazorpayOrderId = request.RazorpayOrderId;
+                    subscription.RazorpayPaymentId = request.RazorpayPaymentId;
+                    subscription.Metadata ??= new Dictionary<string, object>();
+                    subscription.Metadata["activatedAt"] = now.ToString("O");
+                    subscription.Metadata["activatedBy"] = userId.ToString();
+
+                    // Generate subscription invoice
+                    var description = $"{plan.DisplayName} Subscription - {subscription.BillingCycle}";
+                    var lineItems = new List<InvoiceLineItemRequest>
+                    {
+                        new()
+                        {
+                            Type = "subscription",
+                            Description = description,
+                            Quantity = 1,
+                            UnitPrice = (int)(subscription.TotalAmount * 100),
+                            Amount = (int)(subscription.TotalAmount * 100),
+                            PlanCode = plan.Code,
+                            BillingCycle = subscription.BillingCycle,
+                            PeriodStart = DateOnly.FromDateTime(subscription.CurrentPeriodStart),
+                            PeriodEnd = DateOnly.FromDateTime(subscription.CurrentPeriodEnd)
+                        }
+                    };
+
+                    var invoice = await _invoiceService.GenerateInvoiceAsync(
+                        organizationId,
+                        subscription.Id,
+                        (int)(subscription.TotalAmount * 100),
+                        description,
+                        lineItems);
+
+                    await _invoiceService.MarkAsPaidAsync(invoice.Id, request.RazorpayPaymentId);
+
+                    invoiceSummary = new InvoiceSummaryDto(
+                        Id: invoice.Id,
+                        Number: invoice.InvoiceNumber,
+                        DownloadUrl: $"/api/v1/invoices/{invoice.Id}/pdf"
+                    );
+                }
+
+                // Update organization status
                 var org = await _dbContext.Organizations.FindAsync(organizationId);
                 if (org != null)
                 {
@@ -245,46 +354,12 @@ public class SubscriptionService : ISubscriptionService
                 // Save changes within transaction
                 await _dbContext.SaveChangesAsync();
 
-                // Generate invoice (within same transaction)
-                InvoiceSummaryDto? invoiceSummary = null;
-                var description = $"{plan.DisplayName} Subscription - {subscription.BillingCycle}";
-                var lineItems = new List<InvoiceLineItemRequest>
-                {
-                    new()
-                    {
-                        Type = "subscription",
-                        Description = description,
-                        Quantity = 1,
-                        UnitPrice = (int)(subscription.TotalAmount * 100), // Convert to paise
-                        Amount = (int)(subscription.TotalAmount * 100),
-                        PlanCode = plan.Code,
-                        BillingCycle = subscription.BillingCycle,
-                        PeriodStart = DateOnly.FromDateTime(subscription.CurrentPeriodStart),
-                        PeriodEnd = DateOnly.FromDateTime(subscription.CurrentPeriodEnd)
-                    }
-                };
-
-                var invoice = await _invoiceService.GenerateInvoiceAsync(
-                    organizationId,
-                    subscription.Id,
-                    (int)(subscription.TotalAmount * 100), // Amount in paise
-                    description,
-                    lineItems);
-
-                // Mark invoice as paid
-                await _invoiceService.MarkAsPaidAsync(invoice.Id, request.RazorpayPaymentId);
-
-                invoiceSummary = new InvoiceSummaryDto(
-                    Id: invoice.Id,
-                    Number: invoice.InvoiceNumber,
-                    DownloadUrl: $"/api/v1/invoices/{invoice.Id}/pdf"
-                );
-
                 // Commit transaction - all or nothing
                 await transaction.CommitAsync();
 
                 _logger.LogInformation(
-                    "Subscription {SubscriptionId} activated for organization {OrganizationId}",
+                    "{PaymentType} payment verified: Subscription {SubscriptionId} for organization {OrganizationId}",
+                    isUpgradePayment ? "Upgrade" : "New subscription",
                     subscription.Id, organizationId);
 
                 return new VerifyPaymentResponse(
@@ -322,6 +397,24 @@ public class SubscriptionService : ISubscriptionService
         });
     }
 
+    public async Task<PlanChangeValidationResult> ValidatePlanChangeAsync(
+        Guid organizationId,
+        string newPlanCode,
+        int? additionalSeats = null)
+    {
+        var subscription = await GetSubscriptionEntityAsync(organizationId)
+            ?? throw new InvalidOperationException("No active subscription found");
+
+        var currentPlan = await _planService.GetPlanByIdAsync(subscription.PlanId)
+            ?? throw new InvalidOperationException("Current plan not found");
+
+        var newPlan = await _planService.GetPlanByCodeAsync(newPlanCode)
+            ?? throw new InvalidOperationException($"Plan '{newPlanCode}' not found");
+
+        var seats = additionalSeats ?? subscription.SeatsAdditional;
+        return await ValidatePlanChangeAsync(organizationId, currentPlan, newPlan, seats);
+    }
+
     public async Task<ChangePlanResponse> ChangePlanAsync(
         Guid organizationId,
         Guid userId,
@@ -339,83 +432,56 @@ public class SubscriptionService : ISubscriptionService
         if (newPlan.ContactSales)
             throw new InvalidOperationException("Enterprise plans require contacting sales");
 
-        var changeType = _planService.GetPlanChangeType(
-            currentPlan, newPlan,
-            subscription.BillingCycle, request.BillingCycle);
-
         var additionalSeats = request.AdditionalSeats ?? subscription.SeatsAdditional;
 
-        if (changeType == "upgrade" || request.EffectiveDate == "immediate")
+        // Validate plan change is allowed (check usage limits)
+        var validation = await ValidatePlanChangeAsync(organizationId, currentPlan, newPlan, additionalSeats);
+        if (!validation.CanChange && validation.Blockers?.Count > 0)
         {
-            // Immediate upgrade with proration
-            var prorationAmount = _planService.CalculateProration(
-                currentPlan, newPlan,
-                subscription.BillingCycle, request.BillingCycle,
-                subscription.SeatsAdditional, additionalSeats,
-                subscription.CurrentPeriodStart, subscription.CurrentPeriodEnd);
+            var blockerMessages = validation.Blockers.Select(b => b.Message);
+            throw new InvalidOperationException(
+                $"Cannot change plan: {string.Join("; ", blockerMessages)}");
+        }
 
-            if (prorationAmount > 0)
-            {
-                // Create Razorpay order for proration
-                var order = await _razorpayService.CreateOrderAsync(new CreateOrderRequest
-                {
-                    AmountInPaise = prorationAmount,
-                    Currency = "INR",
-                    Receipt = $"upgrade_{subscription.Id:N}",
-                    OrganizationId = organizationId,
-                    PlanCode = newPlan.Code,
-                    SubscriptionId = subscription.Id
-                });
+        var originalEndDate = subscription.CurrentPeriodEnd;
 
-                return new ChangePlanResponse(
-                    Type: changeType,
-                    ProrationAmount: prorationAmount,
-                    NewPlanAmount: _planService.CalculateSubscriptionPrice(newPlan, request.BillingCycle, additionalSeats).Total,
-                    TotalDue: prorationAmount,
-                    EffectiveImmediately: true,
-                    RazorpayOrder: order,
-                    ScheduledPlanCode: null,
-                    EffectiveDate: null,
-                    Message: null
-                );
-            }
+        // Apply plan change immediately with prorated end date adjustment
+        // - Upgrade: End date decreases (remaining value covers fewer days at higher rate)
+        // - Downgrade: End date increases (remaining value covers more days at lower rate)
+        await ApplyPlanChangeAsync(subscription, newPlan, request.BillingCycle, additionalSeats);
 
-            // No charge needed, apply immediately
-            await ApplyPlanChangeAsync(subscription, newPlan, request.BillingCycle, additionalSeats);
+        // Reload to get updated end date
+        await _dbContext.Entry(subscription).ReloadAsync();
 
-            return new ChangePlanResponse(
-                Type: changeType,
-                ProrationAmount: 0,
-                NewPlanAmount: _planService.CalculateSubscriptionPrice(newPlan, request.BillingCycle, additionalSeats).Total,
-                TotalDue: 0,
-                EffectiveImmediately: true,
-                RazorpayOrder: null,
-                ScheduledPlanCode: null,
-                EffectiveDate: null,
-                Message: $"Your plan has been changed to {newPlan.DisplayName}"
-            );
+        // Build message based on end date change
+        string changeMessage;
+        if (subscription.CurrentPeriodEnd > originalEndDate)
+        {
+            changeMessage = $"Your plan has been changed to {newPlan.DisplayName}. " +
+                           $"Your subscription has been extended until {subscription.CurrentPeriodEnd:MMMM d, yyyy}.";
+        }
+        else if (subscription.CurrentPeriodEnd < originalEndDate)
+        {
+            changeMessage = $"Your plan has been changed to {newPlan.DisplayName}. " +
+                           $"Your subscription is now valid until {subscription.CurrentPeriodEnd:MMMM d, yyyy}.";
         }
         else
         {
-            // Schedule downgrade for end of period
-            subscription.ScheduledPlanCode = newPlan.Code;
-            subscription.ScheduledBillingCycle = request.BillingCycle;
-            subscription.ScheduledChangeDate = subscription.CurrentPeriodEnd;
-
-            await _dbContext.SaveChangesAsync();
-
-            return new ChangePlanResponse(
-                Type: changeType,
-                ProrationAmount: null,
-                NewPlanAmount: null,
-                TotalDue: null,
-                EffectiveImmediately: false,
-                RazorpayOrder: null,
-                ScheduledPlanCode: newPlan.Code,
-                EffectiveDate: subscription.CurrentPeriodEnd,
-                Message: $"Your plan will change to {newPlan.DisplayName} on {subscription.CurrentPeriodEnd:MMMM d, yyyy}"
-            );
+            changeMessage = $"Your plan has been changed to {newPlan.DisplayName}. " +
+                           $"Your subscription is valid until {subscription.CurrentPeriodEnd:MMMM d, yyyy}.";
         }
+
+        return new ChangePlanResponse(
+            Type: "changed",
+            ProrationAmount: null,
+            NewPlanAmount: _planService.CalculateSubscriptionPrice(newPlan, request.BillingCycle, additionalSeats).Total,
+            TotalDue: null,
+            EffectiveImmediately: true,
+            RazorpayOrder: null,
+            ScheduledPlanCode: null,
+            EffectiveDate: subscription.CurrentPeriodEnd,
+            Message: changeMessage
+        );
     }
 
     public async Task<CancelSubscriptionResponse> CancelSubscriptionAsync(
@@ -1495,11 +1561,21 @@ public class SubscriptionService : ISubscriptionService
         var newPlan = await _planService.GetPlanByCodeAsync(subscription.ScheduledPlanCode);
         if (newPlan == null) return;
 
-        await ApplyPlanChangeAsync(
-            subscription,
-            newPlan,
-            subscription.ScheduledBillingCycle ?? subscription.BillingCycle,
-            subscription.SeatsAdditional);
+        var newBillingCycle = subscription.ScheduledBillingCycle ?? subscription.BillingCycle;
+
+        // For scheduled changes (at end of billing period), start a new full billing period
+        // This is different from immediate changes which use prorated calculations
+        var now = DateTime.UtcNow;
+        subscription.CurrentPeriodStart = now;
+        subscription.CurrentPeriodEnd = newBillingCycle == BillingCycle.Annually
+            ? now.AddYears(1)
+            : now.AddMonths(1);
+
+        subscription.PlanCode = newPlan.Code;
+        subscription.PlanId = newPlan.Id;
+        subscription.BillingCycle = newBillingCycle;
+        subscription.SeatsIncluded = newPlan.Limits.Users;
+        // Keep the same additional seats
 
         subscription.ScheduledPlanCode = null;
         subscription.ScheduledBillingCycle = null;
@@ -1704,71 +1780,226 @@ public class SubscriptionService : ISubscriptionService
         await _dbContext.SaveChangesAsync();
     }
 
+    /// <summary>
+    /// Validates if a plan change is allowed based on current usage vs new plan limits.
+    /// - Upgrade (more limits): Always allowed
+    /// - Downgrade (less limits): Validates current usage fits within new limits
+    /// </summary>
+    private async Task<PlanChangeValidationResult> ValidatePlanChangeAsync(
+        Guid organizationId,
+        SubscriptionPlan currentPlan,
+        SubscriptionPlan newPlan,
+        int additionalSeats)
+    {
+        var blockers = new List<PlanChangeBlocker>();
+        var featuresToLose = new List<string>();
+
+        // Get current usage
+        var usage = await _usageService.GetCurrentUsageAsync(organizationId);
+        var currentUsers = usage?.UsersCount ?? 0;
+        var currentStorageBytes = usage?.StorageBytes ?? 0;
+        var currentStorageGb = (int)Math.Ceiling(currentStorageBytes / (1024.0 * 1024 * 1024));
+
+        // Current plan limits
+        var currentUserLimit = currentPlan.Limits.Users;
+        var currentStorageLimit = currentPlan.Limits.StorageGb;
+
+        // New plan limits (including additional seats for users)
+        var newUserLimit = newPlan.Limits.Users;
+        if (newUserLimit != -1) // -1 means unlimited
+        {
+            newUserLimit += additionalSeats;
+        }
+        var newStorageLimit = newPlan.Limits.StorageGb;
+
+        // Check if downgrading users (new limit is less than current limit)
+        // Only validate if new plan has LESS users than current plan
+        var isUserDowngrade = (currentUserLimit == -1 && newUserLimit != -1) ||
+                              (currentUserLimit != -1 && newUserLimit != -1 && newUserLimit < currentUserLimit);
+
+        if (isUserDowngrade && newUserLimit != -1 && currentUsers > newUserLimit)
+        {
+            blockers.Add(new PlanChangeBlocker(
+                Type: "users",
+                Message: $"You have {currentUsers} active users but the new plan allows only {newUserLimit}. Please remove {currentUsers - newUserLimit} user(s) before downgrading.",
+                CurrentUsage: currentUsers,
+                NewLimit: newUserLimit,
+                ExcessAmount: currentUsers - newUserLimit
+            ));
+        }
+
+        // Check if downgrading storage (new limit is less than current limit)
+        // Only validate if new plan has LESS storage than current plan
+        var isStorageDowngrade = (currentStorageLimit == -1 && newStorageLimit != -1) ||
+                                  (currentStorageLimit != -1 && newStorageLimit != -1 && newStorageLimit < currentStorageLimit);
+
+        if (isStorageDowngrade && newStorageLimit != -1 && currentStorageGb > newStorageLimit)
+        {
+            blockers.Add(new PlanChangeBlocker(
+                Type: "storage",
+                Message: $"You are using {currentStorageGb} GB storage but the new plan allows only {newStorageLimit} GB. Please reduce your storage usage before downgrading.",
+                CurrentUsage: currentStorageGb,
+                NewLimit: newStorageLimit,
+                ExcessAmount: currentStorageGb - newStorageLimit
+            ));
+        }
+
+        // Check features that will be lost (informational, but also block if currently using them)
+        // Features is a List<string> of feature codes - if in list, feature is enabled
+        if (currentPlan.Features != null && currentPlan.Features.Count > 0)
+        {
+            var newFeatures = newPlan.Features ?? new List<string>();
+
+            foreach (var featureCode in currentPlan.Features)
+            {
+                // Check if feature exists in current plan but not in new plan
+                if (!newFeatures.Contains(featureCode, StringComparer.OrdinalIgnoreCase))
+                {
+                    var featureName = FormatFeatureName(featureCode);
+                    featuresToLose.Add(featureName);
+
+                    // Check if feature is actively being used
+                    var isFeatureInUse = await IsFeatureInUseAsync(organizationId, featureCode);
+                    if (isFeatureInUse)
+                    {
+                        blockers.Add(new PlanChangeBlocker(
+                            Type: "feature",
+                            Message: $"You are actively using '{featureName}' which is not available in the new plan. Please disable this feature before downgrading.",
+                            CurrentUsage: 1,
+                            NewLimit: 0,
+                            ExcessAmount: 1
+                        ));
+                    }
+                }
+            }
+        }
+
+        return new PlanChangeValidationResult(
+            CanChange: blockers.Count == 0,
+            Blockers: blockers.Count > 0 ? blockers : null,
+            FeaturesToLose: featuresToLose.Count > 0 ? featuresToLose : null
+        );
+    }
+
+    /// <summary>
+    /// Checks if a specific feature is actively being used by the organization.
+    /// </summary>
+    private async Task<bool> IsFeatureInUseAsync(Guid organizationId, string featureKey)
+    {
+        // Check specific features that have usage data
+        var key = featureKey.ToLowerInvariant().Replace("_", "");
+
+        if (key is "whatsappintegration")
+        {
+            // Check if WhatsApp messages were sent in the last 30 days
+            return await _dbContext.WhatsAppMessageLogs
+                .AnyAsync(w => w.OrganizationId == organizationId && w.CreatedAt > DateTime.UtcNow.AddDays(-30));
+        }
+
+        if (key is "workflows" or "advancedworkflows")
+        {
+            // Check if organization has active workflow templates
+            return await _dbContext.WorkflowTemplates
+                .AnyAsync(w => w.OrganizationId == organizationId && w.IsActive);
+        }
+
+        // For other features, don't block - just inform about feature loss
+        // Features like API Access, SSO, etc. can be checked when those entities exist
+        return false;
+    }
+
+    /// <summary>
+    /// Formats a feature key into a human-readable name.
+    /// </summary>
+    private static string FormatFeatureName(string featureKey)
+    {
+        // Convert camelCase/snake_case to Title Case with spaces
+        var result = System.Text.RegularExpressions.Regex.Replace(featureKey, "([a-z])([A-Z])", "$1 $2");
+        result = result.Replace("_", " ");
+        return System.Globalization.CultureInfo.CurrentCulture.TextInfo.ToTitleCase(result.ToLower());
+    }
+
+    /// <summary>
+    /// Applies a plan change to the subscription with prorated end date adjustment.
+    /// The remaining value from the current plan is applied to the new plan's daily rate.
+    /// - Upgrade: End date decreases (remaining value covers fewer days at higher rate)
+    /// - Downgrade: End date increases (remaining value covers more days at lower rate)
+    /// Correctly handles billing cycle changes (yearly to monthly and vice versa).
+    /// </summary>
     private async Task ApplyPlanChangeAsync(
         BillingSubscription subscription,
         SubscriptionPlan newPlan,
-        string billingCycle,
+        string newBillingCycle,
         int additionalSeats)
     {
         var oldPlan = await _planService.GetPlanByIdAsync(subscription.PlanId);
         var now = DateTime.UtcNow;
+        var originalEndDate = subscription.CurrentPeriodEnd;
+        var oldBillingCycle = subscription.BillingCycle;
 
-        // Calculate remaining value from current plan
-        var totalDays = (subscription.CurrentPeriodEnd - subscription.CurrentPeriodStart).TotalDays;
+        // Calculate remaining days in current billing period
         var remainingDays = (subscription.CurrentPeriodEnd - now).TotalDays;
 
-        if (remainingDays > 0 && totalDays > 0 && oldPlan != null)
+        // Apply prorated end date calculation for both upgrades and downgrades
+        if (remainingDays > 0 && oldPlan != null)
         {
-            var remainingFraction = remainingDays / totalDays;
-
-            // Get current plan price (what user paid for current period)
-            var currentPrice = subscription.BillingCycle == BillingCycle.Annually
+            // Step 1: Calculate the DAILY RATE of current plan
+            // This is what the user is effectively paying per day
+            var currentPeriodDays = oldBillingCycle == BillingCycle.Annually ? 365.0 : 30.0;
+            var currentPeriodPrice = oldBillingCycle == BillingCycle.Annually
                 ? oldPlan.PricingAnnually ?? 0
                 : oldPlan.PricingMonthly ?? 0;
 
-            // Add per-seat costs
-            currentPrice += subscription.SeatsAdditional * (subscription.BillingCycle == BillingCycle.Annually
+            // Add per-seat costs for current plan
+            currentPeriodPrice += subscription.SeatsAdditional * (oldBillingCycle == BillingCycle.Annually
                 ? oldPlan.PerSeatAnnually ?? 0
                 : oldPlan.PerSeatMonthly ?? 0);
 
-            // Remaining value from current plan
-            var remainingValue = currentPrice * remainingFraction;
+            var currentDailyRate = currentPeriodPrice / currentPeriodDays;
 
-            // Get new plan price
-            var newPrice = billingCycle == BillingCycle.Annually
+            // Step 2: Calculate remaining value based on daily rate × remaining days
+            // This gives the actual monetary value the user has remaining
+            var remainingValue = currentDailyRate * remainingDays;
+
+            // Step 3: Calculate the DAILY RATE of new plan
+            var newPeriodDays = newBillingCycle == BillingCycle.Annually ? 365.0 : 30.0;
+            var newPeriodPrice = newBillingCycle == BillingCycle.Annually
                 ? newPlan.PricingAnnually ?? 0
                 : newPlan.PricingMonthly ?? 0;
 
             // Add per-seat costs for new plan
-            newPrice += additionalSeats * (billingCycle == BillingCycle.Annually
+            newPeriodPrice += additionalSeats * (newBillingCycle == BillingCycle.Annually
                 ? newPlan.PerSeatAnnually ?? 0
                 : newPlan.PerSeatMonthly ?? 0);
 
-            if (newPrice > 0)
+            var newDailyRate = newPeriodPrice / newPeriodDays;
+
+            if (newDailyRate > 0)
             {
-                // Calculate new period length in days
-                var newPeriodDays = billingCycle == BillingCycle.Annually ? 365.0 : 30.0;
-
-                // Daily rate of new plan
-                var newDailyRate = newPrice / newPeriodDays;
-
-                // Calculate how many days the remaining value covers on new plan
+                // Step 4: Calculate how many days the remaining value covers at new daily rate
+                // - If new plan is more expensive (higher daily rate): fewer days
+                // - If new plan is cheaper (lower daily rate): more days
                 var newRemainingDays = remainingValue / newDailyRate;
 
-                // Update period: start from now, end based on pro-rated days
+                // Set new period: start from now, end based on prorated days
                 subscription.CurrentPeriodStart = now;
                 subscription.CurrentPeriodEnd = now.AddDays(Math.Max(1, newRemainingDays));
 
+                var changeType = newDailyRate > currentDailyRate ? "upgrade" : "downgrade";
                 _logger.LogInformation(
-                    "Plan change period adjustment: Org {OrgId} - Remaining value {RemainingValue:F2}, " +
-                    "New daily rate {DailyRate:F2}, New period ends {PeriodEnd}",
-                    subscription.OrganizationId, remainingValue, newDailyRate, subscription.CurrentPeriodEnd);
+                    "Plan {ChangeType} with prorated end date: Org {OrgId} - " +
+                    "Old cycle: {OldCycle} (₹{OldDaily:F2}/day), New cycle: {NewCycle} (₹{NewDaily:F2}/day), " +
+                    "Remaining value: ₹{RemainingValue:F2}, " +
+                    "Original end: {OriginalEnd:yyyy-MM-dd}, New end: {NewEnd:yyyy-MM-dd} ({NewDays:F1} days)",
+                    changeType, subscription.OrganizationId,
+                    oldBillingCycle, currentDailyRate, newBillingCycle, newDailyRate,
+                    remainingValue, originalEndDate, subscription.CurrentPeriodEnd, newRemainingDays);
             }
         }
 
         subscription.PlanCode = newPlan.Code;
         subscription.PlanId = newPlan.Id;
-        subscription.BillingCycle = billingCycle;
+        subscription.BillingCycle = newBillingCycle;
         subscription.SeatsIncluded = newPlan.Limits.Users;
         subscription.SeatsAdditional = additionalSeats;
 

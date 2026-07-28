@@ -35,6 +35,15 @@ public interface ISubscriptionService
         VerifyPaymentRequest request);
 
     /// <summary>
+    /// Validates if a plan change is allowed based on current usage.
+    /// Use this to preview blockers before attempting a plan change.
+    /// </summary>
+    Task<PlanChangeValidationResult> ValidatePlanChangeAsync(
+        Guid organizationId,
+        string newPlanCode,
+        int? additionalSeats = null);
+
+    /// <summary>
     /// Changes the subscription plan (upgrade/downgrade).
     /// </summary>
     Task<ChangePlanResponse> ChangePlanAsync(

@@ -29,19 +29,26 @@ public class RazorpayService : IRazorpayService
     {
         try
         {
+            var notes = new Dictionary<string, string>
+            {
+                { "organization_id", request.OrganizationId.ToString() },
+                { "plan_code", request.PlanCode },
+                { "subscription_id", request.SubscriptionId?.ToString() ?? "" },
+                { "payment_type", request.PaymentType }
+            };
+
+            // Add optional fields for upgrades
+            if (!string.IsNullOrEmpty(request.BillingCycle))
+                notes["billing_cycle"] = request.BillingCycle;
+            if (request.AdditionalSeats.HasValue)
+                notes["additional_seats"] = request.AdditionalSeats.Value.ToString();
+
             var orderOptions = new Dictionary<string, object>
             {
                 { "amount", request.AmountInPaise },
                 { "currency", request.Currency },
                 { "receipt", request.Receipt },
-                {
-                    "notes", new Dictionary<string, string>
-                    {
-                        { "organization_id", request.OrganizationId.ToString() },
-                        { "plan_code", request.PlanCode },
-                        { "subscription_id", request.SubscriptionId?.ToString() ?? "" }
-                    }
-                }
+                { "notes", notes }
             };
 
             Order order = await Task.Run(() => _client.Order.Create(orderOptions));
@@ -67,6 +74,49 @@ public class RazorpayService : IRazorpayService
         {
             _logger.LogError(ex, "Failed to create Razorpay order");
             throw new InvalidOperationException("Failed to create payment order", ex);
+        }
+    }
+
+    public async Task<OrderDetails> GetOrderAsync(string orderId)
+    {
+        try
+        {
+            Order order = await Task.Run(() => _client.Order.Fetch(orderId));
+
+            var notes = new Dictionary<string, string>();
+            if (order.Attributes.ContainsKey("notes"))
+            {
+                var orderNotes = order["notes"];
+                if (orderNotes is Newtonsoft.Json.Linq.JObject jNotes)
+                {
+                    foreach (var prop in jNotes.Properties())
+                    {
+                        notes[prop.Name] = prop.Value?.ToString() ?? "";
+                    }
+                }
+                else if (orderNotes is IDictionary<string, object> dictNotes)
+                {
+                    foreach (var kvp in dictNotes)
+                    {
+                        notes[kvp.Key] = kvp.Value?.ToString() ?? "";
+                    }
+                }
+            }
+
+            return new OrderDetails
+            {
+                OrderId = (string)order["id"],
+                Amount = Convert.ToInt32(order["amount"]),
+                Currency = (string)order["currency"],
+                Receipt = (string)order["receipt"],
+                Status = (string)order["status"],
+                Notes = notes
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to fetch Razorpay order {OrderId}", orderId);
+            throw new InvalidOperationException("Failed to fetch payment order", ex);
         }
     }
 

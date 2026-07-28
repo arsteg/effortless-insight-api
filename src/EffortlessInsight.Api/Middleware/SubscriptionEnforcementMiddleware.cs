@@ -44,7 +44,12 @@ public class SubscriptionEnforcementMiddleware
         // Health/monitoring endpoints
         "/health",
         "/metrics",
-        "/hangfire"
+        "/hangfire",
+
+        // SignalR hubs - needed for real-time notifications regardless of subscription status
+        "/hubs/notifications",
+        "/hubs/notices",
+        "/hubs/chat"
     };
 
     public SubscriptionEnforcementMiddleware(

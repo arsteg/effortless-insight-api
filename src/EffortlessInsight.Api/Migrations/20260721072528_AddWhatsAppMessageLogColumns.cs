@@ -12,82 +12,54 @@ namespace EffortlessInsight.Api.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.AddColumn<string>(
-                name: "CorrelationId",
-                table: "WhatsAppMessageLogs",
-                type: "character varying(50)",
-                maxLength: 50,
-                nullable: true);
+            // Use conditional SQL to add columns only if they don't exist
+            // This makes the migration idempotent and avoids errors from partial previous runs
+            migrationBuilder.Sql(@"
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'WhatsAppMessageLogs' AND column_name = 'CorrelationId') THEN
+                        ALTER TABLE ""WhatsAppMessageLogs"" ADD COLUMN ""CorrelationId"" character varying(50);
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'WhatsAppMessageLogs' AND column_name = 'FullPhoneNumber') THEN
+                        ALTER TABLE ""WhatsAppMessageLogs"" ADD COLUMN ""FullPhoneNumber"" character varying(20);
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'WhatsAppMessageLogs' AND column_name = 'IsRetryable') THEN
+                        ALTER TABLE ""WhatsAppMessageLogs"" ADD COLUMN ""IsRetryable"" boolean NOT NULL DEFAULT false;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'WhatsAppMessageLogs' AND column_name = 'MaxRetryAttempts') THEN
+                        ALTER TABLE ""WhatsAppMessageLogs"" ADD COLUMN ""MaxRetryAttempts"" integer NOT NULL DEFAULT 0;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'WhatsAppMessageLogs' AND column_name = 'NextRetryAt') THEN
+                        ALTER TABLE ""WhatsAppMessageLogs"" ADD COLUMN ""NextRetryAt"" timestamp with time zone;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'WhatsAppMessageLogs' AND column_name = 'ReferenceId') THEN
+                        ALTER TABLE ""WhatsAppMessageLogs"" ADD COLUMN ""ReferenceId"" uuid;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'WhatsAppMessageLogs' AND column_name = 'ReferenceType') THEN
+                        ALTER TABLE ""WhatsAppMessageLogs"" ADD COLUMN ""ReferenceType"" character varying(50);
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'WhatsAppMessageLogs' AND column_name = 'TemplateLanguage') THEN
+                        ALTER TABLE ""WhatsAppMessageLogs"" ADD COLUMN ""TemplateLanguage"" character varying(10);
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'WhatsAppMessageLogs' AND column_name = 'TemplateParameters') THEN
+                        ALTER TABLE ""WhatsAppMessageLogs"" ADD COLUMN ""TemplateParameters"" jsonb;
+                    END IF;
+                END $$;
+            ");
 
-            migrationBuilder.AddColumn<string>(
-                name: "FullPhoneNumber",
-                table: "WhatsAppMessageLogs",
-                type: "character varying(20)",
-                maxLength: 20,
-                nullable: true);
-
-            migrationBuilder.AddColumn<bool>(
-                name: "IsRetryable",
-                table: "WhatsAppMessageLogs",
-                type: "boolean",
-                nullable: false,
-                defaultValue: false);
-
-            migrationBuilder.AddColumn<int>(
-                name: "MaxRetryAttempts",
-                table: "WhatsAppMessageLogs",
-                type: "integer",
-                nullable: false,
-                defaultValue: 0);
-
-            migrationBuilder.AddColumn<DateTime>(
-                name: "NextRetryAt",
-                table: "WhatsAppMessageLogs",
-                type: "timestamp with time zone",
-                nullable: true);
-
-            migrationBuilder.AddColumn<Guid>(
-                name: "ReferenceId",
-                table: "WhatsAppMessageLogs",
-                type: "uuid",
-                nullable: true);
-
-            migrationBuilder.AddColumn<string>(
-                name: "ReferenceType",
-                table: "WhatsAppMessageLogs",
-                type: "character varying(50)",
-                maxLength: 50,
-                nullable: true);
-
-            migrationBuilder.AddColumn<string>(
-                name: "TemplateLanguage",
-                table: "WhatsAppMessageLogs",
-                type: "character varying(10)",
-                maxLength: 10,
-                nullable: true);
-
-            migrationBuilder.AddColumn<List<string>>(
-                name: "TemplateParameters",
-                table: "WhatsAppMessageLogs",
-                type: "jsonb",
-                nullable: true);
-
-            migrationBuilder.CreateTable(
-                name: "WhatsAppWebhookEvents",
-                columns: table => new
-                {
-                    PayloadHash = table.Column<string>(type: "character varying(64)", maxLength: 64, nullable: false),
-                    EntryId = table.Column<string>(type: "character varying(100)", maxLength: 100, nullable: true),
-                    EventType = table.Column<string>(type: "character varying(20)", maxLength: 20, nullable: false),
-                    ReceivedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
-                    ProcessedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
-                    ProcessingResult = table.Column<string>(type: "character varying(20)", maxLength: 20, nullable: true),
-                    ErrorMessage = table.Column<string>(type: "character varying(500)", maxLength: 500, nullable: true)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_WhatsAppWebhookEvents", x => x.PayloadHash);
-                });
+            // Create table only if it doesn't exist
+            migrationBuilder.Sql(@"
+                CREATE TABLE IF NOT EXISTS ""WhatsAppWebhookEvents"" (
+                    ""PayloadHash"" character varying(64) NOT NULL,
+                    ""EntryId"" character varying(100),
+                    ""EventType"" character varying(20) NOT NULL,
+                    ""ReceivedAt"" timestamp with time zone NOT NULL,
+                    ""ProcessedAt"" timestamp with time zone,
+                    ""ProcessingResult"" character varying(20),
+                    ""ErrorMessage"" character varying(500),
+                    CONSTRAINT ""PK_WhatsAppWebhookEvents"" PRIMARY KEY (""PayloadHash"")
+                );
+            ");
         }
 
         /// <inheritdoc />
