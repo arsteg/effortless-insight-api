@@ -1,4 +1,4 @@
-using EffortlessInsight.Api.Data;
+﻿using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.DTOs;
 using EffortlessInsight.Api.Jobs;
@@ -167,8 +167,8 @@ public class TaskService : ITaskService
                 $"assigned task \"{task.Title}\""
             );
 
-            // Send notification to assignees (fire and forget)
-            _ = _notificationService.NotifyTaskAssignedAsync(task, otherAssignees, userId);
+            // Send notification to assignees (awaited: shares the scoped DbContext; swallows its own errors)
+            await _notificationService.NotifyTaskAssignedAsync(task, otherAssignees, userId);
 
             // Queue WhatsApp notifications for assignees
             foreach (var assigneeId in otherAssignees)
@@ -479,8 +479,8 @@ public class TaskService : ITaskService
                 $"completed task \"{task.Title}\""
             );
 
-            // Send notification to task creator (fire and forget)
-            _ = _notificationService.NotifyTaskCompletedAsync(task, userId);
+            // Send notification to task creator (awaited: shares the scoped DbContext; swallows its own errors)
+            await _notificationService.NotifyTaskCompletedAsync(task, userId);
         }
         else if (changes.ContainsKey("status"))
         {
@@ -499,8 +499,8 @@ public class TaskService : ITaskService
                 $"changed task \"{task.Title}\" status from {oldStatus} to {task.Status}"
             );
 
-            // Send notification to assignees (fire and forget)
-            _ = _notificationService.NotifyTaskStatusChangedAsync(task, oldStatus, userId);
+            // Send notification to assignees (awaited: shares the scoped DbContext; swallows its own errors)
+            await _notificationService.NotifyTaskStatusChangedAsync(task, oldStatus, userId);
         }
         else if (changes.Any())
         {
@@ -638,20 +638,22 @@ public class TaskService : ITaskService
 
     public async Task<List<TaskTemplateDto>> GetTaskTemplatesAsync(Guid organizationId, string? noticeType = null)
     {
-        var query = _context.TaskTemplates
-            .Where(t => t.IsActive && (t.OrganizationId == null || t.OrganizationId == organizationId));
-
-        if (!string.IsNullOrEmpty(noticeType))
-        {
-            query = query.Where(t =>
-                t.ApplicableNoticeTypes == null ||
-                t.ApplicableNoticeTypes.Contains("*") ||
-                t.ApplicableNoticeTypes.Contains(noticeType));
-        }
-
-        var templates = await query
+        var templates = await _context.TaskTemplates
+            .Where(t => t.IsActive && (t.OrganizationId == null || t.OrganizationId == organizationId))
             .OrderBy(t => t.Name)
             .ToListAsync();
+
+        // ApplicableNoticeTypes is a jsonb-mapped List<string>; Contains() cannot
+        // be translated to SQL, so filter in memory (templates per org are few).
+        if (!string.IsNullOrEmpty(noticeType))
+        {
+            templates = templates
+                .Where(t =>
+                    t.ApplicableNoticeTypes == null ||
+                    t.ApplicableNoticeTypes.Contains("*") ||
+                    t.ApplicableNoticeTypes.Contains(noticeType))
+                .ToList();
+        }
 
         return templates.Select(MapToTemplateDto).ToList();
     }
@@ -691,8 +693,11 @@ public class TaskService : ITaskService
             [TaskStatusValues.Todo] = new[] { TaskStatusValues.InProgress, TaskStatusValues.Blocked, TaskStatusValues.OnHold, TaskStatusValues.Done },
             [TaskStatusValues.InProgress] = new[] { TaskStatusValues.Todo, TaskStatusValues.Done, TaskStatusValues.Blocked, TaskStatusValues.OnHold },
             [TaskStatusValues.Done] = new[] { TaskStatusValues.Todo, TaskStatusValues.InProgress, TaskStatusValues.Archived },
-            [TaskStatusValues.Blocked] = new[] { TaskStatusValues.Todo, TaskStatusValues.InProgress, TaskStatusValues.OnHold },
-            [TaskStatusValues.OnHold] = new[] { TaskStatusValues.Todo, TaskStatusValues.InProgress, TaskStatusValues.Blocked },
+            // Done is reachable from every active status: the UI offers
+            // "Mark Complete" everywhere, and a blocked/on-hold task whose
+            // impediment disappeared can legitimately be completed directly.
+            [TaskStatusValues.Blocked] = new[] { TaskStatusValues.Todo, TaskStatusValues.InProgress, TaskStatusValues.OnHold, TaskStatusValues.Done },
+            [TaskStatusValues.OnHold] = new[] { TaskStatusValues.Todo, TaskStatusValues.InProgress, TaskStatusValues.Blocked, TaskStatusValues.Done },
             [TaskStatusValues.Archived] = Array.Empty<string>()
         };
 

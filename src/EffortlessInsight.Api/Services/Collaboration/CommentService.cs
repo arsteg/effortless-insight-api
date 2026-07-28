@@ -1,4 +1,4 @@
-using System.Text.RegularExpressions;
+﻿using System.Text.RegularExpressions;
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.DTOs;
@@ -121,10 +121,10 @@ public partial class CommentService : ICommentService
             );
         }
 
-        // Send mention notifications (fire and forget)
+        // Send mention notifications (awaited: shares the scoped DbContext; swallows its own errors)
         if (mentionedUserIds.Any())
         {
-            _ = _notificationService.NotifyMentionAsync(comment, mentionedUserIds);
+            await _notificationService.NotifyMentionAsync(comment, mentionedUserIds);
         }
 
         return await GetCommentResponseAsync(comment.Id, userId);
@@ -178,17 +178,17 @@ public partial class CommentService : ICommentService
             "replied to a comment"
         );
 
-        // Send reply notification to parent comment author (fire and forget)
+        // Send reply notification to parent comment author (awaited: shares the scoped DbContext; swallows its own errors)
         if (parentComment.UserId != userId)
         {
-            _ = _notificationService.NotifyCommentReplyAsync(reply, parentComment);
+            await _notificationService.NotifyCommentReplyAsync(reply, parentComment);
         }
 
         // Send mention notifications for any mentioned users
         var mentionedUserIds = mentions.Where(m => m.UserId != userId).Select(m => m.UserId).ToList();
         if (mentionedUserIds.Any())
         {
-            _ = _notificationService.NotifyMentionAsync(reply, mentionedUserIds);
+            await _notificationService.NotifyMentionAsync(reply, mentionedUserIds);
         }
 
         return await GetCommentResponseAsync(reply.Id, userId);

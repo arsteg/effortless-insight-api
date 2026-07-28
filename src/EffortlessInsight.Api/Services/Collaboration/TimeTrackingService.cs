@@ -347,8 +347,10 @@ public class TimeTrackingService : ITimeTrackingService
 
     private async Task UpdateTaskActualHoursAsync(Guid taskId, CancellationToken ct)
     {
+        // IsTimerRunning is computed (StartTime set, EndTime null) and cannot be
+        // translated to SQL — use the underlying columns instead.
         var totalHours = await _context.TimeEntries
-            .Where(e => e.TaskId == taskId && !e.IsTimerRunning)
+            .Where(e => e.TaskId == taskId && (e.StartTime == null || e.EndTime != null))
             .SumAsync(e => e.Hours, ct);
 
         var task = await _context.Tasks.FindAsync(new object[] { taskId }, ct);

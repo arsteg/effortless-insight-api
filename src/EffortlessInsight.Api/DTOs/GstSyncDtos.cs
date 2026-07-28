@@ -338,6 +338,26 @@ public record SyncNoticesResult
     public int NoticesUpdated { get; init; }
     public int NoticesUnchanged { get; init; }
     public List<string> Errors { get; init; } = [];
+
+    /// <summary>
+    /// Backend IDs of the processed notices, keyed by portal notice ID,
+    /// so the extension can reference them in follow-up calls (e.g. PDF upload).
+    /// </summary>
+    public List<SyncedNoticeRef> Notices { get; init; } = [];
+}
+
+/// <summary>
+/// Maps a portal notice ID to its backend raw-notice ID.
+/// </summary>
+public record SyncedNoticeRef
+{
+    public string PortalNoticeId { get; init; } = null!;
+    public Guid Id { get; init; }
+
+    /// <summary>
+    /// Processing outcome for this notice: new, updated, or unchanged.
+    /// </summary>
+    public string Status { get; init; } = null!;
 }
 
 /// <summary>

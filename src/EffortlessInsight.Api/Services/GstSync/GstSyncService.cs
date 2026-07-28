@@ -98,17 +98,17 @@ public class GstSyncService : IGstSyncService
             throw new InvalidOperationException($"Cannot sync notices to session in status '{session.Status}'.");
         }
 
-        var result = new SyncNoticesResult();
         var newCount = 0;
         var updatedCount = 0;
         var unchangedCount = 0;
         var errors = new List<string>();
+        var syncedNotices = new List<SyncedNoticeRef>();
 
         foreach (var noticeData in request.Notices)
         {
             try
             {
-                var (status, _) = await ProcessNoticeAsync(session, noticeData, cancellationToken);
+                var (status, notice) = await ProcessNoticeAsync(session, noticeData, cancellationToken);
                 switch (status)
                 {
                     case "new":
@@ -121,6 +121,13 @@ public class GstSyncService : IGstSyncService
                         unchangedCount++;
                         break;
                 }
+
+                syncedNotices.Add(new SyncedNoticeRef
+                {
+                    PortalNoticeId = notice.PortalNoticeId,
+                    Id = notice.Id,
+                    Status = status
+                });
             }
             catch (Exception ex)
             {
@@ -146,7 +153,8 @@ public class GstSyncService : IGstSyncService
             NoticesNew = newCount,
             NoticesUpdated = updatedCount,
             NoticesUnchanged = unchangedCount,
-            Errors = errors
+            Errors = errors,
+            Notices = syncedNotices
         };
     }
 

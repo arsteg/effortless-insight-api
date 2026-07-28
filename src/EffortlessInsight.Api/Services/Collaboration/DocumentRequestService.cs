@@ -1,4 +1,4 @@
-using EffortlessInsight.Api.Data;
+﻿using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.DTOs;
 using EffortlessInsight.Api.Services.Storage;
@@ -102,8 +102,8 @@ public class DocumentRequestService : IDocumentRequestService
             $"requested document \"{request.Title}\" from {requestedFrom.Name}"
         );
 
-        // Send notification to the requested user (fire and forget)
-        _ = _notificationService.NotifyDocumentRequestedAsync(request);
+        // Send notification to the requested user (awaited: shares the scoped DbContext; swallows its own errors)
+        await _notificationService.NotifyDocumentRequestedAsync(request);
 
         return await GetDocumentRequestByIdAsync(request.Id, userId);
     }
@@ -268,8 +268,8 @@ public class DocumentRequestService : IDocumentRequestService
             $"uploaded document for \"{request.Title}\""
         );
 
-        // Send notification to the requester (fire and forget)
-        _ = _notificationService.NotifyDocumentSubmittedAsync(request);
+        // Send notification to the requester (awaited: shares the scoped DbContext; swallows its own errors)
+        await _notificationService.NotifyDocumentSubmittedAsync(request);
 
         return await GetDocumentRequestByIdAsync(requestId, userId);
     }
@@ -343,8 +343,8 @@ public class DocumentRequestService : IDocumentRequestService
                 : $"requested resubmission for \"{request.Title}\""
         );
 
-        // Send notification to the submitter (fire and forget)
-        _ = _notificationService.NotifyDocumentReviewedAsync(request, status == DocumentRequestStatus.Fulfilled);
+        // Send notification to the submitter (awaited: shares the scoped DbContext; swallows its own errors)
+        await _notificationService.NotifyDocumentReviewedAsync(request, status == DocumentRequestStatus.Fulfilled);
 
         return await GetDocumentRequestByIdAsync(requestId, userId);
     }
