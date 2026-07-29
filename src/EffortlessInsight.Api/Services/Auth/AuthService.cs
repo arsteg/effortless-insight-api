@@ -113,11 +113,13 @@ public class AuthService : IAuthService
                 AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(VerificationTokenExpiryHours)
             });
 
-        // Send verification email
+        // Send verification email; if it fails, roll back the user so the
+        // registration can be retried with the same email
+        bool emailSent;
         try
         {
             var verificationLink = $"{_configuration["App:BaseUrl"]}/verify-email?token={verificationToken}";
-            await _emailService.SendTemplateAsync(
+            emailSent = await _emailService.SendTemplateAsync(
                 user.Email!,
                 "auth_verify_email",
                 new Dictionary<string, object>
@@ -130,7 +132,25 @@ public class AuthService : IAuthService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to send verification email to {Email}", user.Email);
-            // Don't fail registration if email sending fails
+            emailSent = false;
+        }
+
+        if (!emailSent)
+        {
+            _logger.LogError("Verification email to {Email} was not sent, rolling back user creation", user.Email);
+
+            await _cache.RemoveAsync(cacheKey);
+
+            var deleteResult = await _userManager.DeleteAsync(user);
+            if (!deleteResult.Succeeded)
+            {
+                _logger.LogError(
+                    "Failed to roll back user {UserId} after email send failure: {Errors}",
+                    user.Id,
+                    string.Join(", ", deleteResult.Errors.Select(e => e.Description)));
+            }
+
+            throw new InvalidOperationException("EMAIL_SEND_FAILED");
         }
 
         // Log audit

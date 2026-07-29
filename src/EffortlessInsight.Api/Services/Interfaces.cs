@@ -93,8 +93,10 @@ public interface IFileStorageService
 
 public interface IEmailService
 {
-    Task SendAsync(string to, string subject, string htmlBody);
-    Task SendTemplateAsync(string to, string templateId, Dictionary<string, object> data);
+    /// <returns>True if the email was accepted by the provider, false otherwise.</returns>
+    Task<bool> SendAsync(string to, string subject, string htmlBody);
+    /// <returns>True if the email was accepted by the provider, false otherwise.</returns>
+    Task<bool> SendTemplateAsync(string to, string templateId, Dictionary<string, object> data);
     Task SendBulkAsync(List<string> recipients, string subject, string htmlBody);
 }
 
@@ -123,7 +125,7 @@ public class ResendEmailServiceImpl : IEmailService
         _logger = logger;
     }
 
-    public async Task SendAsync(string to, string subject, string htmlBody)
+    public async Task<bool> SendAsync(string to, string subject, string htmlBody)
     {
         try
         {
@@ -142,23 +144,24 @@ public class ResendEmailServiceImpl : IEmailService
             if (!response.Success)
             {
                 _logger.LogError("Failed to send email to {To}: {Error}", to, response.Exception?.Message);
-                return; // Don't throw, just log the error
+                return false;
             }
 
             _logger.LogInformation("Email sent successfully to {To}, MessageId: {MessageId}", to, response.Content);
+            return true;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Exception while sending email to {To}", to);
-            // Don't rethrow - let the calling code continue
+            return false;
         }
     }
 
-    public async Task SendTemplateAsync(string to, string templateId, Dictionary<string, object> data)
+    public async Task<bool> SendTemplateAsync(string to, string templateId, Dictionary<string, object> data)
     {
         // Render template based on templateId
         var (subject, htmlBody) = RenderTemplate(templateId, data);
-        await SendAsync(to, subject, htmlBody);
+        return await SendAsync(to, subject, htmlBody);
     }
 
     public async Task SendBulkAsync(List<string> recipients, string subject, string htmlBody)

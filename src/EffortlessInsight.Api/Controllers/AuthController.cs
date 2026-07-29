@@ -40,6 +40,7 @@ public class AuthController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<RegisterResponse>), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status409Conflict)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status503ServiceUnavailable)]
     public async Task<IActionResult> Register([FromBody] RegisterRequest request)
     {
         try
@@ -62,6 +63,11 @@ public class AuthController : ControllerBase
         catch (InvalidOperationException ex) when (ex.Message.StartsWith("REGISTRATION_FAILED"))
         {
             return BadRequest(new ApiErrorResponse(false, "REGISTRATION_FAILED", ex.Message.Replace("REGISTRATION_FAILED: ", "")));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "EMAIL_SEND_FAILED")
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                new ApiErrorResponse(false, "EMAIL_SEND_FAILED", "We could not send the verification email. Your registration was not saved - please try again."));
         }
         catch (Exception ex)
         {

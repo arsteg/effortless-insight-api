@@ -97,16 +97,16 @@ public class MockEmailService : IEmailService
     public List<(string To, string Subject, string Body)> SentEmails { get; } = new();
     public List<(string To, string TemplateId, Dictionary<string, object> Data)> SentTemplateEmails { get; } = new();
 
-    public Task SendAsync(string to, string subject, string htmlBody)
+    public Task<bool> SendAsync(string to, string subject, string htmlBody)
     {
         SentEmails.Add((to, subject, htmlBody));
-        return Task.CompletedTask;
+        return Task.FromResult(true);
     }
 
-    public Task SendTemplateAsync(string to, string templateId, Dictionary<string, object> data)
+    public Task<bool> SendTemplateAsync(string to, string templateId, Dictionary<string, object> data)
     {
         SentTemplateEmails.Add((to, templateId, data));
-        return Task.CompletedTask;
+        return Task.FromResult(true);
     }
 
     public Task SendBulkAsync(List<string> recipients, string subject, string htmlBody)
