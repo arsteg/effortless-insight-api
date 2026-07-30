@@ -4,6 +4,7 @@ using System.Text.Json;
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.DTOs;
+using EffortlessInsight.Api.Services.Email;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Distributed;
@@ -115,11 +116,10 @@ public class AuthService : IAuthService
 
         // Send verification email; if it fails, roll back the user so the
         // registration can be retried with the same email
-        bool emailSent;
         try
         {
             var verificationLink = $"{_configuration["App:BaseUrl"]}/verify-email?token={verificationToken}";
-            emailSent = await _emailService.SendTemplateAsync(
+            await _emailService.SendTemplateAsync(
                 user.Email!,
                 "auth_verify_email",
                 new Dictionary<string, object>
@@ -129,15 +129,9 @@ public class AuthService : IAuthService
                     { "expiry_hours", VerificationTokenExpiryHours }
                 });
         }
-        catch (Exception ex)
+        catch (EmailDeliveryException ex)
         {
-            _logger.LogError(ex, "Failed to send verification email to {Email}", user.Email);
-            emailSent = false;
-        }
-
-        if (!emailSent)
-        {
-            _logger.LogError("Verification email to {Email} was not sent, rolling back user creation", user.Email);
+            _logger.LogError(ex, "Verification email to {Email} was not sent, rolling back user creation", user.Email);
 
             await _cache.RemoveAsync(cacheKey);
 

@@ -1,5 +1,6 @@
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities;
+using EffortlessInsight.Api.Services.Email;
 using Microsoft.EntityFrameworkCore;
 
 namespace EffortlessInsight.Api.Services.Collaboration;

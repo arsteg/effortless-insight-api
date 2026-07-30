@@ -361,9 +361,35 @@ public class NotificationTemplateService : INotificationTemplateService
     /// <inheritdoc />
     public async Task SeedDefaultTemplatesAsync(CancellationToken cancellationToken = default)
     {
-        var existingCount = await _dbContext.NotificationTemplates.CountAsync(cancellationToken);
-        if (existingCount > 0)
-            return;
+        // Idempotent per (type, channel, language): existing rows are left
+        // untouched (including admin edits), only missing combinations are
+        // seeded. This lets new template types ship to existing deployments.
+        var existingKeys = (await _dbContext.NotificationTemplates
+                .AsNoTracking()
+                .Select(t => new { t.Type, t.Channel, t.Language })
+                .ToListAsync(cancellationToken))
+            .Select(k => (k.Type, k.Channel, k.Language))
+            .ToHashSet();
+
+        var seeded = 0;
+
+        void AddIfMissing(string type, string channel, string language, string? subject, string body)
+        {
+            if (!existingKeys.Add((type, channel, language)))
+                return;
+
+            _dbContext.NotificationTemplates.Add(new NotificationTemplate
+            {
+                Type = type,
+                Channel = channel,
+                Language = language,
+                Version = 1,
+                Subject = subject,
+                Body = body,
+                IsActive = true
+            });
+            seeded++;
+        }
 
         // Seed basic SMS templates
         var smsTemplates = new[]
@@ -377,15 +403,7 @@ public class NotificationTemplateService : INotificationTemplateService
 
         foreach (var (type, body) in smsTemplates)
         {
-            _dbContext.NotificationTemplates.Add(new NotificationTemplate
-            {
-                Type = type,
-                Channel = NotificationChannel.Sms,
-                Language = "en",
-                Version = 1,
-                Body = body,
-                IsActive = true
-            });
+            AddIfMissing(type, NotificationChannel.Sms, "en", null, body);
         }
 
         // Seed channel-agnostic ("default") content so the engine's primary
@@ -412,22 +430,92 @@ public class NotificationTemplateService : INotificationTemplateService
 
         foreach (var t in defaultTemplates)
         {
-            _dbContext.NotificationTemplates.Add(new NotificationTemplate
-            {
-                Type = t.Type, Channel = NotificationChannel.Default, Language = "en",
-                Version = 1, Subject = t.Subject, Body = t.BodyEn, IsActive = true
-            });
-            _dbContext.NotificationTemplates.Add(new NotificationTemplate
-            {
-                Type = t.Type, Channel = NotificationChannel.Default, Language = "hi",
-                Version = 1, Subject = t.Subject, Body = t.BodyHi, IsActive = true
-            });
+            AddIfMissing(t.Type, NotificationChannel.Default, "en", t.Subject, t.BodyEn);
+            AddIfMissing(t.Type, NotificationChannel.Default, "hi", t.Subject, t.BodyHi);
         }
 
-        await _dbContext.SaveChangesAsync(cancellationToken);
-        _logger.LogInformation(
-            "Seeded {Count} notification templates",
-            smsTemplates.Length + defaultTemplates.Length * 2);
+        // Billing notification content (channel-agnostic "default" channel —
+        // the engine renders this once and reuses it for email/in-app/push).
+        // Placeholders match the data keys emitted by BillingNotificationService;
+        // amounts arrive pre-formatted (e.g. "₹1,999.00").
+        var billingTemplates = new (string Type, string Subject, string Body)[]
+        {
+            ("trial_started", "Your {{planName}} trial has started",
+                "Welcome! Your free trial of the {{planName}} plan is now active until {{trialEndDate}} ({{trialDays}} days). Explore all features and set up your organization."),
+            ("trial_ending", "Your trial ends in {{daysRemaining}} day(s)",
+                "Your {{planName}} trial ends on {{trialEndDate}} — {{daysRemaining}} day(s) left. Subscribe now to keep uninterrupted access to your GST notices and reports."),
+            ("trial_ended", "Your {{planName}} trial has ended",
+                "Your free trial of the {{planName}} plan has ended. Subscribe to regain full access to your data and features."),
+            ("subscription_activated", "Subscription activated: {{planName}}",
+                "Your {{planName}} subscription ({{billingCycle}}) is now active at {{amount}}. Thank you for subscribing!"),
+            ("subscription_cancelled", "Subscription cancelled",
+                "Your {{planName}} subscription has been cancelled. You keep access until {{endDate}} ({{daysRemaining}} day(s) remaining). You can reactivate any time before then."),
+            ("subscription_reactivated", "Subscription reactivated",
+                "Welcome back! Your {{planName}} subscription has been reactivated and billing will continue as before."),
+            ("plan_upgraded", "Plan upgraded to {{newPlanName}}",
+                "Your plan has been upgraded from {{oldPlanName}} to {{newPlanName}}. A prorated charge of {{proratedAmount}} applies for the current period."),
+            ("plan_downgraded", "Plan change scheduled: {{newPlanName}}",
+                "Your plan will change from {{oldPlanName}} to {{newPlanName}} effective {{effectiveDate}}. You keep {{oldPlanName}} features until then."),
+            ("payment_success", "Payment received: {{amount}}",
+                "We received your payment of {{amount}} for the {{planName}} plan. Invoice {{invoiceNumber}} is available in your billing section."),
+            ("payment_failed", "Payment failed for {{planName}}",
+                "Your payment of {{amount}} for the {{planName}} plan failed ({{reason}}). Attempt {{retryCount}} of {{maxRetries}}. Please update your payment method to avoid interruption."),
+            ("payment_retry", "Payment retry scheduled",
+                "We could not charge {{amount}} for your {{planName}} plan. We will retry on {{nextRetryDate}} (attempt {{attemptNumber}} of {{maxAttempts}}). Update your payment method if needed."),
+            ("invoice_ready", "Invoice {{invoiceNumber}} is ready",
+                "Your invoice {{invoiceNumber}} for {{amount}} is ready. You can download it from the billing section of your account."),
+            ("usage_warning_80", "You've used 80% of your {{resourceType}} limit",
+                "You have used {{currentUsage}} of {{limit}} {{resourceType}} ({{percentage}}%). {{remaining}} remaining this cycle. Consider upgrading if you need more."),
+            ("usage_warning_90", "You've used 90% of your {{resourceType}} limit",
+                "You have used {{currentUsage}} of {{limit}} {{resourceType}} ({{percentage}}%). Only {{remaining}} remaining this cycle. Upgrade to avoid hitting the limit."),
+            ("usage_limit_reached", "{{resourceType}} limit reached",
+                "You have reached your limit of {{limit}} {{resourceType}} for this billing cycle. Upgrade your plan to continue without interruption."),
+            ("renewal_reminder", "Your subscription renews on {{renewalDate}}",
+                "Your {{planName}} subscription renews on {{renewalDate}} ({{daysUntilRenewal}} day(s) from now) for {{amount}}. No action is needed if you wish to continue."),
+            ("seats_added", "{{seatsAdded}} seat(s) added",
+                "{{seatsAdded}} seat(s) were added to your subscription, for a total of {{totalSeats}}. Additional cost: {{additionalCost}}."),
+        };
+
+        foreach (var t in billingTemplates)
+        {
+            AddIfMissing(t.Type, NotificationChannel.Default, "en", t.Subject, t.Body);
+        }
+
+        // GST sync notification content. The SQL seed file
+        // (20260707_AddGstSyncNotificationTemplates.sql) targeted a schema that
+        // does not exist (snake_case table, title column) and the 'email'
+        // channel the engine never renders, so these are seeded here instead.
+        var gstSyncTemplates = new (string Type, string Subject, string Body)[]
+        {
+            (NotificationType.GstSyncNoticesSynced, "{{totalCount}} GST notice(s) synced for {{clientName}}",
+                "We synced {{totalCount}} notice(s) from the GST portal for {{clientName}} ({{gstin}}): {{newCount}} new, {{updatedCount}} updated. Review them in your dashboard."),
+            (NotificationType.GstSyncDailyDigest, "GST notice digest for {{date}}",
+                "Daily GST sync summary for {{date}}: {{newNotices}} new notice(s) captured. {{upcomingDueDates}} notice(s) have due dates in the next 7 days."),
+            (NotificationType.GstSyncFailed, "GST portal sync failed for {{clientName}}",
+                "Syncing notices for {{clientName}} ({{gstin}}) has failed {{consecutiveFailures}} time(s) in a row: {{errorMessage}}. Please check the portal credentials in your sync settings."),
+            (NotificationType.GstSyncDueDateReminder, "GST notice due in {{daysUntilDue}} day(s) - {{clientName}}",
+                "Notice {{noticeId}} ({{noticeType}}) for {{clientName}} ({{gstin}}) is due on {{dueDate}} — {{daysUntilDue}} day(s) from now. Respond in time to avoid penalties."),
+            (NotificationType.GstSyncDueDateOverdue, "OVERDUE: GST notice for {{clientName}}",
+                "Notice {{noticeId}} ({{noticeType}}) for {{clientName}} ({{gstin}}) was due on {{dueDate}} and is now {{daysOverdue}} day(s) overdue. Immediate action is required."),
+            (NotificationType.GstSyncExtensionDisconnected, "GST Notice Guard extension disconnected",
+                "Your GST Notice Guard browser extension has disconnected, so notices are no longer being captured automatically. Open the GST portal with the extension installed to reconnect."),
+            (NotificationType.GstSyncPaused, "GST sync paused for {{clientName}}",
+                "Automatic notice sync for {{clientName}} ({{gstin}}) has been paused: {{reason}}. Resume it from your sync settings."),
+            (NotificationType.GstSyncImportCompleted, "GST notice import completed",
+                "Your notice import has finished: {{importedCount}} imported, {{failedCount}} failed out of {{totalCount}}. View them in your notices list."),
+        };
+
+        foreach (var t in gstSyncTemplates)
+        {
+            AddIfMissing(t.Type, NotificationChannel.Default, "en", t.Subject, t.Body);
+        }
+
+        if (seeded > 0)
+        {
+            await _dbContext.SaveChangesAsync(cancellationToken);
+        }
+
+        _logger.LogInformation("Seeded {Count} notification templates", seeded);
     }
 
     private static string RenderVariables(string template, Dictionary<string, object> variables)

@@ -4,6 +4,7 @@ using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.DTOs;
 using EffortlessInsight.Api.Services;
 using EffortlessInsight.Api.Services.Auth;
+using EffortlessInsight.Api.Services.Email;
 using EffortlessInsight.Api.Tests.Fixtures;
 using EffortlessInsight.Api.Tests.Helpers;
 using Microsoft.AspNetCore.Identity;
@@ -460,8 +461,9 @@ public class AuthServicePasswordTests
         _mockEmailService.Setup(x => x.SendTemplateAsync(
             It.IsAny<string>(),
             It.IsAny<string>(),
-            It.IsAny<Dictionary<string, object>>()))
-            .Returns(Task.CompletedTask);
+            It.IsAny<IReadOnlyDictionary<string, object>>(),
+            It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new EmailSendResult("test-message-id"));
 
         var authService = CreateAuthServiceWithMockedDbContext();
 
@@ -472,9 +474,10 @@ public class AuthServicePasswordTests
         _mockEmailService.Verify(x => x.SendTemplateAsync(
             "test@example.com",
             "auth_password_reset",
-            It.Is<Dictionary<string, object>>(d =>
+            It.Is<IReadOnlyDictionary<string, object>>(d =>
                 d.ContainsKey("reset_link") &&
-                d.ContainsKey("user_name"))),
+                d.ContainsKey("user_name")),
+            It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -496,7 +499,8 @@ public class AuthServicePasswordTests
         _mockEmailService.Verify(x => x.SendTemplateAsync(
             It.IsAny<string>(),
             It.IsAny<string>(),
-            It.IsAny<Dictionary<string, object>>()),
+            It.IsAny<IReadOnlyDictionary<string, object>>(),
+            It.IsAny<CancellationToken>()),
             Times.Never);
     }
 

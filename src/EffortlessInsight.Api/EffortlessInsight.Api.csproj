@@ -39,6 +39,8 @@
 
     <!-- AWS -->
     <PackageReference Include="AWSSDK.S3" Version="3.7.305" />
+    <PackageReference Include="AWSSDK.SimpleEmailV2" Version="3.7.509.10" />
+    <PackageReference Include="AWSSDK.SimpleNotificationService" Version="3.7.502.61" />
     <PackageReference Include="AWSSDK.Extensions.NETCore.Setup" Version="3.7.301" />
 
     <!-- Validation -->
@@ -46,7 +48,6 @@
 
     <!-- Mapping -->
     <PackageReference Include="AutoMapper.Extensions.Microsoft.DependencyInjection" Version="12.0.1" />
-    <PackageReference Include="Resend" Version="0.5.1" />
 
     <!-- API Documentation -->
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.5.0" />

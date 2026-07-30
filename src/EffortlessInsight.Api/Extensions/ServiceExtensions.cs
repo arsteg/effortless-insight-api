@@ -56,7 +56,7 @@ public static class ServiceExtensions
         services.AddScoped<IAiServiceClient, AiServiceClientImpl>();
         services.AddScoped<IFileStorageService, S3FileStorageServiceImpl>();
         services.AddScoped<IFileStorageServiceExtended, S3FileStorageServiceImpl>();
-        services.AddScoped<IEmailService, ResendEmailServiceImpl>();
+        // IEmailService (Amazon SES) is registered in AddSesEmailServices
         services.AddScoped<IAuditService, AuditServiceImpl>();
 
         // Register organization management services
@@ -64,6 +64,7 @@ public static class ServiceExtensions
         services.AddScoped<ICurrentOrganizationService, CurrentOrganizationService>();
         services.AddScoped<IOrganizationManagementService, OrganizationManagementService>();
         services.AddScoped<IOrganizationDataMigrationService, OrganizationDataMigrationService>();
+        services.AddScoped<IDataExportService, DataExportService>();
 
         // Register GSTN integration services
         services.AddScoped<Services.GstnIntegration.IGstnConnectionService, Services.GstnIntegration.GstnConnectionService>();

@@ -209,45 +209,29 @@ public class BillingJobsTests : IDisposable
     #region ProcessGracePeriodExpirationsAsync Tests
 
     [Fact]
-    public async Task ProcessGracePeriodExpirationsAsync_WithExpiredGracePeriod_ShouldExpire()
+    public async Task ProcessGracePeriodExpirationsAsync_ShouldDelegateToSubscriptionService()
     {
-        // Arrange
-        var orgId = Guid.NewGuid();
-        var org = BillingTestFixture.CreateOrganization(orgId);
-        _dbContext.Organizations.Add(org);
-
-        var subscription = BillingTestFixture.CreateSubscription(organizationId: orgId, status: SubscriptionStatus.PastDue);
-        subscription.GracePeriodEndAt = DateTime.UtcNow.AddHours(-1);
-        _dbContext.BillingSubscriptions.Add(subscription);
-        await _dbContext.SaveChangesAsync();
+        // The expiration business logic lives in
+        // SubscriptionService.ExpireGracePeriodSubscriptionsAsync (covered by
+        // SubscriptionServiceTests); the job only delegates.
 
         // Act
         await _sut.ProcessGracePeriodExpirationsAsync();
 
         // Assert
-        var updatedSubscription = await _dbContext.BillingSubscriptions.FindAsync(subscription.Id);
-        updatedSubscription!.Status.Should().Be(SubscriptionStatus.Expired);
-        updatedSubscription.EndedAt.Should().NotBeNull();
-
-        var updatedOrg = await _dbContext.Organizations.FindAsync(orgId);
-        updatedOrg!.SubscriptionStatus.Should().Be("expired");
+        await _subscriptionService.Received(1).ExpireGracePeriodSubscriptionsAsync();
     }
 
     [Fact]
-    public async Task ProcessGracePeriodExpirationsAsync_WithActiveGracePeriod_ShouldNotExpire()
+    public async Task ProcessGracePeriodExpirationsAsync_WhenServiceThrows_ShouldNotPropagate()
     {
         // Arrange
-        var subscription = BillingTestFixture.CreateSubscription(status: SubscriptionStatus.PastDue);
-        subscription.GracePeriodEndAt = DateTime.UtcNow.AddDays(5);
-        _dbContext.BillingSubscriptions.Add(subscription);
-        await _dbContext.SaveChangesAsync();
+        _subscriptionService.ExpireGracePeriodSubscriptionsAsync()
+            .Returns(Task.FromException(new Exception("Test error")));
 
-        // Act
-        await _sut.ProcessGracePeriodExpirationsAsync();
-
-        // Assert
-        var updatedSubscription = await _dbContext.BillingSubscriptions.FindAsync(subscription.Id);
-        updatedSubscription!.Status.Should().Be(SubscriptionStatus.PastDue);
+        // Act & Assert (job swallows and logs)
+        var act = () => _sut.ProcessGracePeriodExpirationsAsync();
+        await act.Should().NotThrowAsync();
     }
 
     #endregion

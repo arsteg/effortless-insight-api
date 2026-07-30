@@ -276,7 +276,7 @@ public class NotificationDelivery : BaseEntity
     public string Status { get; set; } = DeliveryStatus.Pending;
 
     /// <summary>
-    /// External provider's message ID (Resend, Twilio, Firebase)
+    /// External provider's message ID (Amazon SES, Twilio, Firebase)
     /// </summary>
     [MaxLength(200)]
     public string? ProviderMessageId { get; set; }

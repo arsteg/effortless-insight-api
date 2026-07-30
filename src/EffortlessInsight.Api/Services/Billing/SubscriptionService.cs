@@ -1715,7 +1715,10 @@ public class SubscriptionService : ISubscriptionService
 
         foreach (var subscription in expiredGracePeriods)
         {
-            subscription.Status = SubscriptionStatus.Cancelled;
+            // Expired, not Cancelled: the user did not cancel — payment lapsed.
+            // Matches trial expiry semantics and keeps "cancelled" reserved for
+            // explicit cancellations.
+            subscription.Status = SubscriptionStatus.Expired;
             subscription.EndedAt = DateTime.UtcNow;
             subscription.CancellationReason = "payment_failed";
 
@@ -1723,11 +1726,11 @@ public class SubscriptionService : ISubscriptionService
             var org = await _dbContext.Organizations.FindAsync(subscription.OrganizationId);
             if (org != null)
             {
-                org.SubscriptionStatus = "cancelled";
+                org.SubscriptionStatus = "expired";
             }
 
             _logger.LogWarning(
-                "Subscription {SubscriptionId} cancelled after {Attempts} failed payment attempts. Grace period ended at {GracePeriodEnd}",
+                "Subscription {SubscriptionId} expired after {Attempts} failed payment attempts. Grace period ended at {GracePeriodEnd}",
                 subscription.Id, subscription.FailedPaymentAttempts, subscription.GracePeriodEndAt);
 
             // Send final cancellation notification

@@ -9,31 +9,35 @@ using FirebaseAdmin.Messaging;
 using Google.Apis.Auth.OAuth2;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using Amazon.SimpleEmailV2;
+using EffortlessInsight.Api.Services.Email;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Options;
-using Resend;
 using FcmNotification = FirebaseAdmin.Messaging.Notification;
+using SesEmailMessage = EffortlessInsight.Api.Services.Email.EmailMessage;
 
 namespace EffortlessInsight.Api.Services.Notifications;
 
-#region Email Channel Service (Resend)
+#region Email Channel Service (Amazon SES)
 
 /// <summary>
-/// Resend email channel service implementation
+/// Amazon SES email channel service. Delegates transport to the shared
+/// <see cref="IEmailService"/> and translates outcomes into the channel
+/// result model the notification engine's retry logic expects.
 /// </summary>
-public class ResendEmailService : IEmailChannelService
+public class AmazonSesEmailChannelService : IEmailChannelService
 {
-    private readonly IResend _resend;
-    private readonly ResendOptions _options;
-    private readonly ILogger<ResendEmailService> _logger;
+    private readonly IEmailService _emailService;
+    private readonly IAmazonSimpleEmailServiceV2 _ses;
+    private readonly ILogger<AmazonSesEmailChannelService> _logger;
 
-    public ResendEmailService(
-        IResend resend,
-        IOptions<ResendOptions> options,
-        ILogger<ResendEmailService> logger)
+    public AmazonSesEmailChannelService(
+        IEmailService emailService,
+        IAmazonSimpleEmailServiceV2 ses,
+        ILogger<AmazonSesEmailChannelService> logger)
     {
-        _resend = resend;
-        _options = options.Value;
+        _emailService = emailService;
+        _ses = ses;
         _logger = logger;
     }
 
@@ -42,56 +46,38 @@ public class ResendEmailService : IEmailChannelService
     {
         try
         {
-            var emailMessage = new EmailMessage
-            {
-                From = $"{_options.FromName} <{_options.FromEmail}>",
-                To = [message.ToEmail],
-                Subject = message.Subject,
-                HtmlBody = message.HtmlBody,
-                TextBody = message.TextBody
-            };
-
-            if (!string.IsNullOrEmpty(_options.ReplyTo))
-            {
-                emailMessage.ReplyTo = _options.ReplyTo;
-            }
-
-            // Add attachments (base64 encoded)
-            if (message.Attachments != null && message.Attachments.Count > 0)
-            {
-                foreach (var attachment in message.Attachments)
-                {
-                    emailMessage.Attachments.Add(new Resend.EmailAttachment
-                    {
-                        Filename = attachment.FileName,
-                        Content = Convert.ToBase64String(attachment.Content)
-                    });
-                }
-            }
-
-            // Add headers for tracking
+            // Correlation headers for delivery tracking
+            var headers = new Dictionary<string, string>();
             if (!string.IsNullOrEmpty(message.NotificationId))
             {
-                emailMessage.Headers.Add("X-Notification-Id", message.NotificationId);
+                headers["X-Notification-Id"] = message.NotificationId;
             }
             if (!string.IsNullOrEmpty(message.UserId))
             {
-                emailMessage.Headers.Add("X-User-Id", message.UserId);
+                headers["X-User-Id"] = message.UserId;
             }
 
-            var response = await _resend.EmailSendAsync(emailMessage, cancellationToken);
-
-            if (response.Success)
+            var emailMessage = new SesEmailMessage
             {
-                var messageId = response.Content.ToString();
-                _logger.LogInformation("Email sent successfully to {Email}, MessageId: {MessageId}",
-                    message.ToEmail, messageId);
-                return new ChannelSendResult(true, messageId, null, null);
-            }
+                To = [message.ToEmail],
+                Subject = message.Subject,
+                HtmlBody = message.HtmlBody,
+                TextBody = message.TextBody,
+                ReplyTo = message.ReplyTo,
+                Headers = headers,
+                Attachments = message.Attachments is { Count: > 0 }
+                    ? message.Attachments
+                        .Select(a => new EmailMessageAttachment(a.FileName, a.ContentType, a.Content))
+                        .ToList()
+                    : []
+            };
 
-            var errorMessage = response.Exception?.Message ?? "Unknown error";
-            _logger.LogError("Resend error: {Error}", errorMessage);
-            return new ChannelSendResult(false, null, "RESEND_ERROR", errorMessage);
+            var result = await _emailService.SendAsync(emailMessage, cancellationToken);
+            return new ChannelSendResult(true, result.MessageId, null, null);
+        }
+        catch (EmailDeliveryException ex)
+        {
+            return new ChannelSendResult(false, null, ex.ErrorCode ?? "SES_ERROR", ex.Message);
         }
         catch (Exception ex)
         {
@@ -105,13 +91,12 @@ public class ResendEmailService : IEmailChannelService
     {
         try
         {
-            // Send a simple API call to verify credentials by fetching domains
-            var response = await _resend.DomainListAsync(cancellationToken);
-            return response.Success;
+            var response = await _ses.GetAccountAsync(new Amazon.SimpleEmailV2.Model.GetAccountRequest(), cancellationToken);
+            return response.SendingEnabled;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Resend configuration verification failed");
+            _logger.LogError(ex, "Amazon SES configuration verification failed");
             return false;
         }
     }

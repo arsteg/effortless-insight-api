@@ -1,15 +1,20 @@
 using System.Text.Json;
 using EffortlessInsight.Api.Data;
+using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.Data.Entities.Billing;
 using EffortlessInsight.Api.DTOs;
 using EffortlessInsight.Api.Services.Billing;
+using EffortlessInsight.Api.Services.Email;
+using EffortlessInsight.Api.Services.Notifications;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using SnsMessage = Amazon.SimpleNotificationService.Util.Message;
 
 namespace EffortlessInsight.Api.Controllers;
 
 /// <summary>
-/// Webhook endpoints for payment providers.
+/// Webhook endpoints for payment providers and email delivery events.
 /// </summary>
 [ApiController]
 [Route("api/webhooks")]
@@ -19,6 +24,9 @@ public class WebhooksController : ControllerBase
     private readonly IRazorpayService _razorpayService;
     private readonly ISubscriptionService _subscriptionService;
     private readonly IInvoiceService _invoiceService;
+    private readonly IDeliveryTrackingService _deliveryTracking;
+    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly EmailOptions _emailOptions;
     private readonly ILogger<WebhooksController> _logger;
 
     public WebhooksController(
@@ -26,12 +34,18 @@ public class WebhooksController : ControllerBase
         IRazorpayService razorpayService,
         ISubscriptionService subscriptionService,
         IInvoiceService invoiceService,
+        IDeliveryTrackingService deliveryTracking,
+        IHttpClientFactory httpClientFactory,
+        IOptions<EmailOptions> emailOptions,
         ILogger<WebhooksController> logger)
     {
         _dbContext = dbContext;
         _razorpayService = razorpayService;
         _subscriptionService = subscriptionService;
         _invoiceService = invoiceService;
+        _deliveryTracking = deliveryTracking;
+        _httpClientFactory = httpClientFactory;
+        _emailOptions = emailOptions.Value;
         _logger = logger;
     }
 
@@ -386,6 +400,240 @@ public class WebhooksController : ControllerBase
     }
 
     /// <summary>
+    /// Handle Amazon SES email events delivered via an SNS HTTPS subscription:
+    /// subscription confirmation plus Send/Delivery/Open/Click/Bounce/Complaint/
+    /// Reject events, which are mapped onto notification delivery tracking.
+    /// </summary>
+    [HttpPost("ses")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> HandleSesWebhook(CancellationToken cancellationToken)
+    {
+        using var reader = new StreamReader(Request.Body);
+        var payload = await reader.ReadToEndAsync(cancellationToken);
+
+        SnsMessage snsMessage;
+        try
+        {
+            snsMessage = SnsMessage.ParseMessage(payload);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "SES webhook received unparseable SNS payload");
+            return BadRequest("Invalid SNS message");
+        }
+
+        if (!snsMessage.IsMessageSignatureValid())
+        {
+            _logger.LogWarning("SES webhook SNS signature verification failed for message {MessageId}", snsMessage.MessageId);
+            return BadRequest("Invalid signature");
+        }
+
+        // When EventTopicArn is configured, reject events from any other topic.
+        if (!string.IsNullOrEmpty(_emailOptions.EventTopicArn) &&
+            !string.Equals(snsMessage.TopicArn, _emailOptions.EventTopicArn, StringComparison.Ordinal))
+        {
+            _logger.LogWarning("SES webhook received event from unexpected topic {TopicArn}", snsMessage.TopicArn);
+            return BadRequest("Unexpected topic");
+        }
+
+        if (snsMessage.IsSubscriptionType)
+        {
+            return await ConfirmSnsSubscriptionAsync(snsMessage, cancellationToken);
+        }
+
+        if (!snsMessage.IsNotificationType)
+        {
+            _logger.LogInformation("Ignoring SNS message of type {Type}", snsMessage.Type);
+            return Ok(new { status = "ignored" });
+        }
+
+        // Idempotency: SNS retries deliveries, so dedupe on the SNS message id.
+        var existingEvent = await _dbContext.WebhookEvents
+            .FirstOrDefaultAsync(e => e.Provider == "ses" && e.EventId == snsMessage.MessageId, cancellationToken);
+
+        if (existingEvent != null)
+        {
+            return Ok(new { status = "duplicate" });
+        }
+
+        var webhookEvent = new WebhookEvent
+        {
+            Provider = "ses",
+            EventId = snsMessage.MessageId,
+            EventType = "unknown",
+            Status = WebhookEventStatus.Processing,
+            Payload = snsMessage.MessageText,
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString(),
+            ProcessingStartedAt = DateTime.UtcNow
+        };
+        _dbContext.WebhookEvents.Add(webhookEvent);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        try
+        {
+            await ProcessSesEventAsync(snsMessage.MessageText, webhookEvent, cancellationToken);
+
+            webhookEvent.Status = webhookEvent.Status == WebhookEventStatus.Skipped
+                ? WebhookEventStatus.Skipped
+                : WebhookEventStatus.Processed;
+            webhookEvent.ProcessedAt = DateTime.UtcNow;
+            await _dbContext.SaveChangesAsync(cancellationToken);
+
+            return Ok(new { status = "processed" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to process SES event {EventId}", webhookEvent.EventId);
+
+            webhookEvent.Status = WebhookEventStatus.Failed;
+            webhookEvent.ErrorMessage = ex.Message;
+            webhookEvent.AttemptCount++;
+            webhookEvent.LastAttemptAt = DateTime.UtcNow;
+            await _dbContext.SaveChangesAsync(cancellationToken);
+
+            // 500 makes SNS redeliver (it retries with backoff); the dedupe row
+            // above is keyed on the SNS message id, so remove it to allow the
+            // retry to be processed.
+            if (IsTransientError(ex))
+            {
+                _dbContext.WebhookEvents.Remove(webhookEvent);
+                await _dbContext.SaveChangesAsync(cancellationToken);
+                return StatusCode(500, new { status = "failed", retryable = true });
+            }
+
+            return Ok(new { status = "failed", retryable = false });
+        }
+    }
+
+    private async Task<IActionResult> ConfirmSnsSubscriptionAsync(SnsMessage snsMessage, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrEmpty(snsMessage.SubscribeURL) ||
+            !Uri.TryCreate(snsMessage.SubscribeURL, UriKind.Absolute, out var subscribeUri) ||
+            subscribeUri.Scheme != Uri.UriSchemeHttps ||
+            !subscribeUri.Host.EndsWith(".amazonaws.com", StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogWarning("SES webhook subscription confirmation had invalid SubscribeURL");
+            return BadRequest("Invalid SubscribeURL");
+        }
+
+        var client = _httpClientFactory.CreateClient();
+        var response = await client.GetAsync(subscribeUri, cancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        _logger.LogInformation("Confirmed SNS subscription for topic {TopicArn}", snsMessage.TopicArn);
+        return Ok(new { status = "subscription_confirmed" });
+    }
+
+    private async Task ProcessSesEventAsync(string messageJson, WebhookEvent webhookEvent, CancellationToken cancellationToken)
+    {
+        using var doc = JsonDocument.Parse(messageJson);
+        var root = doc.RootElement;
+
+        // Configuration-set event publishing uses "eventType"; identity-level
+        // notifications use "notificationType". Support both.
+        var eventType =
+            root.TryGetProperty("eventType", out var et) ? et.GetString() :
+            root.TryGetProperty("notificationType", out var nt) ? nt.GetString() :
+            null;
+
+        if (eventType == null || !root.TryGetProperty("mail", out var mail) ||
+            !mail.TryGetProperty("messageId", out var messageIdProp))
+        {
+            _logger.LogWarning("SES event missing eventType or mail.messageId");
+            webhookEvent.Status = WebhookEventStatus.Skipped;
+            return;
+        }
+
+        var messageId = messageIdProp.GetString()!;
+        webhookEvent.EventType = eventType;
+        webhookEvent.RelatedEntityId = messageId;
+
+        switch (eventType.ToLowerInvariant())
+        {
+            case "send":
+                await _deliveryTracking.UpdateStatusAsync(
+                    NotificationChannel.Email, messageId, DeliveryStatus.Sent,
+                    GetEventTimestamp(root, "send", mail), cancellationToken: cancellationToken);
+                break;
+
+            case "delivery":
+                await _deliveryTracking.UpdateStatusAsync(
+                    NotificationChannel.Email, messageId, DeliveryStatus.Delivered,
+                    GetEventTimestamp(root, "delivery", mail), cancellationToken: cancellationToken);
+                break;
+
+            case "open":
+                await _deliveryTracking.UpdateStatusAsync(
+                    NotificationChannel.Email, messageId, DeliveryStatus.Opened,
+                    GetEventTimestamp(root, "open", mail), cancellationToken: cancellationToken);
+                break;
+
+            case "click":
+                var url = root.TryGetProperty("click", out var click) &&
+                          click.TryGetProperty("link", out var link)
+                    ? link.GetString()
+                    : null;
+                await _deliveryTracking.RecordClickAsync(NotificationChannel.Email, messageId, url, cancellationToken);
+                break;
+
+            case "bounce":
+                var bounceReason = root.TryGetProperty("bounce", out var bounce)
+                    ? $"{bounce.GetPropertyOrDefault("bounceType")}/{bounce.GetPropertyOrDefault("bounceSubType")}"
+                    : "unknown";
+                _logger.LogWarning("SES bounce for message {MessageId}: {Reason}", messageId, bounceReason);
+                await _deliveryTracking.UpdateStatusAsync(
+                    NotificationChannel.Email, messageId, DeliveryStatus.Bounced,
+                    GetEventTimestamp(root, "bounce", mail), $"Bounce: {bounceReason}", cancellationToken);
+                break;
+
+            case "complaint":
+                var complaintType = root.TryGetProperty("complaint", out var complaint)
+                    ? complaint.GetPropertyOrDefault("complaintFeedbackType") ?? "unknown"
+                    : "unknown";
+                _logger.LogWarning("SES complaint for message {MessageId}: {Type}", messageId, complaintType);
+                await _deliveryTracking.UpdateStatusAsync(
+                    NotificationChannel.Email, messageId, DeliveryStatus.Bounced,
+                    GetEventTimestamp(root, "complaint", mail), $"Complaint: {complaintType}", cancellationToken);
+                break;
+
+            case "reject":
+                var rejectReason = root.TryGetProperty("reject", out var reject)
+                    ? reject.GetPropertyOrDefault("reason") ?? "unknown"
+                    : "unknown";
+                await _deliveryTracking.UpdateStatusAsync(
+                    NotificationChannel.Email, messageId, DeliveryStatus.Failed,
+                    GetEventTimestamp(root, "reject", mail), $"Reject: {rejectReason}", cancellationToken);
+                break;
+
+            default:
+                _logger.LogInformation("Unhandled SES event type: {EventType}", eventType);
+                webhookEvent.Status = WebhookEventStatus.Skipped;
+                break;
+        }
+    }
+
+    private static DateTime GetEventTimestamp(JsonElement root, string eventProperty, JsonElement mail)
+    {
+        // Prefer the event-specific timestamp, fall back to the mail timestamp,
+        // then to now.
+        if (root.TryGetProperty(eventProperty, out var evt) &&
+            evt.TryGetProperty("timestamp", out var ts) &&
+            ts.TryGetDateTime(out var eventTime))
+        {
+            return eventTime.ToUniversalTime();
+        }
+
+        if (mail.TryGetProperty("timestamp", out var mailTs) &&
+            mailTs.TryGetDateTime(out var mailTime))
+        {
+            return mailTime.ToUniversalTime();
+        }
+
+        return DateTime.UtcNow;
+    }
+
+    /// <summary>
     /// Determines if an exception is a transient error that should trigger a retry.
     /// Fixes Issue #8: Webhook Retry Mechanism
     /// </summary>
@@ -406,4 +654,17 @@ public class WebhooksController : ControllerBase
         // Permanent errors (ArgumentException, InvalidOperationException, etc.)
         // return HTTP 200 to prevent infinite retries
     }
+}
+
+/// <summary>
+/// JSON helpers for webhook payload parsing.
+/// </summary>
+internal static class WebhookJsonExtensions
+{
+    public static string? GetPropertyOrDefault(this JsonElement element, string name) =>
+        element.ValueKind == JsonValueKind.Object &&
+        element.TryGetProperty(name, out var value) &&
+        value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
 }

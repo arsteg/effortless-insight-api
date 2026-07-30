@@ -4,6 +4,7 @@ using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.DTOs;
 using EffortlessInsight.Api.Services.Auth;
+using EffortlessInsight.Api.Services.Email;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using System.Data;
@@ -57,6 +58,7 @@ public class OrganizationManagementService : IOrganizationManagementService
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly IEmailService _emailService;
     private readonly IAuditService _auditService;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<OrganizationManagementService> _logger;
 
     private const int InvitationExpiryDays = 7;
@@ -71,6 +73,7 @@ public class OrganizationManagementService : IOrganizationManagementService
         UserManager<ApplicationUser> userManager,
         IEmailService emailService,
         IAuditService auditService,
+        IConfiguration configuration,
         ILogger<OrganizationManagementService> logger)
     {
         _dbContext = dbContext;
@@ -80,6 +83,7 @@ public class OrganizationManagementService : IOrganizationManagementService
         _userManager = userManager;
         _emailService = emailService;
         _auditService = auditService;
+        _configuration = configuration;
         _logger = logger;
     }
 
@@ -1145,7 +1149,7 @@ public class OrganizationManagementService : IOrganizationManagementService
                 ["organization_name"] = organization.Name,
                 ["inviter_name"] = actor?.Name ?? "A team member",
                 ["role"] = role,
-                ["invitation_url"] = $"/invitations/{token}",
+                ["invitation_url"] = $"{_configuration["App:BaseUrl"]?.TrimEnd('/')}/invitations/{token}",
                 ["expires_in_days"] = InvitationExpiryDays,
                 ["message"] = request.Message ?? ""
             });
@@ -1247,7 +1251,7 @@ public class OrganizationManagementService : IOrganizationManagementService
                 ["organization_name"] = invitation.Organization.Name,
                 ["inviter_name"] = actor?.Name ?? "A team member",
                 ["role"] = invitation.Role,
-                ["invitation_url"] = $"/invitations/{token}",
+                ["invitation_url"] = $"{_configuration["App:BaseUrl"]?.TrimEnd('/')}/invitations/{token}",
                 ["expires_in_days"] = InvitationExpiryDays,
                 ["message"] = invitation.Message ?? ""
             });

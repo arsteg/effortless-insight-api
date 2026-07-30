@@ -237,4 +237,69 @@ public class SubscriptionServiceTests : IDisposable
     }
 
     #endregion
+
+    #region ExpireGracePeriodSubscriptionsAsync Tests
+
+    [Fact]
+    public async Task ExpireGracePeriodSubscriptionsAsync_WithExpiredGracePeriod_ShouldExpire()
+    {
+        // Arrange
+        var orgId = Guid.NewGuid();
+        var org = BillingTestFixture.CreateOrganization(orgId);
+        _dbContext.Organizations.Add(org);
+
+        var subscription = BillingTestFixture.CreateSubscription(organizationId: orgId, status: SubscriptionStatus.PastDue);
+        subscription.GracePeriodEndAt = DateTime.UtcNow.AddHours(-1);
+        _dbContext.BillingSubscriptions.Add(subscription);
+        await _dbContext.SaveChangesAsync();
+
+        // Act
+        await _sut.ExpireGracePeriodSubscriptionsAsync();
+
+        // Assert
+        var updatedSubscription = await _dbContext.BillingSubscriptions.FindAsync(subscription.Id);
+        updatedSubscription!.Status.Should().Be(SubscriptionStatus.Expired);
+        updatedSubscription.EndedAt.Should().NotBeNull();
+        updatedSubscription.CancellationReason.Should().Be("payment_failed");
+
+        var updatedOrg = await _dbContext.Organizations.FindAsync(orgId);
+        updatedOrg!.SubscriptionStatus.Should().Be("expired");
+    }
+
+    [Fact]
+    public async Task ExpireGracePeriodSubscriptionsAsync_WithActiveGracePeriod_ShouldNotExpire()
+    {
+        // Arrange
+        var subscription = BillingTestFixture.CreateSubscription(status: SubscriptionStatus.PastDue);
+        subscription.GracePeriodEndAt = DateTime.UtcNow.AddDays(5);
+        _dbContext.BillingSubscriptions.Add(subscription);
+        await _dbContext.SaveChangesAsync();
+
+        // Act
+        await _sut.ExpireGracePeriodSubscriptionsAsync();
+
+        // Assert
+        var updatedSubscription = await _dbContext.BillingSubscriptions.FindAsync(subscription.Id);
+        updatedSubscription!.Status.Should().Be(SubscriptionStatus.PastDue);
+        updatedSubscription.EndedAt.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ExpireGracePeriodSubscriptionsAsync_WithoutGracePeriodEnd_ShouldNotExpire()
+    {
+        // Arrange
+        var subscription = BillingTestFixture.CreateSubscription(status: SubscriptionStatus.PastDue);
+        subscription.GracePeriodEndAt = null;
+        _dbContext.BillingSubscriptions.Add(subscription);
+        await _dbContext.SaveChangesAsync();
+
+        // Act
+        await _sut.ExpireGracePeriodSubscriptionsAsync();
+
+        // Assert
+        var updatedSubscription = await _dbContext.BillingSubscriptions.FindAsync(subscription.Id);
+        updatedSubscription!.Status.Should().Be(SubscriptionStatus.PastDue);
+    }
+
+    #endregion
 }

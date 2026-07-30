@@ -132,6 +132,7 @@ builder.Services.AddAuthenticationServices(builder.Configuration);
 builder.Services.AddCachingServices(builder.Configuration);
 builder.Services.AddBackgroundJobServices(builder.Configuration);
 builder.Services.AddAwsServices(builder.Configuration);
+builder.Services.AddSesEmailServices(builder.Configuration);
 builder.Services.AddHttpClientServices(builder.Configuration);
 builder.Services.AddNotificationServices(builder.Configuration);
 builder.Services.AddBillingServices(builder.Configuration);

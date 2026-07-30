@@ -5,6 +5,7 @@ using Amazon.S3;
 using Amazon.S3.Model;
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities;
+using EffortlessInsight.Api.Services.Email;
 using EffortlessInsight.Api.Services.Storage;
 using Hangfire;
 using Microsoft.EntityFrameworkCore;
@@ -100,6 +101,7 @@ public class DataExportService : IDataExportService
     private readonly IEmailService _emailService;
     private readonly IAuditService _auditService;
     private readonly IBackgroundJobClient _backgroundJobs;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<DataExportService> _logger;
 
     private const int ExportExpiryDays = 7;
@@ -112,6 +114,7 @@ public class DataExportService : IDataExportService
         IEmailService emailService,
         IAuditService auditService,
         IBackgroundJobClient backgroundJobs,
+        IConfiguration configuration,
         ILogger<DataExportService> logger)
     {
         _dbContext = dbContext;
@@ -120,6 +123,7 @@ public class DataExportService : IDataExportService
         _emailService = emailService;
         _auditService = auditService;
         _backgroundJobs = backgroundJobs;
+        _configuration = configuration;
         _logger = logger;
     }
 
@@ -412,7 +416,9 @@ public class DataExportService : IDataExportService
                     ["export_id"] = export.Id.ToString(),
                     ["file_size"] = FormatFileSize(fileContent.Length),
                     ["expires_at"] = export.ExpiresAt?.ToString("MMM dd, yyyy") ?? "",
-                    ["download_url"] = $"/api/v1/organizations/{export.OrganizationId}/exports/{export.Id}/download"
+                    // The API download endpoint needs a bearer token, so the email
+                    // links to the app instead; the user downloads after signing in.
+                    ["download_url"] = $"{_configuration["App:BaseUrl"]?.TrimEnd('/')}/settings/organization"
                 });
             }
             catch (Exception ex)

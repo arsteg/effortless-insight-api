@@ -1,5 +1,6 @@
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Services;
+using EffortlessInsight.Api.Services.Email;
 using EffortlessInsight.Api.Tests.Helpers;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -94,27 +95,27 @@ public class TestWebApplicationFactory : WebApplicationFactory<Program>
 /// </summary>
 public class MockEmailService : IEmailService
 {
+    public List<EmailMessage> SentMessages { get; } = new();
     public List<(string To, string Subject, string Body)> SentEmails { get; } = new();
-    public List<(string To, string TemplateId, Dictionary<string, object> Data)> SentTemplateEmails { get; } = new();
+    public List<(string To, string TemplateId, IReadOnlyDictionary<string, object> Data)> SentTemplateEmails { get; } = new();
 
-    public Task<bool> SendAsync(string to, string subject, string htmlBody)
+    public Task<EmailSendResult> SendAsync(EmailMessage message, CancellationToken cancellationToken = default)
+    {
+        SentMessages.Add(message);
+        SentEmails.Add((message.To.FirstOrDefault() ?? string.Empty, message.Subject, message.HtmlBody ?? string.Empty));
+        return Task.FromResult(new EmailSendResult(Guid.NewGuid().ToString()));
+    }
+
+    public Task<EmailSendResult> SendAsync(string to, string subject, string htmlBody, CancellationToken cancellationToken = default)
     {
         SentEmails.Add((to, subject, htmlBody));
-        return Task.FromResult(true);
+        return Task.FromResult(new EmailSendResult(Guid.NewGuid().ToString()));
     }
 
-    public Task<bool> SendTemplateAsync(string to, string templateId, Dictionary<string, object> data)
+    public Task<EmailSendResult> SendTemplateAsync(string to, string templateId, IReadOnlyDictionary<string, object> data, CancellationToken cancellationToken = default)
     {
         SentTemplateEmails.Add((to, templateId, data));
-        return Task.FromResult(true);
+        return Task.FromResult(new EmailSendResult(Guid.NewGuid().ToString()));
     }
 
-    public Task SendBulkAsync(List<string> recipients, string subject, string htmlBody)
-    {
-        foreach (var recipient in recipients)
-        {
-            SentEmails.Add((recipient, subject, htmlBody));
-        }
-        return Task.CompletedTask;
-    }
 }

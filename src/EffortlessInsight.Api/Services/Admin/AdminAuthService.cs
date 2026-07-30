@@ -5,6 +5,7 @@ using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities.Admin;
 using EffortlessInsight.Api.DTOs.Admin;
 using EffortlessInsight.Api.Options;
+using EffortlessInsight.Api.Services.Email;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Options;

@@ -13,7 +13,7 @@ public record ChannelSendResult(
 #region Email Channel
 
 /// <summary>
-/// Email sending service (Resend)
+/// Email sending service (Amazon SES)
 /// </summary>
 public interface IEmailChannelService
 {
@@ -263,26 +263,6 @@ public record InAppNotificationMessage(
 #endregion
 
 #region Channel Configuration
-
-/// <summary>
-/// Resend configuration options
-/// </summary>
-public class ResendOptions
-{
-    public const string SectionName = "Resend";
-
-    public string ApiKey { get; set; } = string.Empty;
-    public string FromEmail { get; set; } = "notifications@effortlessinsight.com";
-    public string FromName { get; set; } = "EffortlessInsight";
-    public string? ReplyTo { get; set; }
-
-    /// <summary>
-    /// Svix webhook signing secret (whsec_...) used to verify inbound Resend
-    /// delivery/open/click webhooks (audit BE-25).
-    /// </summary>
-    public string? WebhookSecret { get; set; }
-}
-
 
 /// <summary>
 /// Firebase configuration options

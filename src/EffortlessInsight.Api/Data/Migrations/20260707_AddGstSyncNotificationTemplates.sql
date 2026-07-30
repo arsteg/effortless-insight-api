@@ -1,3 +1,10 @@
+-- OBSOLETE — DO NOT RUN.
+-- This script targets a schema that never existed (snake_case table name,
+-- "title" column, ON CONFLICT without a matching unique constraint) and seeds
+-- the 'email'/'in_app' channels, which the notification engine never renders
+-- (it renders the 'default' channel). GST sync templates are now seeded in
+-- code: NotificationTemplateService.SeedDefaultTemplatesAsync (runs at startup).
+--
 -- GST Sync Notification Templates
 -- Run this after the main migration to seed notification templates
 

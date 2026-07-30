@@ -1,6 +1,7 @@
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.Services;
+using EffortlessInsight.Api.Services.Email;
 using EffortlessInsight.Api.Services.Reporting;
 using Microsoft.EntityFrameworkCore;
 
