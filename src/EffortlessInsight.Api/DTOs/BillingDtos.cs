@@ -278,7 +278,10 @@ public record ChangePlanResponse(
 public record PlanChangeValidationResult(
     bool CanChange,
     List<PlanChangeBlocker>? Blockers,
-    List<string>? FeaturesToLose
+    List<string>? FeaturesToLose,
+    List<string>? FeaturesToGain,
+    List<string>? ActiveFeaturesToLose, // Features currently in use that will be lost - shows warning but doesn't block
+    PlanLimitsComparison? LimitsComparison
 );
 
 /// <summary>
@@ -290,6 +293,26 @@ public record PlanChangeBlocker(
     int CurrentUsage,
     int NewLimit,
     int ExcessAmount
+);
+
+/// <summary>
+/// Comparison of limits between current and new plan.
+/// </summary>
+public record PlanLimitsComparison(
+    LimitChange Users,
+    LimitChange Storage,
+    LimitChange Notices,
+    LimitChange ApiCalls,
+    LimitChange Organizations
+);
+
+/// <summary>
+/// Change in a specific limit.
+/// </summary>
+public record LimitChange(
+    int Current,
+    int New,
+    string Direction // "increase", "decrease", "same"
 );
 
 // ============================================================================
@@ -348,6 +371,19 @@ public record AddSeatsResponse(
     int TotalSeats,
     int ProrationAmount,
     RazorpayOrderDto? RazorpayOrder
+);
+
+public record VerifySeatsPaymentRequest(
+    string RazorpayOrderId,
+    string RazorpayPaymentId,
+    string RazorpaySignature,
+    int AdditionalSeats
+);
+
+public record VerifySeatsPaymentResponse(
+    bool Success,
+    int TotalSeats,
+    InvoiceSummaryDto? Invoice
 );
 
 // ============================================================================

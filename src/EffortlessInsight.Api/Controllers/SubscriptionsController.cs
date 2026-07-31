@@ -246,6 +246,33 @@ public class SubscriptionsController : ControllerBase
     }
 
     /// <summary>
+    /// Verify seats payment and apply additional seats.
+    /// </summary>
+    [HttpPost("current/seats/verify")]
+    [ProducesResponseType(typeof(ApiResponse<VerifySeatsPaymentResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> VerifySeatsPayment([FromBody] VerifySeatsPaymentRequest request)
+    {
+        try
+        {
+            var orgId = _currentOrganization.OrganizationId;
+            var userId = GetCurrentUserId();
+
+            if (orgId == null)
+            {
+                return BadRequest(new ApiErrorResponse(false, "NO_ORG", "No organization selected"));
+            }
+
+            var result = await _subscriptionService.VerifySeatsPaymentAsync(orgId.Value, userId, request);
+            return Ok(new ApiResponse<VerifySeatsPaymentResponse>(true, result));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new ApiErrorResponse(false, "VERIFY_SEATS_FAILED", ex.Message));
+        }
+    }
+
+    /// <summary>
     /// Reactivate a cancelled subscription.
     /// </summary>
     [HttpPost("current/reactivate")]

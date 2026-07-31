@@ -68,6 +68,14 @@ public interface ISubscriptionService
         AddSeatsRequest request);
 
     /// <summary>
+    /// Verifies seats payment and applies the additional seats.
+    /// </summary>
+    Task<VerifySeatsPaymentResponse> VerifySeatsPaymentAsync(
+        Guid organizationId,
+        Guid userId,
+        VerifySeatsPaymentRequest request);
+
+    /// <summary>
     /// Reactivates a cancelled subscription (within grace period).
     /// </summary>
     Task<SubscriptionDto> ReactivateSubscriptionAsync(Guid organizationId, Guid userId);

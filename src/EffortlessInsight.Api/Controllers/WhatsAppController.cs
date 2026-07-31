@@ -1,6 +1,8 @@
 using System.Security.Claims;
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.DTOs;
+using EffortlessInsight.Api.Filters;
+using EffortlessInsight.Api.Services.Billing;
 using EffortlessInsight.Api.Services.WhatsApp;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -10,10 +12,12 @@ namespace EffortlessInsight.Api.Controllers;
 
 /// <summary>
 /// API endpoints for WhatsApp integration.
+/// Requires the whatsapp_integration feature in the organization's plan.
 /// </summary>
 [ApiController]
 [Route("api/v1/whatsapp")]
 [Authorize]
+[RequiresFeature(FeatureCodes.WhatsAppIntegration)]
 public class WhatsAppController : ControllerBase
 {
     private readonly ApplicationDbContext _db;
@@ -149,6 +153,90 @@ public class WhatsAppController : ControllerBase
         }
 
         return Ok(new { message = "WhatsApp linked successfully" });
+    }
+
+    /// <summary>
+    /// Send a test message to verify WhatsApp integration.
+    /// Uses template message because free-form messages require 24-hour window.
+    /// </summary>
+    [HttpPost("test")]
+    public async Task<IActionResult> SendTestMessage(CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var user = await _db.Users.FindAsync([userId], ct);
+
+        if (user == null)
+        {
+            return NotFound(new { message = "User not found" });
+        }
+
+        if (!user.WhatsAppVerified || string.IsNullOrEmpty(user.WhatsAppPhoneNumber))
+        {
+            return BadRequest(new { message = "WhatsApp not linked" });
+        }
+
+        try
+        {
+            // Format the phone number
+            var formattedPhone = _client.FormatPhoneNumber(user.WhatsAppPhoneNumber);
+
+            _logger.LogInformation(
+                "Sending test template message. Original: {Original}, Formatted: {Formatted}",
+                user.WhatsAppPhoneNumber,
+                formattedPhone);
+
+            // Use hello_world template (provided by Meta by default)
+            // This works outside the 24-hour window
+            var result = await _client.SendTemplateMessageAsync(
+                user.WhatsAppPhoneNumber,
+                "hello_world",  // Meta's default template
+                "en_US",        // Language code
+                ct: ct);
+
+            _logger.LogInformation(
+                "Test message result - Success: {Success}, MessageId: {MessageId}, ErrorCode: {ErrorCode}, ErrorMessage: {ErrorMessage}",
+                result.Success,
+                result.MessageId,
+                result.ErrorCode,
+                result.ErrorMessage);
+
+            if (result.Success)
+            {
+                return Ok(new
+                {
+                    success = true,
+                    message = "Test message sent! Check your WhatsApp.",
+                    messageId = result.MessageId,
+                    phoneNumber = _client.MaskPhoneNumber(formattedPhone),
+                    templateUsed = "hello_world",
+                    note = "Using template message (works outside 24-hour window)"
+                });
+            }
+            else
+            {
+                // If hello_world fails, provide helpful error
+                var errorHelp = result.ErrorCode switch
+                {
+                    "132001" => "Template 'hello_world' not found. Check Meta Business Manager.",
+                    "131047" => "24-hour window expired. Template messages should work - check template status.",
+                    _ => result.ErrorMessage
+                };
+
+                return BadRequest(new
+                {
+                    success = false,
+                    message = $"Failed: {errorHelp}",
+                    errorCode = result.ErrorCode,
+                    errorMessage = result.ErrorMessage,
+                    phoneNumber = _client.MaskPhoneNumber(formattedPhone)
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Exception sending test message to user {UserId}", userId);
+            return StatusCode(500, new { success = false, message = $"Exception: {ex.Message}" });
+        }
     }
 
     /// <summary>

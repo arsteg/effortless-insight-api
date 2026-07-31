@@ -492,6 +492,7 @@ public class RazorpayService : IRazorpayService
             ErrorCode = payment["error_code"]?.ToString(),
             ErrorDescription = payment["error_description"]?.ToString(),
             TokenId = payment["token_id"]?.ToString(),
+            CustomerId = payment["customer_id"]?.ToString(),
             Vpa = payment["vpa"]?.ToString()
         };
 

@@ -54,6 +54,10 @@ public class OrganizationsController : ControllerBase
         {
             return Conflict(new ApiErrorResponse(false, "ORG_NAME_EXISTS", "Organization name already exists"));
         }
+        catch (InvalidOperationException ex) when (ex.Message.StartsWith("ORGANIZATION_LIMIT_EXCEEDED"))
+        {
+            return BadRequest(new ApiErrorResponse(false, "ORGANIZATION_LIMIT_EXCEEDED", ex.Message.Replace("ORGANIZATION_LIMIT_EXCEEDED: ", "")));
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to create organization");
@@ -661,6 +665,15 @@ public class OrganizationsController : ControllerBase
         catch (InvalidOperationException ex) when (ex.Message.StartsWith("USER_LIMIT_EXCEEDED"))
         {
             return BadRequest(new ApiErrorResponse(false, "USER_LIMIT_EXCEEDED", ex.Message.Replace("USER_LIMIT_EXCEEDED: ", "")));
+        }
+        catch (InvalidOperationException ex) when (ex.Message.StartsWith("ADDITIONAL_USERS_NOT_ALLOWED"))
+        {
+            return BadRequest(new ApiErrorResponse(false, "ADDITIONAL_USERS_NOT_ALLOWED", ex.Message.Replace("ADDITIONAL_USERS_NOT_ALLOWED: ", "")));
+        }
+        catch (InvalidOperationException ex) when (ex.Message.StartsWith("EMAIL_SEND_FAILED"))
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                new ApiErrorResponse(false, "EMAIL_SEND_FAILED", ex.Message.Replace("EMAIL_SEND_FAILED: ", "")));
         }
         catch (KeyNotFoundException)
         {

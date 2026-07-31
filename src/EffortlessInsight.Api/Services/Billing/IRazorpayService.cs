@@ -122,6 +122,7 @@ public record PaymentResult
     public string? ErrorCode { get; init; }
     public string? ErrorDescription { get; init; }
     public string? TokenId { get; init; }
+    public string? CustomerId { get; init; }
     public string? Vpa { get; init; }
     public CardDetails? Card { get; init; }
 }

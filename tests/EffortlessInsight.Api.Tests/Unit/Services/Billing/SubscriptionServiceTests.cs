@@ -6,6 +6,7 @@ using EffortlessInsight.Api.Services.Billing;
 using EffortlessInsight.Api.Tests.Fixtures;
 using EffortlessInsight.Api.Tests.Helpers;
 using FluentAssertions;
+using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 
@@ -20,6 +21,8 @@ public class SubscriptionServiceTests : IDisposable
     private readonly ICouponService _couponService;
     private readonly IInvoiceService _invoiceService;
     private readonly IBillingNotificationService _billingNotificationService;
+    private readonly IPaymentMethodService _paymentMethodService;
+    private readonly IDistributedCache _cache;
     private readonly ILogger<SubscriptionService> _logger;
     private readonly SubscriptionService _sut;
 
@@ -32,6 +35,8 @@ public class SubscriptionServiceTests : IDisposable
         _couponService = Substitute.For<ICouponService>();
         _invoiceService = Substitute.For<IInvoiceService>();
         _billingNotificationService = Substitute.For<IBillingNotificationService>();
+        _paymentMethodService = Substitute.For<IPaymentMethodService>();
+        _cache = Substitute.For<IDistributedCache>();
         _logger = Substitute.For<ILogger<SubscriptionService>>();
 
         _sut = new SubscriptionService(
@@ -42,6 +47,8 @@ public class SubscriptionServiceTests : IDisposable
             _couponService,
             _invoiceService,
             _billingNotificationService,
+            _paymentMethodService,
+            _cache,
             _logger);
     }
 

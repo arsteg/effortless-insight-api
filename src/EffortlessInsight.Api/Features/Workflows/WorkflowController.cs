@@ -1,6 +1,8 @@
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Features.Workflows.Dtos;
 using EffortlessInsight.Api.Features.Workflows.Services;
+using EffortlessInsight.Api.Filters;
+using EffortlessInsight.Api.Services.Billing;
 using EffortlessInsight.Api.Services.Organizations;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -9,9 +11,14 @@ using System.Security.Claims;
 
 namespace EffortlessInsight.Api.Features.Workflows;
 
+/// <summary>
+/// Workflow management endpoints.
+/// Requires the workflows feature in the organization's plan.
+/// </summary>
 [Authorize]
 [ApiController]
 [Route("api/v1/workflows")]
+[RequiresFeature(FeatureCodes.Workflows)]
 public class WorkflowController : ControllerBase
 {
     private readonly IWorkflowEngineService _workflowService;

@@ -80,7 +80,9 @@ public class WhatsAppVerificationService : IWhatsAppVerificationService
         };
 
         _db.WhatsAppVerifications.Add(verification);
-        await _db.SaveChangesAsync(ct);
+        // TODO: Investigate why CancellationToken causes premature cancellation
+        // Using CancellationToken.None temporarily to prevent OperationCanceledException
+        await _db.SaveChangesAsync(CancellationToken.None);
 
         // Send in-app notification with the code
         await SendVerificationNotificationAsync(userId, code, ct);

@@ -3,6 +3,7 @@ using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.Data.Entities.Billing;
 using EffortlessInsight.Api.DTOs;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Distributed;
 
 namespace EffortlessInsight.Api.Services.Billing;
 
@@ -18,6 +19,8 @@ public class SubscriptionService : ISubscriptionService
     private readonly ICouponService _couponService;
     private readonly IInvoiceService _invoiceService;
     private readonly IBillingNotificationService _billingNotificationService;
+    private readonly IPaymentMethodService _paymentMethodService;
+    private readonly IDistributedCache _cache;
     private readonly ILogger<SubscriptionService> _logger;
 
     public SubscriptionService(
@@ -28,6 +31,8 @@ public class SubscriptionService : ISubscriptionService
         ICouponService couponService,
         IInvoiceService invoiceService,
         IBillingNotificationService billingNotificationService,
+        IPaymentMethodService paymentMethodService,
+        IDistributedCache cache,
         ILogger<SubscriptionService> logger)
     {
         _dbContext = dbContext;
@@ -37,6 +42,8 @@ public class SubscriptionService : ISubscriptionService
         _couponService = couponService;
         _invoiceService = invoiceService;
         _billingNotificationService = billingNotificationService;
+        _paymentMethodService = paymentMethodService;
+        _cache = cache;
         _logger = logger;
     }
 
@@ -117,7 +124,13 @@ public class SubscriptionService : ISubscriptionService
                 Status = SubscriptionStatus.Trialing,
                 BillingCycle = request.BillingCycle,
                 SeatsIncluded = plan.Limits.Users,
-                SeatsAdditional = request.AdditionalSeats
+                SeatsAdditional = request.AdditionalSeats,
+                // Store pricing amounts (convert from paise to rupees)
+                BaseAmount = pricing.BaseAmount / 100m,
+                AdditionalSeatsAmount = pricing.AdditionalSeatsAmount / 100m,
+                TaxAmount = pricing.GstAmount / 100m,
+                TotalAmount = pricing.Total / 100m,
+                Currency = pricing.Currency
             };
             _dbContext.BillingSubscriptions.Add(subscription);
         }
@@ -127,6 +140,12 @@ public class SubscriptionService : ISubscriptionService
             subscription.PlanId = plan.Id;
             subscription.BillingCycle = request.BillingCycle;
             subscription.SeatsAdditional = request.AdditionalSeats;
+            // Update pricing amounts (convert from paise to rupees)
+            subscription.BaseAmount = pricing.BaseAmount / 100m;
+            subscription.AdditionalSeatsAmount = pricing.AdditionalSeatsAmount / 100m;
+            subscription.TaxAmount = pricing.GstAmount / 100m;
+            subscription.TotalAmount = pricing.Total / 100m;
+            subscription.Currency = pricing.Currency;
         }
 
         await _dbContext.SaveChangesAsync();
@@ -251,6 +270,14 @@ public class SubscriptionService : ISubscriptionService
                     subscription.Metadata["lastUpgradedAt"] = now.ToString("O");
                     subscription.Metadata["upgradedBy"] = userId.ToString();
 
+                    // Update pricing amounts for the new plan
+                    var upgradePricing = _planService.CalculateSubscriptionPrice(newPlan, newBillingCycle, additionalSeats);
+                    subscription.BaseAmount = upgradePricing.BaseAmount / 100m;
+                    subscription.AdditionalSeatsAmount = upgradePricing.AdditionalSeatsAmount / 100m;
+                    subscription.TaxAmount = upgradePricing.GstAmount / 100m;
+                    subscription.TotalAmount = upgradePricing.Total / 100m;
+                    subscription.Currency = upgradePricing.Currency;
+
                     // Period end stays the same for upgrades
                     _logger.LogInformation(
                         "Plan upgrade applied: Org {OrgId} - Changed to {PlanCode}, Period end remains {EndDate}",
@@ -362,6 +389,37 @@ public class SubscriptionService : ISubscriptionService
                     isUpgradePayment ? "Upgrade" : "New subscription",
                     subscription.Id, organizationId);
 
+                // Save payment method for future use (best effort - don't fail verification if this fails)
+                try
+                {
+                    var customerId = payment.CustomerId ?? subscription.RazorpayCustomerId;
+                    if (!string.IsNullOrEmpty(customerId) && !string.IsNullOrEmpty(payment.TokenId))
+                    {
+                        await _paymentMethodService.CreateFromRazorpayAsync(
+                            organizationId,
+                            request.RazorpayPaymentId,
+                            customerId,
+                            setAsDefault: true);
+
+                        _logger.LogInformation(
+                            "Payment method saved for organization {OrganizationId} from payment {PaymentId}",
+                            organizationId, request.RazorpayPaymentId);
+                    }
+                    else
+                    {
+                        _logger.LogDebug(
+                            "Skipping payment method save - no customer ID or token. CustomerId: {CustomerId}, HasToken: {HasToken}",
+                            customerId, !string.IsNullOrEmpty(payment.TokenId));
+                    }
+                }
+                catch (Exception pmEx)
+                {
+                    // Log but don't fail the payment verification
+                    _logger.LogWarning(pmEx,
+                        "Failed to save payment method for organization {OrganizationId}. Payment verification succeeded.",
+                        organizationId);
+                }
+
                 return new VerifyPaymentResponse(
                     Success: true,
                     Subscription: new SubscriptionActivatedDto(
@@ -449,6 +507,9 @@ public class SubscriptionService : ISubscriptionService
         // - Upgrade: End date decreases (remaining value covers fewer days at higher rate)
         // - Downgrade: End date increases (remaining value covers more days at lower rate)
         await ApplyPlanChangeAsync(subscription, newPlan, request.BillingCycle, additionalSeats);
+
+        // Invalidate feature access cache since plan features may have changed
+        await InvalidateFeatureCacheAsync(organizationId);
 
         // Reload to get updated end date
         await _dbContext.Entry(subscription).ReloadAsync();
@@ -594,6 +655,15 @@ public class SubscriptionService : ISubscriptionService
         {
             // No charge, apply immediately
             subscription.SeatsAdditional = newAdditionalSeats;
+
+            // Update pricing amounts with new seat count
+            var seatsPricing = _planService.CalculateSubscriptionPrice(plan, subscription.BillingCycle, newAdditionalSeats);
+            subscription.BaseAmount = seatsPricing.BaseAmount / 100m;
+            subscription.AdditionalSeatsAmount = seatsPricing.AdditionalSeatsAmount / 100m;
+            subscription.TaxAmount = seatsPricing.GstAmount / 100m;
+            subscription.TotalAmount = seatsPricing.Total / 100m;
+            subscription.Currency = seatsPricing.Currency;
+
             await _dbContext.SaveChangesAsync();
         }
 
@@ -601,6 +671,126 @@ public class SubscriptionService : ISubscriptionService
             TotalSeats: subscription.SeatsIncluded + newAdditionalSeats,
             ProrationAmount: prorationAmount,
             RazorpayOrder: order
+        );
+    }
+
+    public async Task<VerifySeatsPaymentResponse> VerifySeatsPaymentAsync(
+        Guid organizationId,
+        Guid userId,
+        VerifySeatsPaymentRequest request)
+    {
+        // Verify signature
+        var isValid = _razorpayService.VerifyPaymentSignature(
+            request.RazorpayOrderId,
+            request.RazorpayPaymentId,
+            request.RazorpaySignature);
+
+        if (!isValid)
+            throw new InvalidOperationException("Payment signature verification failed");
+
+        var subscription = await GetSubscriptionEntityAsync(organizationId)
+            ?? throw new InvalidOperationException("Subscription not found");
+
+        var plan = await _planService.GetPlanByIdAsync(subscription.PlanId)
+            ?? throw new InvalidOperationException("Plan not found");
+
+        // Capture payment
+        var payment = await _razorpayService.CapturePaymentAsync(request.RazorpayPaymentId);
+
+        // Record payment
+        var paymentRecord = new Payment
+        {
+            OrganizationId = organizationId,
+            SubscriptionId = subscription.Id,
+            Amount = payment.Amount,
+            Currency = payment.Currency,
+            Status = PaymentStatus.Captured,
+            PaymentMethod = payment.Method,
+            RazorpayPaymentId = payment.PaymentId,
+            RazorpayOrderId = request.RazorpayOrderId,
+            RazorpaySignature = request.RazorpaySignature,
+            CapturedAt = DateTime.UtcNow
+        };
+        _dbContext.Payments.Add(paymentRecord);
+
+        // Apply the additional seats
+        var newAdditionalSeats = subscription.SeatsAdditional + request.AdditionalSeats;
+        subscription.SeatsAdditional = newAdditionalSeats;
+
+        // Update pricing amounts
+        var seatsPricing = _planService.CalculateSubscriptionPrice(plan, subscription.BillingCycle, newAdditionalSeats);
+        subscription.BaseAmount = seatsPricing.BaseAmount / 100m;
+        subscription.AdditionalSeatsAmount = seatsPricing.AdditionalSeatsAmount / 100m;
+        subscription.TaxAmount = seatsPricing.GstAmount / 100m;
+        subscription.TotalAmount = seatsPricing.Total / 100m;
+        subscription.Currency = seatsPricing.Currency;
+
+        // Generate invoice for the seat addition
+        var description = $"Additional Seats ({request.AdditionalSeats} seats)";
+        var lineItems = new List<InvoiceLineItemRequest>
+        {
+            new()
+            {
+                Type = "seats",
+                Description = description,
+                Quantity = request.AdditionalSeats,
+                UnitPrice = payment.Amount / request.AdditionalSeats,
+                Amount = payment.Amount,
+                PlanCode = plan.Code,
+                BillingCycle = subscription.BillingCycle,
+                PeriodStart = DateOnly.FromDateTime(DateTime.UtcNow),
+                PeriodEnd = DateOnly.FromDateTime(subscription.CurrentPeriodEnd)
+            }
+        };
+
+        var invoice = await _invoiceService.GenerateInvoiceAsync(
+            organizationId,
+            subscription.Id,
+            payment.Amount,
+            description,
+            lineItems);
+
+        await _invoiceService.MarkAsPaidAsync(invoice.Id, request.RazorpayPaymentId);
+
+        await _dbContext.SaveChangesAsync();
+
+        _logger.LogInformation(
+            "Seats payment verified: Added {Seats} seats to subscription {SubscriptionId} for organization {OrganizationId}",
+            request.AdditionalSeats, subscription.Id, organizationId);
+
+        // Save payment method for future use (best effort - don't fail verification if this fails)
+        try
+        {
+            var customerId = payment.CustomerId ?? subscription.RazorpayCustomerId;
+            if (!string.IsNullOrEmpty(customerId) && !string.IsNullOrEmpty(payment.TokenId))
+            {
+                await _paymentMethodService.CreateFromRazorpayAsync(
+                    organizationId,
+                    request.RazorpayPaymentId,
+                    customerId,
+                    setAsDefault: true);
+
+                _logger.LogInformation(
+                    "Payment method saved for organization {OrganizationId} from seats payment {PaymentId}",
+                    organizationId, request.RazorpayPaymentId);
+            }
+        }
+        catch (Exception pmEx)
+        {
+            // Log but don't fail the payment verification
+            _logger.LogWarning(pmEx,
+                "Failed to save payment method for organization {OrganizationId}. Seats payment verification succeeded.",
+                organizationId);
+        }
+
+        return new VerifySeatsPaymentResponse(
+            Success: true,
+            TotalSeats: subscription.SeatsIncluded + newAdditionalSeats,
+            Invoice: new InvoiceSummaryDto(
+                Id: invoice.Id,
+                Number: invoice.InvoiceNumber,
+                DownloadUrl: $"/api/v1/invoices/{invoice.Id}/pdf"
+            )
         );
     }
 
@@ -1949,13 +2139,15 @@ public class SubscriptionService : ISubscriptionService
             }
         }
 
-        // Check features that will be lost (informational, but also block if currently using them)
+        // Check features that will be lost
         // Features is a List<string> of feature codes - if in list, feature is enabled
-        if (currentPlan.Features != null && currentPlan.Features.Count > 0)
-        {
-            var newFeatures = newPlan.Features ?? new List<string>();
+        var currentFeatures = currentPlan.Features ?? new List<string>();
+        var newFeatures = newPlan.Features ?? new List<string>();
+        var activeFeaturesToLose = new List<string>();
 
-            foreach (var featureCode in currentPlan.Features)
+        if (currentFeatures.Count > 0)
+        {
+            foreach (var featureCode in currentFeatures)
             {
                 // Check if feature exists in current plan but not in new plan
                 if (!newFeatures.Contains(featureCode, StringComparer.OrdinalIgnoreCase))
@@ -1963,27 +2155,74 @@ public class SubscriptionService : ISubscriptionService
                     var featureName = FormatFeatureName(featureCode);
                     featuresToLose.Add(featureName);
 
-                    // Check if feature is actively being used
+                    // Check if feature is actively being used - show as a stronger warning but don't block
                     var isFeatureInUse = await IsFeatureInUseAsync(organizationId, featureCode);
                     if (isFeatureInUse)
                     {
-                        blockers.Add(new PlanChangeBlocker(
-                            Type: "feature",
-                            Message: $"You are actively using '{featureName}' which is not available in the new plan. Please disable this feature before downgrading.",
-                            CurrentUsage: 1,
-                            NewLimit: 0,
-                            ExcessAmount: 1
-                        ));
+                        activeFeaturesToLose.Add(featureName);
                     }
                 }
             }
         }
 
+        // Check features that will be gained
+        var featuresToGain = new List<string>();
+        foreach (var featureCode in newFeatures)
+        {
+            if (!currentFeatures.Contains(featureCode, StringComparer.OrdinalIgnoreCase))
+            {
+                featuresToGain.Add(FormatFeatureName(featureCode));
+            }
+        }
+
+        // Build limits comparison
+        var limitsComparison = new PlanLimitsComparison(
+            Users: CompareLimits(currentPlan.Limits.Users, newPlan.Limits.Users + additionalSeats),
+            Storage: CompareLimits(currentPlan.Limits.StorageGb, newPlan.Limits.StorageGb),
+            Notices: CompareLimits(currentPlan.Limits.NoticesPerMonth, newPlan.Limits.NoticesPerMonth),
+            ApiCalls: CompareLimits(currentPlan.Limits.ApiCalls, newPlan.Limits.ApiCalls),
+            Organizations: CompareLimits(currentPlan.Limits.OrganizationsCount, newPlan.Limits.OrganizationsCount)
+        );
+
         return new PlanChangeValidationResult(
             CanChange: blockers.Count == 0,
             Blockers: blockers.Count > 0 ? blockers : null,
-            FeaturesToLose: featuresToLose.Count > 0 ? featuresToLose : null
+            FeaturesToLose: featuresToLose.Count > 0 ? featuresToLose : null,
+            FeaturesToGain: featuresToGain.Count > 0 ? featuresToGain : null,
+            ActiveFeaturesToLose: activeFeaturesToLose.Count > 0 ? activeFeaturesToLose : null,
+            LimitsComparison: limitsComparison
         );
+    }
+
+    /// <summary>
+    /// Compares two limits and returns a LimitChange object.
+    /// -1 means unlimited.
+    /// </summary>
+    private static LimitChange CompareLimits(int current, int newLimit)
+    {
+        string direction;
+        if (current == newLimit)
+        {
+            direction = "same";
+        }
+        else if (current == -1) // Current is unlimited
+        {
+            direction = "decrease"; // Going from unlimited to limited
+        }
+        else if (newLimit == -1) // New is unlimited
+        {
+            direction = "increase"; // Going to unlimited
+        }
+        else if (newLimit > current)
+        {
+            direction = "increase";
+        }
+        else
+        {
+            direction = "decrease";
+        }
+
+        return new LimitChange(current, newLimit, direction);
     }
 
     /// <summary>
@@ -2022,6 +2261,24 @@ public class SubscriptionService : ISubscriptionService
         var result = System.Text.RegularExpressions.Regex.Replace(featureKey, "([a-z])([A-Z])", "$1 $2");
         result = result.Replace("_", " ");
         return System.Globalization.CultureInfo.CurrentCulture.TextInfo.ToTitleCase(result.ToLower());
+    }
+
+    /// <summary>
+    /// Invalidates the feature access cache for an organization.
+    /// Call this after plan changes to ensure features are re-evaluated.
+    /// </summary>
+    private async Task InvalidateFeatureCacheAsync(Guid organizationId)
+    {
+        try
+        {
+            var cacheKey = $"org_features:{organizationId}";
+            await _cache.RemoveAsync(cacheKey);
+            _logger.LogInformation("Invalidated feature cache for organization {OrganizationId}", organizationId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to invalidate feature cache for organization {OrganizationId}", organizationId);
+        }
     }
 
     /// <summary>
@@ -2107,6 +2364,14 @@ public class SubscriptionService : ISubscriptionService
         subscription.BillingCycle = newBillingCycle;
         subscription.SeatsIncluded = newPlan.Limits.Users;
         subscription.SeatsAdditional = additionalSeats;
+
+        // Update pricing amounts for the new plan
+        var newPricing = _planService.CalculateSubscriptionPrice(newPlan, newBillingCycle, additionalSeats);
+        subscription.BaseAmount = newPricing.BaseAmount / 100m;
+        subscription.AdditionalSeatsAmount = newPricing.AdditionalSeatsAmount / 100m;
+        subscription.TaxAmount = newPricing.GstAmount / 100m;
+        subscription.TotalAmount = newPricing.Total / 100m;
+        subscription.Currency = newPricing.Currency;
 
         await _dbContext.SaveChangesAsync();
     }
