@@ -26,6 +26,7 @@ public static class NotificationCategory
     public const string Collaboration = "collaboration";
     public const string Account = "account";
     public const string GstSync = "gst_sync";
+    public const string Billing = "billing";
 }
 
 /// <summary>
@@ -79,6 +80,26 @@ public static class NotificationType
     public const string GstSyncPaused = "gst_sync.sync_paused";
     public const string GstSyncImportCompleted = "gst_sync.import_completed";
 
+    // Billing notifications
+    public const string TrialStarted = "trial_started";
+    public const string TrialEnding = "trial_ending";
+    public const string TrialEnded = "trial_ended";
+    public const string SubscriptionActivated = "subscription_activated";
+    public const string FreePlanActivated = "free_plan_activated";
+    public const string SubscriptionCancelled = "subscription_cancelled";
+    public const string SubscriptionReactivated = "subscription_reactivated";
+    public const string PlanUpgraded = "plan_upgraded";
+    public const string PlanDowngraded = "plan_downgraded";
+    public const string PaymentSuccess = "payment_success";
+    public const string PaymentFailed = "payment_failed";
+    public const string PaymentRetry = "payment_retry";
+    public const string InvoiceReady = "invoice_ready";
+    public const string UsageWarning80 = "usage_warning_80";
+    public const string UsageWarning90 = "usage_warning_90";
+    public const string UsageLimitReached = "usage_limit_reached";
+    public const string RenewalReminder = "renewal_reminder";
+    public const string SeatsAdded = "seats_added";
+
     /// <summary>
     /// Get priority for a notification type
     /// </summary>
@@ -89,12 +110,17 @@ public static class NotificationType
 
         Deadline3Day or SlaCritical or TaskOverdue or DocumentRequested or
         LoginAlert or SubscriptionExpiring or GstSyncFailed or
-        GstSyncDueDateReminder => NotificationPriority.High,
+        GstSyncDueDateReminder or PaymentFailed or UsageLimitReached or
+        TrialEnding or TrialEnded => NotificationPriority.High,
 
         Deadline7Day or SlaWarning or NoticeUploaded or NoticeAnalyzed or
         NoticeAssigned or TaskAssigned or TaskDueSoon or UserMentioned or
         GstSyncNoticesSynced or GstSyncExtensionDisconnected or
-        GstSyncPaused => NotificationPriority.Medium,
+        GstSyncPaused or SubscriptionActivated or FreePlanActivated or
+        PlanUpgraded or PlanDowngraded or PaymentSuccess or TrialStarted or
+        SubscriptionCancelled or SubscriptionReactivated or InvoiceReady or
+        RenewalReminder or UsageWarning80 or UsageWarning90 or
+        SeatsAdded => NotificationPriority.Medium,
 
         _ => NotificationPriority.Low
     };
@@ -118,6 +144,12 @@ public static class NotificationType
         GstSyncDueDateReminder or GstSyncDueDateOverdue or GstSyncExtensionDisconnected or
         GstSyncPaused or GstSyncImportCompleted
             => NotificationCategory.GstSync,
+        TrialStarted or TrialEnding or TrialEnded or SubscriptionActivated or
+        FreePlanActivated or SubscriptionCancelled or SubscriptionReactivated or
+        PlanUpgraded or PlanDowngraded or PaymentSuccess or PaymentFailed or
+        PaymentRetry or InvoiceReady or UsageWarning80 or UsageWarning90 or
+        UsageLimitReached or RenewalReminder or SeatsAdded
+            => NotificationCategory.Billing,
         _ => NotificationCategory.Account
     };
 
@@ -133,7 +165,7 @@ public static class NotificationType
 
         // High - Email, SMS, Push
         Deadline3Day or SlaCritical or SlaBreach or TaskOverdue or LoginAlert or
-        GstSyncFailed or GstSyncDueDateReminder
+        GstSyncFailed or GstSyncDueDateReminder or PaymentFailed or UsageLimitReached
             => ["email", "sms", "push", "inApp"],
 
         // High with WhatsApp
@@ -144,6 +176,14 @@ public static class NotificationType
         NoticeAssigned or TaskAssigned or UserMentioned or SubscriptionExpiring or
         GstSyncNoticesSynced or GstSyncExtensionDisconnected or GstSyncPaused
             => ["email", "push", "inApp"],
+
+        // Billing notifications - Email and InApp
+        TrialStarted or TrialEnding or TrialEnded or SubscriptionActivated or
+        FreePlanActivated or SubscriptionCancelled or SubscriptionReactivated or
+        PlanUpgraded or PlanDowngraded or PaymentSuccess or InvoiceReady or
+        RenewalReminder or SeatsAdded or UsageWarning80 or UsageWarning90 or
+        PaymentRetry
+            => ["email", "inApp"],
 
         // GST Sync - Daily digest (email only)
         GstSyncDailyDigest => ["email"],

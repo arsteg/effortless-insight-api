@@ -83,7 +83,22 @@ public class SubscriptionService : ISubscriptionService
         if (plan.ContactSales)
             throw new InvalidOperationException("Enterprise plans require contacting sales");
 
-        // Save billing details
+        // Handle free plans - no payment required
+        if (IsFreePlan(plan))
+        {
+            var subscriptionDto = await ActivateFreePlanAsync(organizationId, request.PlanCode);
+
+            // Return response indicating free plan activated (no Razorpay needed)
+            return new CreateSubscriptionResponse(
+                SubscriptionId: subscriptionDto.Id,
+                RazorpayOrder: null,
+                CheckoutOptions: null,
+                IsFreePlan: true,
+                Subscription: subscriptionDto
+            );
+        }
+
+        // Save billing details (only for paid plans)
         await SaveBillingDetailsAsync(organizationId, request.BillingDetails);
 
         // Validate and apply coupon
@@ -420,6 +435,15 @@ public class SubscriptionService : ISubscriptionService
                         organizationId);
                 }
 
+                // Send notification (fire-and-forget, don't block on errors)
+                _ = SendSubscriptionPaymentNotificationAsync(
+                    organizationId,
+                    plan.DisplayName,
+                    subscription.TotalAmount,
+                    subscription.BillingCycle,
+                    invoiceSummary?.Number ?? "",
+                    isUpgradePayment);
+
                 return new VerifyPaymentResponse(
                     Success: true,
                     Subscription: new SubscriptionActivatedDto(
@@ -490,6 +514,23 @@ public class SubscriptionService : ISubscriptionService
         if (newPlan.ContactSales)
             throw new InvalidOperationException("Enterprise plans require contacting sales");
 
+        // Check if switching from free plan to paid plan - requires payment
+        var isCurrentPlanFree = IsFreePlan(currentPlan);
+        var isNewPlanFree = IsFreePlan(newPlan);
+
+        if (isCurrentPlanFree && !isNewPlanFree)
+        {
+            // Switching from free to paid plan requires payment
+            // Return a response indicating payment is required
+            throw new InvalidOperationException("PAYMENT_REQUIRED: Switching from free to paid plan requires payment. Please use the subscription checkout flow.");
+        }
+
+        // Prevent switching to free plan from paid plan
+        if (!isCurrentPlanFree && isNewPlanFree)
+        {
+            throw new InvalidOperationException("Cannot switch to free plan from a paid plan. Please cancel your subscription first.");
+        }
+
         var additionalSeats = request.AdditionalSeats ?? subscription.SeatsAdditional;
 
         // Validate plan change is allowed (check usage limits)
@@ -516,6 +557,7 @@ public class SubscriptionService : ISubscriptionService
 
         // Build message based on end date change
         string changeMessage;
+        var isUpgrade = subscription.CurrentPeriodEnd <= originalEndDate;
         if (subscription.CurrentPeriodEnd > originalEndDate)
         {
             changeMessage = $"Your plan has been changed to {newPlan.DisplayName}. " +
@@ -531,6 +573,14 @@ public class SubscriptionService : ISubscriptionService
             changeMessage = $"Your plan has been changed to {newPlan.DisplayName}. " +
                            $"Your subscription is valid until {subscription.CurrentPeriodEnd:MMMM d, yyyy}.";
         }
+
+        // Send notification (fire-and-forget, don't block on errors)
+        _ = SendPlanChangedNotificationAsync(
+            organizationId,
+            currentPlan.DisplayName,
+            newPlan.DisplayName,
+            isUpgrade,
+            subscription.CurrentPeriodEnd);
 
         return new ChangePlanResponse(
             Type: "changed",
@@ -590,6 +640,10 @@ public class SubscriptionService : ISubscriptionService
         _logger.LogInformation(
             "Subscription {SubscriptionId} cancelled for organization {OrganizationId}. Reason: {Reason}",
             subscription.Id, organizationId, request.Reason);
+
+        // Send notification (fire-and-forget, don't block on errors)
+        var plan = await _planService.GetPlanByIdAsync(subscription.PlanId);
+        _ = SendSubscriptionCancelledNotificationAsync(organizationId, plan?.DisplayName ?? subscription.PlanCode, cancellationDate);
 
         return new CancelSubscriptionResponse(
             Subscription: new SubscriptionCancelledDto(
@@ -837,8 +891,22 @@ public class SubscriptionService : ISubscriptionService
         if (plan.ContactSales)
             throw new InvalidOperationException("Enterprise plans require contacting sales");
 
+        // For free plans with 0 trial days, activate directly instead of starting a trial
+        if (plan.TrialDays <= 0 && IsFreePlan(plan))
+        {
+            return await ActivateFreePlanAsync(organizationId, planCode);
+        }
+
+        // For paid plans with no trial, throw an error
         if (plan.TrialDays <= 0)
             throw new InvalidOperationException($"Plan '{planCode}' does not offer a trial period");
+
+        // Check if organization has already used a trial (prevent trial abuse)
+        var org = await _dbContext.Organizations.FindAsync(organizationId);
+        if (org != null && org.HasUsedTrial)
+        {
+            throw new InvalidOperationException("TRIAL_ALREADY_USED: This organization has already used a trial period. Please subscribe to a paid plan.");
+        }
 
         var existingSubscription = await GetSubscriptionEntityAsync(organizationId);
         if (existingSubscription != null)
@@ -850,14 +918,18 @@ public class SubscriptionService : ISubscriptionService
                 return MapToSubscriptionDto(existingSubscription, existingPlan!);
             }
 
-            // If active or past_due, don't allow starting a new trial
-            if (existingSubscription.Status == SubscriptionStatus.Active ||
-                existingSubscription.Status == SubscriptionStatus.PastDue)
+            // Check if current plan is free - allow free plan users to start a trial
+            var currentPlan = await _planService.GetPlanByIdAsync(existingSubscription.PlanId);
+            var isCurrentPlanFree = currentPlan != null && IsFreePlan(currentPlan);
+
+            // If active paid subscription (not free), don't allow starting a new trial
+            if ((existingSubscription.Status == SubscriptionStatus.Active ||
+                existingSubscription.Status == SubscriptionStatus.PastDue) && !isCurrentPlanFree)
             {
-                throw new InvalidOperationException("Organization already has an active subscription");
+                throw new InvalidOperationException("Organization already has an active paid subscription");
             }
 
-            // For cancelled/expired subscriptions, remove the old one to allow a fresh trial
+            // For free plan or cancelled/expired subscriptions, remove the old one to allow a fresh trial
             _dbContext.BillingSubscriptions.Remove(existingSubscription);
         }
 
@@ -889,21 +961,258 @@ public class SubscriptionService : ISubscriptionService
 
         _dbContext.BillingSubscriptions.Add(subscription);
 
-        // Update organization
-        var org = await _dbContext.Organizations.FindAsync(organizationId);
+        // Update organization (org was already fetched earlier for HasUsedTrial check)
+        if (org == null)
+        {
+            org = await _dbContext.Organizations.FindAsync(organizationId);
+        }
         if (org != null)
         {
             org.SubscriptionStatus = "trial";
             org.TrialEndsAt = subscription.TrialEnd;
+            org.HasUsedTrial = true; // Mark that trial has been used - prevents future trial abuse
         }
 
         await _dbContext.SaveChangesAsync();
 
         _logger.LogInformation(
-            "Trial started for organization {OrganizationId} with plan {PlanCode} for {TrialDays} days",
+            "Trial started for organization {OrganizationId} with plan {PlanCode} for {TrialDays} days. HasUsedTrial set to true.",
             organizationId, planCode, plan.TrialDays);
 
+        // Send notification (fire-and-forget, don't block on errors)
+        _ = SendTrialStartedNotificationAsync(organizationId, plan.DisplayName, subscription.TrialEnd!.Value);
+
         return MapToSubscriptionDto(subscription, plan);
+    }
+
+    public async Task<SubscriptionDto> ActivateFreePlanAsync(Guid organizationId, string planCode)
+    {
+        var plan = await _planService.GetPlanByCodeAsync(planCode)
+            ?? throw new InvalidOperationException($"Plan '{planCode}' not found");
+
+        // Validate this is actually a free plan
+        if (!IsFreePlan(plan))
+        {
+            throw new InvalidOperationException($"Plan '{planCode}' is not a free plan. Use CreateSubscriptionAsync for paid plans.");
+        }
+
+        if (plan.ContactSales)
+            throw new InvalidOperationException("Enterprise plans require contacting sales");
+
+        var existingSubscription = await GetSubscriptionEntityAsync(organizationId);
+        if (existingSubscription != null)
+        {
+            // If already on this free plan and active, return existing (idempotent)
+            if (existingSubscription.PlanCode == planCode &&
+                existingSubscription.Status == SubscriptionStatus.Active)
+            {
+                var existingPlan = await _planService.GetPlanByIdAsync(existingSubscription.PlanId);
+                return MapToSubscriptionDto(existingSubscription, existingPlan!);
+            }
+
+            // For downgrading from paid plan to free, or switching free plans
+            // Remove old subscription to create fresh one
+            _dbContext.BillingSubscriptions.Remove(existingSubscription);
+        }
+
+        var now = DateTime.UtcNow;
+
+        // Create active subscription immediately (no trial, no payment needed)
+        var subscription = new BillingSubscription
+        {
+            OrganizationId = organizationId,
+            PlanCode = plan.Code,
+            PlanId = plan.Id,
+            Status = SubscriptionStatus.Active, // Active immediately for free plans
+            BillingCycle = BillingCycle.Monthly, // Default cycle for free plans
+            SeatsIncluded = plan.Limits.Users,
+            SeatsAdditional = 0,
+            // No trial for free plans
+            TrialStart = null,
+            TrialEnd = null,
+            // Free plans don't expire - set far future date
+            CurrentPeriodStart = now,
+            CurrentPeriodEnd = now.AddYears(100),
+            // Pricing is all zero for free plans
+            BaseAmount = 0,
+            AdditionalSeatsAmount = 0,
+            TaxAmount = 0,
+            TotalAmount = 0,
+            Currency = plan.Currency
+        };
+
+        _dbContext.BillingSubscriptions.Add(subscription);
+
+        // Update organization status
+        var org = await _dbContext.Organizations.FindAsync(organizationId);
+        if (org != null)
+        {
+            org.SubscriptionStatus = "active";
+            org.TrialEndsAt = null; // No trial for free plans
+        }
+
+        await _dbContext.SaveChangesAsync();
+
+        _logger.LogInformation(
+            "Free plan '{PlanCode}' activated for organization {OrganizationId}. Limits: Users={Users}, Notices={Notices}, Storage={Storage}GB, ApiCalls={ApiCalls}",
+            planCode, organizationId, plan.Limits.Users, plan.Limits.NoticesPerMonth, plan.Limits.StorageGb, plan.Limits.ApiCalls);
+
+        // Send notification (fire-and-forget, don't block on errors)
+        _ = SendFreePlanNotificationAsync(organizationId, plan.DisplayName);
+
+        return MapToSubscriptionDto(subscription, plan);
+    }
+
+    /// <summary>
+    /// Sends plan change notification to organization admins.
+    /// Fire-and-forget - errors are logged but don't affect the main flow.
+    /// </summary>
+    private async Task SendPlanChangedNotificationAsync(
+        Guid organizationId,
+        string oldPlanName,
+        string newPlanName,
+        bool isUpgrade,
+        DateTime effectiveDate)
+    {
+        try
+        {
+            var adminUserIds = await GetOrganizationAdminUserIdsAsync(organizationId);
+            foreach (var userId in adminUserIds)
+            {
+                if (isUpgrade)
+                {
+                    await _billingNotificationService.SendPlanUpgradedAsync(userId, oldPlanName, newPlanName, 0);
+                }
+                else
+                {
+                    await _billingNotificationService.SendPlanDowngradedAsync(userId, oldPlanName, newPlanName, effectiveDate);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to send plan change notification for organization {OrganizationId}", organizationId);
+        }
+    }
+
+    /// <summary>
+    /// Sends subscription cancelled notification to organization admins.
+    /// Fire-and-forget - errors are logged but don't affect the main flow.
+    /// </summary>
+    private async Task SendSubscriptionCancelledNotificationAsync(Guid organizationId, string planName, DateTime endDate)
+    {
+        try
+        {
+            var adminUserIds = await GetOrganizationAdminUserIdsAsync(organizationId);
+            foreach (var userId in adminUserIds)
+            {
+                await _billingNotificationService.SendSubscriptionCancelledAsync(userId, planName, endDate);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to send subscription cancelled notification for organization {OrganizationId}", organizationId);
+        }
+    }
+
+    /// <summary>
+    /// Sends trial started notification to organization admins.
+    /// Fire-and-forget - errors are logged but don't affect the main flow.
+    /// </summary>
+    private async Task SendTrialStartedNotificationAsync(Guid organizationId, string planName, DateTime trialEndDate)
+    {
+        try
+        {
+            var adminUserIds = await GetOrganizationAdminUserIdsAsync(organizationId);
+            foreach (var userId in adminUserIds)
+            {
+                await _billingNotificationService.SendTrialStartedAsync(userId, planName, trialEndDate);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to send trial started notification for organization {OrganizationId}", organizationId);
+        }
+    }
+
+    /// <summary>
+    /// Sends subscription payment notification to organization admins.
+    /// Fire-and-forget - errors are logged but don't affect the main flow.
+    /// </summary>
+    private async Task SendSubscriptionPaymentNotificationAsync(
+        Guid organizationId,
+        string planName,
+        decimal amount,
+        string billingCycle,
+        string invoiceNumber,
+        bool isUpgrade)
+    {
+        try
+        {
+            var adminUserIds = await GetOrganizationAdminUserIdsAsync(organizationId);
+            foreach (var userId in adminUserIds)
+            {
+                if (isUpgrade)
+                {
+                    // For upgrades, we don't have old plan name here, so use generic upgrade notification
+                    await _billingNotificationService.SendPaymentSuccessAsync(userId, amount, invoiceNumber, planName);
+                }
+                else
+                {
+                    // New subscription
+                    await _billingNotificationService.SendSubscriptionActivatedAsync(userId, planName, amount, billingCycle);
+                    await _billingNotificationService.SendPaymentSuccessAsync(userId, amount, invoiceNumber, planName);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to send subscription payment notification for organization {OrganizationId}", organizationId);
+        }
+    }
+
+    /// <summary>
+    /// Sends free plan activation notification to organization admins.
+    /// Fire-and-forget - errors are logged but don't affect the main flow.
+    /// </summary>
+    private async Task SendFreePlanNotificationAsync(Guid organizationId, string planName)
+    {
+        try
+        {
+            var adminUserIds = await GetOrganizationAdminUserIdsAsync(organizationId);
+            foreach (var userId in adminUserIds)
+            {
+                await _billingNotificationService.SendFreePlanActivatedAsync(userId, planName);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to send free plan activation notification for organization {OrganizationId}", organizationId);
+        }
+    }
+
+    /// <summary>
+    /// Gets user IDs of organization admins/owners for notifications.
+    /// </summary>
+    private async Task<List<Guid>> GetOrganizationAdminUserIdsAsync(Guid organizationId)
+    {
+        return await _dbContext.OrganizationMembers
+            .Where(m => m.OrganizationId == organizationId &&
+                       m.Status == "active" &&
+                       (m.Role == "owner" || m.Role == "admin"))
+            .Select(m => m.UserId)
+            .ToListAsync();
+    }
+
+    /// <summary>
+    /// Checks if a plan is a free plan (no cost).
+    /// </summary>
+    private static bool IsFreePlan(SubscriptionPlan plan)
+    {
+        // A plan is free if both monthly and annual pricing are 0 or null
+        var monthlyPrice = plan.PricingMonthly ?? 0;
+        var annualPrice = plan.PricingAnnually ?? 0;
+        return monthlyPrice == 0 && annualPrice == 0;
     }
 
     public async Task ProcessRenewalAsync(Guid subscriptionId)

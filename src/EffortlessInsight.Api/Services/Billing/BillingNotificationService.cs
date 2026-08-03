@@ -57,6 +57,14 @@ public class BillingNotificationService : IBillingNotificationService
         }, cancellationToken);
     }
 
+    public async Task SendFreePlanActivatedAsync(Guid userId, string planName, CancellationToken cancellationToken = default)
+    {
+        await SendNotificationAsync(userId, "free_plan_activated", new Dictionary<string, object>
+        {
+            ["planName"] = planName
+        }, cancellationToken);
+    }
+
     public async Task SendSubscriptionCancelledAsync(Guid userId, string planName, DateTime endDate, CancellationToken cancellationToken = default)
     {
         await SendNotificationAsync(userId, "subscription_cancelled", new Dictionary<string, object>

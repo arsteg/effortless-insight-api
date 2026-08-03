@@ -1890,6 +1890,14 @@ namespace EffortlessInsight.Api.Data.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)");
 
+                    b.Property<string>("RazorpayOrderId")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("RazorpayPaymentId")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
                     b.Property<string>("RazorpaySubscriptionId")
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)");
@@ -6152,6 +6160,9 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.PrimitiveCollection<List<string>>("Gstins")
                         .IsRequired()
                         .HasColumnType("jsonb");
+
+                    b.Property<bool>("HasUsedTrial")
+                        .HasColumnType("boolean");
 
                     b.Property<string>("Industry")
                         .HasMaxLength(100)

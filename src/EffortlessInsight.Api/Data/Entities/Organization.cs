@@ -131,6 +131,12 @@ public class Organization : BaseEntity
 
     public DateTime? TrialEndsAt { get; set; }
 
+    /// <summary>
+    /// Indicates if the organization has ever used a trial period.
+    /// Once true, the organization cannot start another trial on any plan.
+    /// </summary>
+    public bool HasUsedTrial { get; set; } = false;
+
     public Guid? SubscriptionId { get; set; }
 
     /// <summary>

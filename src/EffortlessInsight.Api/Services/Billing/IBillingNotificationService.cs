@@ -12,6 +12,7 @@ public interface IBillingNotificationService
 
     // Subscription notifications
     Task SendSubscriptionActivatedAsync(Guid userId, string planName, decimal amount, string billingCycle, CancellationToken cancellationToken = default);
+    Task SendFreePlanActivatedAsync(Guid userId, string planName, CancellationToken cancellationToken = default);
     Task SendSubscriptionCancelledAsync(Guid userId, string planName, DateTime endDate, CancellationToken cancellationToken = default);
     Task SendSubscriptionReactivatedAsync(Guid userId, string planName, CancellationToken cancellationToken = default);
 

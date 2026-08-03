@@ -180,8 +180,10 @@ public record BillingDetailsRequest(
 
 public record CreateSubscriptionResponse(
     Guid SubscriptionId,
-    RazorpayOrderDto RazorpayOrder,
-    CheckoutOptionsDto CheckoutOptions
+    RazorpayOrderDto? RazorpayOrder,
+    CheckoutOptionsDto? CheckoutOptions,
+    bool IsFreePlan = false,
+    SubscriptionDto? Subscription = null
 );
 
 public record RazorpayOrderDto(

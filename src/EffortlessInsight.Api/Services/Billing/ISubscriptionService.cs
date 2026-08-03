@@ -89,6 +89,16 @@ public interface ISubscriptionService
         string billingCycle);
 
     /// <summary>
+    /// Activates a free plan for an organization.
+    /// Free plans have no payment required and no trial period.
+    /// All plan limits (storage, API calls, users, notices) are enforced.
+    /// </summary>
+    /// <param name="organizationId">The organization ID.</param>
+    /// <param name="planCode">The free plan code (must have 0 pricing).</param>
+    /// <returns>The activated subscription.</returns>
+    Task<SubscriptionDto> ActivateFreePlanAsync(Guid organizationId, string planCode);
+
+    /// <summary>
     /// Processes subscription renewal.
     /// </summary>
     Task ProcessRenewalAsync(Guid subscriptionId);
