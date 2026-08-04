@@ -155,7 +155,7 @@ public class PlanSeeder
                     "calendar_sync",
                     "whatsapp_notifications",
                     "advanced_analytics",
-                    "custom_workflows",
+                    "workflows",
                     "api_access",
                     "priority_support"
                 },
@@ -199,7 +199,7 @@ public class PlanSeeder
                     "calendar_sync",
                     "whatsapp_notifications",
                     "advanced_analytics",
-                    "custom_workflows",
+                    "workflows",
                     "api_access",
                     "priority_support",
                     "dedicated_account_manager",
