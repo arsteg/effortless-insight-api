@@ -17,17 +17,20 @@ public class SubscriptionsController : ControllerBase
 {
     private readonly ISubscriptionService _subscriptionService;
     private readonly ICouponService _couponService;
+    private readonly IFeatureAccessService _featureAccessService;
     private readonly ICurrentOrganizationService _currentOrganization;
     private readonly ILogger<SubscriptionsController> _logger;
 
     public SubscriptionsController(
         ISubscriptionService subscriptionService,
         ICouponService couponService,
+        IFeatureAccessService featureAccessService,
         ICurrentOrganizationService currentOrganization,
         ILogger<SubscriptionsController> logger)
     {
         _subscriptionService = subscriptionService;
         _couponService = couponService;
+        _featureAccessService = featureAccessService;
         _currentOrganization = currentOrganization;
         _logger = logger;
     }
@@ -53,6 +56,44 @@ public class SubscriptionsController : ControllerBase
         }
 
         return Ok(new ApiResponse<CurrentSubscriptionResponse>(true, subscription));
+    }
+
+    /// <summary>
+    /// Get available features for the current organization's subscription.
+    /// </summary>
+    [HttpGet("features")]
+    [ProducesResponseType(typeof(ApiResponse<FeaturesResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetAvailableFeatures()
+    {
+        var orgId = _currentOrganization.OrganizationId;
+        if (orgId == null)
+        {
+            return NotFound(new ApiErrorResponse(false, "NO_ORG", "No organization selected"));
+        }
+
+        var features = await _featureAccessService.GetAvailableFeaturesAsync(orgId.Value);
+
+        return Ok(new ApiResponse<FeaturesResponse>(true, new FeaturesResponse(features)));
+    }
+
+    /// <summary>
+    /// Check if a specific feature is available.
+    /// </summary>
+    [HttpGet("features/{featureCode}")]
+    [ProducesResponseType(typeof(ApiResponse<FeatureCheckResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> CheckFeatureAccess(string featureCode)
+    {
+        var orgId = _currentOrganization.OrganizationId;
+        if (orgId == null)
+        {
+            return NotFound(new ApiErrorResponse(false, "NO_ORG", "No organization selected"));
+        }
+
+        var hasAccess = await _featureAccessService.HasFeatureAccessAsync(orgId.Value, featureCode);
+
+        return Ok(new ApiResponse<FeatureCheckResponse>(true, new FeatureCheckResponse(featureCode, hasAccess)));
     }
 
     /// <summary>
@@ -154,6 +195,7 @@ public class SubscriptionsController : ControllerBase
             var result = await _subscriptionService.ValidatePlanChangeAsync(
                 orgId.Value,
                 request.NewPlanCode,
+                request.BillingCycle,
                 request.AdditionalSeats);
 
             return Ok(new ApiResponse<PlanChangeValidationResult>(true, result));

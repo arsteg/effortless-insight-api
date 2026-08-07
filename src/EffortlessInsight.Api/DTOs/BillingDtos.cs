@@ -1,6 +1,19 @@
 namespace EffortlessInsight.Api.DTOs;
 
 // ============================================================================
+// Feature DTOs
+// ============================================================================
+
+public record FeaturesResponse(
+    List<string> Features
+);
+
+public record FeatureCheckResponse(
+    string FeatureCode,
+    bool HasAccess
+);
+
+// ============================================================================
 // Plan DTOs
 // ============================================================================
 
@@ -259,6 +272,7 @@ public record ChangePlanRequest(
 /// </summary>
 public record ValidatePlanChangeRequest(
     string NewPlanCode,
+    string? BillingCycle = null, // "monthly" or "annually" - required for proration preview
     int? AdditionalSeats = null
 );
 
@@ -283,7 +297,27 @@ public record PlanChangeValidationResult(
     List<string>? FeaturesToLose,
     List<string>? FeaturesToGain,
     List<string>? ActiveFeaturesToLose, // Features currently in use that will be lost - shows warning but doesn't block
-    PlanLimitsComparison? LimitsComparison
+    PlanLimitsComparison? LimitsComparison,
+    ProrationPreview? ProrationPreview // Preview of how billing period will change
+);
+
+/// <summary>
+/// Preview of how proration will affect the billing period.
+/// Shows how the remaining value is converted between plans.
+/// </summary>
+public record ProrationPreview(
+    bool IsUpgrade, // true if new plan is more expensive per day
+    decimal CurrentDailyRate, // Current plan's daily rate in base currency
+    decimal NewDailyRate, // New plan's daily rate in base currency
+    int RemainingDays, // Days left in current billing period
+    decimal RemainingValue, // Monetary value remaining from current period
+    DateTime CurrentPeriodEnd, // Current billing period end date
+    DateTime NewPeriodEnd, // New billing period end date after proration
+    int NewPeriodDays, // Days in new billing period after proration
+    string CurrentPlanName, // Current plan display name
+    string NewPlanName, // New plan display name
+    string CurrentBillingCycle, // Current billing cycle
+    string NewBillingCycle // New billing cycle
 );
 
 /// <summary>

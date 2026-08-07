@@ -37,10 +37,12 @@ public interface ISubscriptionService
     /// <summary>
     /// Validates if a plan change is allowed based on current usage.
     /// Use this to preview blockers before attempting a plan change.
+    /// Includes proration preview when billingCycle is provided.
     /// </summary>
     Task<PlanChangeValidationResult> ValidatePlanChangeAsync(
         Guid organizationId,
         string newPlanCode,
+        string? billingCycle = null,
         int? additionalSeats = null);
 
     /// <summary>

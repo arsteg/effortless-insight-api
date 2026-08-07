@@ -482,6 +482,7 @@ public class SubscriptionService : ISubscriptionService
     public async Task<PlanChangeValidationResult> ValidatePlanChangeAsync(
         Guid organizationId,
         string newPlanCode,
+        string? billingCycle = null,
         int? additionalSeats = null)
     {
         var subscription = await GetSubscriptionEntityAsync(organizationId)
@@ -494,7 +495,8 @@ public class SubscriptionService : ISubscriptionService
             ?? throw new InvalidOperationException($"Plan '{newPlanCode}' not found");
 
         var seats = additionalSeats ?? subscription.SeatsAdditional;
-        return await ValidatePlanChangeAsync(organizationId, currentPlan, newPlan, seats);
+        var newBillingCycle = billingCycle ?? subscription.BillingCycle;
+        return await ValidatePlanChangeAsync(organizationId, currentPlan, newPlan, seats, subscription, newBillingCycle);
     }
 
     public async Task<ChangePlanResponse> ChangePlanAsync(
@@ -2303,14 +2305,19 @@ public class SubscriptionService : ISubscriptionService
         Guid organizationId,
         SubscriptionPlan currentPlan,
         SubscriptionPlan newPlan,
-        int additionalSeats)
+        int additionalSeats,
+        BillingSubscription? subscription = null,
+        string? newBillingCycle = null)
     {
         var blockers = new List<PlanChangeBlocker>();
         var featuresToLose = new List<string>();
 
-        // Get current usage
+        // Get current usage - count users directly from database for accuracy
+        // (usage records may be stale if members were added/removed directly)
+        var currentUsers = await _dbContext.OrganizationMembers
+            .CountAsync(m => m.OrganizationId == organizationId && m.Status == "active" && m.DeletedAt == null);
+
         var usage = await _usageService.GetCurrentUsageAsync(organizationId);
-        var currentUsers = usage?.UsersCount ?? 0;
         var currentStorageBytes = usage?.StorageBytes ?? 0;
         var currentStorageGb = (int)Math.Ceiling(currentStorageBytes / (1024.0 * 1024 * 1024));
 
@@ -2427,10 +2434,10 @@ public class SubscriptionService : ISubscriptionService
         if (currentPlan.Limits.AdditionalUsersAllowed && !newPlan.Limits.AdditionalUsersAllowed)
         {
             // Get current subscription to check if they have additional seats
-            var subscription = await _dbContext.BillingSubscriptions
+            var currentSub = subscription ?? await _dbContext.BillingSubscriptions
                 .FirstOrDefaultAsync(s => s.OrganizationId == organizationId && s.DeletedAt == null);
 
-            if (subscription != null && subscription.SeatsAdditional > 0)
+            if (currentSub != null && currentSub.SeatsAdditional > 0)
             {
                 var totalSeatsInUse = currentUsers;
                 var newPlanBaseSeats = newPlan.Limits.Users;
@@ -2493,13 +2500,86 @@ public class SubscriptionService : ISubscriptionService
             Organizations: CompareLimits(currentPlan.Limits.OrganizationsCount, newPlan.Limits.OrganizationsCount)
         );
 
+        // Calculate proration preview if subscription exists
+        ProrationPreview? prorationPreview = null;
+        if (subscription != null && newBillingCycle != null)
+        {
+            var now = DateTime.UtcNow;
+            var oldBillingCycle = subscription.BillingCycle;
+            var remainingDays = (subscription.CurrentPeriodEnd - now).TotalDays;
+
+            if (remainingDays > 0)
+            {
+                // Step 1: Calculate the DAILY RATE of current plan
+                var currentPeriodDays = oldBillingCycle == BillingCycle.Annually ? 365.0 : 30.0;
+                var currentPeriodPrice = oldBillingCycle == BillingCycle.Annually
+                    ? currentPlan.PricingAnnually ?? 0
+                    : currentPlan.PricingMonthly ?? 0;
+
+                // Add per-seat costs for current plan
+                currentPeriodPrice += subscription.SeatsAdditional * (oldBillingCycle == BillingCycle.Annually
+                    ? currentPlan.PerSeatAnnually ?? 0
+                    : currentPlan.PerSeatMonthly ?? 0);
+
+                var currentDailyRate = currentPeriodPrice / (decimal)currentPeriodDays;
+
+                // Step 2: Calculate remaining value based on daily rate × remaining days
+                var remainingValue = currentDailyRate * (decimal)remainingDays;
+
+                // Step 3: Calculate the DAILY RATE of new plan
+                var newPeriodDays = newBillingCycle == BillingCycle.Annually ? 365.0 : 30.0;
+                var newPeriodPrice = newBillingCycle == BillingCycle.Annually
+                    ? newPlan.PricingAnnually ?? 0
+                    : newPlan.PricingMonthly ?? 0;
+
+                // Add per-seat costs for new plan
+                newPeriodPrice += additionalSeats * (newBillingCycle == BillingCycle.Annually
+                    ? newPlan.PerSeatAnnually ?? 0
+                    : newPlan.PerSeatMonthly ?? 0);
+
+                var newDailyRate = newPeriodPrice / (decimal)newPeriodDays;
+
+                // Step 4: Calculate new period end date
+                DateTime newPeriodEnd;
+                int newPeriodDaysInt;
+                if (newDailyRate > 0)
+                {
+                    var newRemainingDays = remainingValue / newDailyRate;
+                    newPeriodEnd = now.AddDays(Math.Max(1, (double)newRemainingDays));
+                    newPeriodDaysInt = (int)Math.Ceiling(Math.Max(1, (double)newRemainingDays));
+                }
+                else
+                {
+                    // Free plan - set full period
+                    newPeriodEnd = now.AddDays(newPeriodDays);
+                    newPeriodDaysInt = (int)newPeriodDays;
+                }
+
+                prorationPreview = new ProrationPreview(
+                    IsUpgrade: newDailyRate > currentDailyRate,
+                    CurrentDailyRate: Math.Round(currentDailyRate, 2),
+                    NewDailyRate: Math.Round(newDailyRate, 2),
+                    RemainingDays: (int)Math.Ceiling(remainingDays),
+                    RemainingValue: Math.Round(remainingValue, 2),
+                    CurrentPeriodEnd: subscription.CurrentPeriodEnd,
+                    NewPeriodEnd: newPeriodEnd,
+                    NewPeriodDays: newPeriodDaysInt,
+                    CurrentPlanName: currentPlan.DisplayName,
+                    NewPlanName: newPlan.DisplayName,
+                    CurrentBillingCycle: oldBillingCycle,
+                    NewBillingCycle: newBillingCycle
+                );
+            }
+        }
+
         return new PlanChangeValidationResult(
             CanChange: blockers.Count == 0,
             Blockers: blockers.Count > 0 ? blockers : null,
             FeaturesToLose: featuresToLose.Count > 0 ? featuresToLose : null,
             FeaturesToGain: featuresToGain.Count > 0 ? featuresToGain : null,
             ActiveFeaturesToLose: activeFeaturesToLose.Count > 0 ? activeFeaturesToLose : null,
-            LimitsComparison: limitsComparison
+            LimitsComparison: limitsComparison,
+            ProrationPreview: prorationPreview
         );
     }
 
