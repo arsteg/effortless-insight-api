@@ -21,6 +21,7 @@ public class GstSyncController : ControllerBase
     private readonly IGstNoticeRawService _noticeService;
     private readonly IGstExtensionService _extensionService;
     private readonly ICurrentOrganizationService _currentOrgService;
+    private readonly IGstinLinkService _gstinLink;
     private readonly ILogger<GstSyncController> _logger;
 
     public GstSyncController(
@@ -29,6 +30,7 @@ public class GstSyncController : ControllerBase
         IGstNoticeRawService noticeService,
         IGstExtensionService extensionService,
         ICurrentOrganizationService currentOrgService,
+        IGstinLinkService gstinLink,
         ILogger<GstSyncController> logger)
     {
         _clientService = clientService;
@@ -36,6 +38,7 @@ public class GstSyncController : ControllerBase
         _noticeService = noticeService;
         _extensionService = extensionService;
         _currentOrgService = currentOrgService;
+        _gstinLink = gstinLink;
         _logger = logger;
     }
 
@@ -64,9 +67,18 @@ public class GstSyncController : ControllerBase
     /// </summary>
     [HttpGet("clients")]
     [ProducesResponseType(typeof(ApiResponse<GstClientListResponse>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetClients(CancellationToken cancellationToken)
+    public async Task<IActionResult> GetClients([FromQuery] string? gstin, CancellationToken cancellationToken)
     {
         var orgId = GetOrganizationId();
+
+        // The Chrome extension looks up a client by GSTIN via ?gstin=...
+        if (!string.IsNullOrWhiteSpace(gstin))
+        {
+            var client = await _clientService.GetClientByGstinAsync(orgId, gstin.Trim().ToUpperInvariant(), cancellationToken);
+            var items = client == null ? new List<GstClientDto>() : [client];
+            return Ok(new ApiResponse<GstClientListResponse>(true, new GstClientListResponse(items, items.Count)));
+        }
+
         var clients = await _clientService.GetClientsAsync(orgId, cancellationToken);
         return Ok(new ApiResponse<GstClientListResponse>(true, new GstClientListResponse(clients, clients.Count)));
     }
@@ -104,6 +116,19 @@ public class GstSyncController : ControllerBase
         {
             return BadRequest(new ApiErrorResponse(false, "DUPLICATE_GSTIN", ex.Message));
         }
+    }
+
+    /// <summary>
+    /// Register many client GSTINs at once (CA bulk onboarding).
+    /// </summary>
+    [HttpPost("clients/bulk")]
+    [ProducesResponseType(typeof(ApiResponse<BulkCreateGstClientsResult>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> CreateClientsBulk([FromBody] BulkCreateGstClientsRequest request, CancellationToken cancellationToken)
+    {
+        var orgId = GetOrganizationId();
+        var userId = GetUserId();
+        var result = await _clientService.CreateClientsBulkAsync(orgId, userId, request, cancellationToken);
+        return Ok(new ApiResponse<BulkCreateGstClientsResult>(true, result));
     }
 
     /// <summary>
@@ -218,6 +243,50 @@ public class GstSyncController : ControllerBase
         var session = await _syncService.CompleteSessionAsync(orgId, request, cancellationToken);
         if (session == null)
             return NotFound(new ApiErrorResponse(false, "SESSION_NOT_FOUND", "Sync session not found"));
+
+        // Auto-import: when the client opts in (default), synced notices go
+        // straight to the Notices module instead of waiting in Pending Import.
+        // Failures here must not fail the sync completion itself.
+        if (string.Equals(session.Status, "completed", StringComparison.OrdinalIgnoreCase))
+        {
+            // A completed sync from a live portal session proves the user has
+            // access to this GSTIN's portal account → session-verified tier.
+            if (session.SyncSource is "chrome_extension" or "desktop_agent")
+            {
+                try
+                {
+                    await _gstinLink.MarkSessionVerifiedAsync(session.GstClientId, cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Session verification after sync {SessionId} failed", session.Id);
+                }
+            }
+
+            try
+            {
+                var client = await _clientService.GetClientByIdAsync(session.GstClientId, cancellationToken);
+                if (client?.AutoImportToNotices == true)
+                {
+                    var pending = await _noticeService.GetNoticesAsync(session.GstClientId, imported: false, cancellationToken);
+                    if (pending.Count > 0)
+                    {
+                        var userId = GetUserId();
+                        var importResult = await _noticeService.ImportNoticesAsync(orgId, userId,
+                            new ImportNoticesRequest { NoticeIds = pending.Select(n => n.Id).ToList() },
+                            cancellationToken);
+                        _logger.LogInformation(
+                            "Auto-imported {Imported}/{Total} synced notices for client {ClientId} after session {SessionId}",
+                            importResult.Imported, pending.Count, session.GstClientId, session.Id);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Auto-import after sync session {SessionId} failed", session.Id);
+            }
+        }
+
         return Ok(new ApiResponse<GstSyncSessionDto>(true, session));
     }
 

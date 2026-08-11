@@ -338,6 +338,9 @@ EffortlessInsight.Api.Jobs.GstnJobsExtensions.ConfigureGstnJobs(app);
 // Configure WhatsApp bot jobs (cleanup, template sync, daily digest, reminders)
 EffortlessInsight.Api.Jobs.WhatsAppJobsExtensions.ConfigureWhatsAppJobs(app);
 
+// Configure GST sync notification jobs (digests, due-date reminders, stale-client nudges)
+EffortlessInsight.Api.Jobs.GstSyncJobsExtensions.ConfigureGstSyncJobs(app);
+
 // Apply migrations and seed data on startup in development
 //if (app.Environment.IsDevelopment())
 //{
@@ -349,6 +352,11 @@ if (dbContext.Database.IsRelational())
 {
     await dbContext.Database.MigrateAsync();
 }
+
+// Link legacy gst_clients to the org GSTIN registry and stamp GstinId on
+// previously imported sync notices (idempotent; no-ops when nothing to do)
+var gstinLinkService = scope.ServiceProvider.GetRequiredService<EffortlessInsight.Api.Services.GstSync.IGstinLinkService>();
+await gstinLinkService.BackfillAsync();
 
 // Seed default workflow template
 var workflowSeeder = scope.ServiceProvider.GetRequiredService<WorkflowTemplateSeeder>();

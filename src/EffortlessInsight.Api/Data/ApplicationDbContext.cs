@@ -456,9 +456,11 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
         // ============================================================================
         modelBuilder.Entity<OrganizationGstin>(entity =>
         {
-            // GSTIN must be unique across the platform
-            entity.HasIndex(e => e.Gstin)
-                .IsUnique();
+            // NOTE: GSTIN uniqueness is enforced in the application layer
+            // (per organization — CA-firm model where multiple orgs may manage
+            // the same client GSTIN). A database unique index on Gstin cannot
+            // work: the column stores AES-GCM ciphertext with a random nonce,
+            // so the same GSTIN never produces the same stored value.
 
             // Only one primary GSTIN per organization
             entity.HasIndex(e => e.OrganizationId)
@@ -2773,6 +2775,15 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
                 .WithMany()
                 .HasForeignKey(e => e.CreatedByUserId)
                 .OnDelete(DeleteBehavior.Restrict);
+
+            // Link to the organization's GSTIN registry so synced notices can
+            // carry a GstinId. SetNull so removing a registry entry doesn't
+            // delete the sync client.
+            entity.HasIndex(e => e.OrganizationGstinId);
+            entity.HasOne(e => e.OrganizationGstin)
+                .WithMany()
+                .HasForeignKey(e => e.OrganizationGstinId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         // GstSyncSession Configuration

@@ -337,7 +337,8 @@ public record GstinDto(
     string Status,
     bool IsPrimary,
     bool IsVerified,
-    DateTime? VerifiedAt
+    DateTime? VerifiedAt,
+    string Source = Data.Entities.OrganizationGstinSource.Manual
 );
 
 public record AddGstinRequest(
@@ -747,6 +748,12 @@ public record NoticeFilterDto(
     DateOnly? DeadlineFrom,
     DateOnly? DeadlineTo,
     string? Search,
+    // All GSTINs of one client business (PAN = GSTIN chars 3-12)
+    string? Pan = null,
+    // Deadline passed and still actionable (not closed/archived/responded)
+    bool? Overdue = null,
+    // Actionable notices due within N days from today
+    int? DueWithinDays = null,
     int Page = 1,
     int PageSize = 20,
     string SortBy = "createdAt",

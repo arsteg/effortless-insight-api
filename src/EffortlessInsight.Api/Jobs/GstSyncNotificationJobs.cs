@@ -77,6 +77,72 @@ public class GstSyncNotificationJobs
     }
 
     /// <summary>
+    /// Nudge organizations whose clients haven't synced in 14+ days (run daily).
+    /// The extension only captures when the user visits that client's portal,
+    /// so stale clients silently accumulate unseen notices.
+    /// </summary>
+    public async Task NotifyStaleClientsAsync(CancellationToken cancellationToken = default)
+    {
+        const int thresholdDays = 14;
+        _logger.LogInformation("Starting stale client nudge job");
+
+        using var scope = _serviceProvider.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var notificationService = scope.ServiceProvider.GetRequiredService<IGstSyncNotificationService>();
+
+        var organizationIds = await context.GstClients
+            .Where(c => c.SyncEnabled && c.Status == GstClientStatus.Active)
+            .Select(c => c.OrganizationId)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+
+        foreach (var orgId in organizationIds)
+        {
+            try
+            {
+                await notificationService.NotifyStaleClientsAsync(orgId, thresholdDays, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed stale client nudge for organization {OrganizationId}", orgId);
+            }
+        }
+
+        _logger.LogInformation("Completed stale client nudge job");
+    }
+
+    /// <summary>
+    /// Weekly cross-client digest (run Monday mornings).
+    /// </summary>
+    public async Task SendWeeklyDigestsAsync(CancellationToken cancellationToken = default)
+    {
+        _logger.LogInformation("Starting weekly digest job");
+
+        using var scope = _serviceProvider.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var notificationService = scope.ServiceProvider.GetRequiredService<IGstSyncNotificationService>();
+
+        var organizationIds = await context.GstClients
+            .Select(c => c.OrganizationId)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+
+        foreach (var orgId in organizationIds)
+        {
+            try
+            {
+                await notificationService.SendWeeklyDigestAsync(orgId, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed weekly digest for organization {OrganizationId}", orgId);
+            }
+        }
+
+        _logger.LogInformation("Completed weekly digest job");
+    }
+
+    /// <summary>
     /// Check for disconnected extensions (run hourly)
     /// </summary>
     public async Task CheckDisconnectedExtensionsAsync(CancellationToken cancellationToken = default)

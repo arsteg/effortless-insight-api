@@ -94,7 +94,9 @@ public class OrganizationDataMigrationService : IOrganizationDataMigrationServic
                         StateCode = validation.StateCode!,
                         StateName = stateName,
                         IsPrimary = isFirst,
-                        Status = "active"
+                        Status = "active",
+                        // Legacy Organization.Gstins were the org's own registrations
+                        Source = OrganizationGstinSource.Onboarding
                     };
 
                     _dbContext.OrganizationGstins.Add(gstinEntity);

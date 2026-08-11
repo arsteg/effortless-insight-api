@@ -6,18 +6,21 @@ using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.Data.Entities.Billing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using Pgvector;
 
 #nullable disable
 
-namespace EffortlessInsight.Api.Data.Migrations
+namespace EffortlessInsight.Api.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260803094915_LinkGstClientsToOrganizationGstins")]
+    partial class LinkGstClientsToOrganizationGstins
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -6166,9 +6169,6 @@ namespace EffortlessInsight.Api.Data.Migrations
                         .IsRequired()
                         .HasColumnType("jsonb");
 
-                    b.Property<bool>("HasUsedTrial")
-                        .HasColumnType("boolean");
-
                     b.Property<string>("Industry")
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
@@ -6309,11 +6309,6 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Property<DateOnly?>("RegistrationDate")
                         .HasColumnType("date");
 
-                    b.Property<string>("Source")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
-
                     b.Property<string>("StateCode")
                         .IsRequired()
                         .HasMaxLength(2)
@@ -6344,9 +6339,6 @@ namespace EffortlessInsight.Api.Data.Migrations
                         .HasColumnType("timestamp with time zone");
 
                     b.HasKey("Id");
-
-                    b.HasIndex("Gstin")
-                        .IsUnique();
 
                     b.HasIndex("OrganizationId")
                         .IsUnique()

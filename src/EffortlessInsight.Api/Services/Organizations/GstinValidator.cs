@@ -22,9 +22,12 @@ public interface IGstinValidatorService
     Task<string?> GetStateNameAsync(string stateCode);
 
     /// <summary>
-    /// Checks if GSTIN already exists in the platform
+    /// Checks if the GSTIN is already registered within the given organization.
+    /// GSTIN uniqueness is per-organization (CA-firm model): different
+    /// organizations may legitimately manage the same client GSTIN, so there
+    /// is intentionally no platform-global uniqueness check.
     /// </summary>
-    Task<bool> ExistsAsync(string gstin, Guid? excludeOrganizationId = null);
+    Task<bool> ExistsInOrganizationAsync(Guid organizationId, string gstin);
 }
 
 public class GstinValidatorService : IGstinValidatorService
@@ -105,18 +108,20 @@ public class GstinValidatorService : IGstinValidatorService
         return state?.Name;
     }
 
-    public async Task<bool> ExistsAsync(string gstin, Guid? excludeOrganizationId = null)
+    public async Task<bool> ExistsInOrganizationAsync(Guid organizationId, string gstin)
     {
         gstin = gstin.Trim().ToUpperInvariant();
 
-        var query = _dbContext.OrganizationGstins.Where(g => g.Gstin == gstin);
+        // Gstin is stored AES-GCM encrypted with a random nonce, so a SQL
+        // WHERE on the column can never match (the query constant encrypts to
+        // a different ciphertext every time). Materialize the organization's
+        // rows — the value converter decrypts them — and compare in memory.
+        var orgGstins = await _dbContext.OrganizationGstins
+            .Where(g => g.OrganizationId == organizationId && g.DeletedAt == null)
+            .Select(g => g.Gstin)
+            .ToListAsync();
 
-        if (excludeOrganizationId.HasValue)
-        {
-            query = query.Where(g => g.OrganizationId != excludeOrganizationId.Value);
-        }
-
-        return await query.AnyAsync();
+        return orgGstins.Any(g => string.Equals(g, gstin, StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool ValidateChecksum(string gstin)

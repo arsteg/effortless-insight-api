@@ -111,6 +111,15 @@ public class OrganizationGstin : BaseEntity
     /// </summary>
     public bool IsPrimary { get; set; }
 
+    /// <summary>
+    /// How this GSTIN entered the registry — distinguishes the organization's
+    /// own registrations from client GSTINs auto-registered by GST notice sync.
+    /// See <see cref="OrganizationGstinSource"/>.
+    /// </summary>
+    [Required]
+    [MaxLength(20)]
+    public string Source { get; set; } = OrganizationGstinSource.Manual;
+
     // ============================================================================
     // GSTN Portal Integration
     // ============================================================================
@@ -124,4 +133,19 @@ public class OrganizationGstin : BaseEntity
     /// Navigation property to the GSTN portal connection.
     /// </summary>
     public GstnConnection? GstnConnection { get; set; }
+}
+
+/// <summary>
+/// How an OrganizationGstin entry was created.
+/// </summary>
+public static class OrganizationGstinSource
+{
+    /// <summary>The organization's own GSTIN, registered during org creation.</summary>
+    public const string Onboarding = "onboarding";
+
+    /// <summary>Added by a user via Settings → Add GSTIN.</summary>
+    public const string Manual = "manual";
+
+    /// <summary>A client GSTIN auto-registered by GST notice sync (unverified).</summary>
+    public const string GstSync = "gst_sync";
 }

@@ -1610,6 +1610,38 @@ public class NoticesController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Per-GSTIN notice counts (total + overdue) for the client summary strip.
+    /// </summary>
+    [HttpGet("gstin-summary")]
+    [ProducesResponseType(typeof(ApiResponse<List<GstinNoticeSummaryDto>>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> GetGstinSummary(CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (!_currentOrg.HasPermission("notices.view"))
+            {
+                return Forbid();
+            }
+
+            var orgId = GetCurrentOrganizationId();
+            var summaries = await _noticeService.GetGstinSummariesAsync(orgId, cancellationToken);
+
+            var dto = summaries
+                .Select(s => new GstinNoticeSummaryDto(s.Gstin, s.TotalCount, s.OverdueCount))
+                .ToList();
+
+            return Ok(new ApiResponse<List<GstinNoticeSummaryDto>>(true, dto));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get GSTIN notice summary");
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
+        }
+    }
+
     #endregion
 
     #region Export
@@ -2516,6 +2548,14 @@ public record NoticeStatisticsDto(
     int DueThisMonth,
     decimal TotalDemandAmount,
     int TotalCount);
+
+/// <summary>
+/// Per-GSTIN notice counts for the client summary strip.
+/// </summary>
+public record GstinNoticeSummaryDto(
+    string Gstin,
+    int TotalCount,
+    int OverdueCount);
 
 public record CalculatePriorityRequest(
     string? NoticeType,

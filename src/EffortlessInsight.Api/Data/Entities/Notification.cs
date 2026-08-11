@@ -99,6 +99,8 @@ public static class NotificationType
     public const string UsageLimitReached = "usage_limit_reached";
     public const string RenewalReminder = "renewal_reminder";
     public const string SeatsAdded = "seats_added";
+	public const string GstSyncStaleClients = "gst_sync.stale_clients";
+	 public const string GstSyncWeeklyDigest = "gst_sync.weekly_digest";
 
     /// <summary>
     /// Get priority for a notification type

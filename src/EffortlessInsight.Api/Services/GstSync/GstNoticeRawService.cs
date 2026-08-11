@@ -1,7 +1,9 @@
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities.GstSync;
 using EffortlessInsight.Api.DTOs;
+using EffortlessInsight.Api.Services.Notices;
 using EffortlessInsight.Api.Services.Storage;
+using Hangfire;
 using Microsoft.EntityFrameworkCore;
 
 namespace EffortlessInsight.Api.Services.GstSync;
@@ -14,17 +16,23 @@ public class GstNoticeRawService : IGstNoticeRawService
     private readonly ApplicationDbContext _context;
     private readonly IFileStorageServiceExtended _storageService;
     private readonly IGstSyncNotificationService _notificationService;
+    private readonly IGstinLinkService _gstinLink;
+    private readonly IBackgroundJobClient _backgroundJobs;
     private readonly ILogger<GstNoticeRawService> _logger;
 
     public GstNoticeRawService(
         ApplicationDbContext context,
         IFileStorageServiceExtended storageService,
         IGstSyncNotificationService notificationService,
+        IGstinLinkService gstinLink,
+        IBackgroundJobClient backgroundJobs,
         ILogger<GstNoticeRawService> logger)
     {
         _context = context;
         _storageService = storageService;
         _notificationService = notificationService;
+        _gstinLink = gstinLink;
+        _backgroundJobs = backgroundJobs;
         _logger = logger;
     }
 
@@ -77,6 +85,7 @@ public class GstNoticeRawService : IGstNoticeRawService
         var result = new ImportNoticesResult();
         var imported = new List<ImportedNoticeInfo>();
         var errors = new List<string>();
+        var noticesToProcess = new List<Guid>();
         var alreadyImportedCount = 0;
         var failedCount = 0;
 
@@ -85,6 +94,7 @@ public class GstNoticeRawService : IGstNoticeRawService
             try
             {
                 var rawNotice = await _context.GstNoticesRaw
+                    .Include(n => n.GstClient)
                     .FirstOrDefaultAsync(n => n.Id == noticeId && n.OrganizationId == organizationId, cancellationToken);
 
                 if (rawNotice == null)
@@ -100,6 +110,20 @@ public class GstNoticeRawService : IGstNoticeRawService
                     continue;
                 }
 
+                // Resolve the org GSTIN registry entry for this client so the
+                // imported notice is linked (self-heals clients that predate
+                // the OrganizationGstinId column).
+                if (rawNotice.GstClient.OrganizationGstinId == null)
+                {
+                    var registryEntry = await _gstinLink.FindOrCreateAsync(
+                        rawNotice.GstClient.OrganizationId,
+                        rawNotice.GstClient.Gstin,
+                        rawNotice.GstClient.TradeName,
+                        rawNotice.GstClient.LegalName,
+                        cancellationToken);
+                    rawNotice.GstClient.OrganizationGstinId = registryEntry.Id;
+                }
+
                 // Create a new Notice in the main Notices table
                 var notice = new Data.Entities.Notice
                 {
@@ -109,6 +133,7 @@ public class GstNoticeRawService : IGstNoticeRawService
                     NoticeCategory = rawNotice.NoticeCategory,
                     NoticeNumber = rawNotice.ReferenceNumber ?? rawNotice.PortalNoticeId,
                     Gstin = rawNotice.Gstin,
+                    GstinId = rawNotice.GstClient.OrganizationGstinId,
                     IssueDate = rawNotice.IssueDate,
                     ResponseDeadline = rawNotice.DueDate,
                     TaxAmount = rawNotice.TaxAmount,
@@ -120,7 +145,12 @@ public class GstNoticeRawService : IGstNoticeRawService
                     OfficerDesignation = rawNotice.OfficerDesignation,
                     Jurisdiction = rawNotice.Jurisdiction,
                     Status = Data.Entities.NoticeStatus.Uploaded,
-                    ProcessingStatus = Data.Entities.NoticeProcessingStatus.Completed,
+                    // With a captured PDF the notice goes through the full AI
+                    // pipeline (OCR → extraction → analysis); metadata-only
+                    // notices have nothing to process.
+                    ProcessingStatus = rawNotice.PdfS3Key != null
+                        ? Data.Entities.NoticeProcessingStatus.Queued
+                        : Data.Entities.NoticeProcessingStatus.Completed,
                     Priority = DeterminePriority(rawNotice),
                     Source = Data.Entities.NoticeSource.GstnPortal,
                     GstnNoticeId = rawNotice.PortalNoticeId,
@@ -149,6 +179,11 @@ public class GstNoticeRawService : IGstNoticeRawService
                 rawNotice.ImportedNoticeId = notice.Id;
                 rawNotice.ImportedAt = DateTime.UtcNow;
 
+                if (rawNotice.PdfS3Key != null)
+                {
+                    noticesToProcess.Add(notice.Id);
+                }
+
                 imported.Add(new ImportedNoticeInfo(rawNotice.Id, notice.Id));
             }
             catch (Exception ex)
@@ -161,8 +196,16 @@ public class GstNoticeRawService : IGstNoticeRawService
 
         await _context.SaveChangesAsync(cancellationToken);
 
-        _logger.LogInformation("Imported {Count} notices for organization {OrganizationId}",
-            imported.Count, organizationId);
+        // Queue AI analysis for notices that came with a captured PDF —
+        // same pipeline as manual uploads (OCR → extraction → analysis).
+        foreach (var noticeId in noticesToProcess)
+        {
+            _backgroundJobs.Enqueue<INoticeProcessingJob>(
+                job => job.ProcessAsync(noticeId, CancellationToken.None));
+        }
+
+        _logger.LogInformation("Imported {Count} notices for organization {OrganizationId} ({AiQueued} queued for AI analysis)",
+            imported.Count, organizationId, noticesToProcess.Count);
 
         // Send import completion notification
         if (imported.Count > 0 || failedCount > 0)

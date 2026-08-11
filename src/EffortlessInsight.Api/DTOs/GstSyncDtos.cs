@@ -45,6 +45,39 @@ public record CreateGstClientRequest
 }
 
 /// <summary>
+/// Request to register many client GSTINs at once (CA bulk onboarding).
+/// </summary>
+public record BulkCreateGstClientsRequest
+{
+    [Required]
+    [MinLength(1)]
+    [MaxLength(200)]
+    public List<BulkCreateGstClientItem> Items { get; init; } = [];
+}
+
+public record BulkCreateGstClientItem
+{
+    [Required]
+    public string Gstin { get; init; } = null!;
+
+    [MaxLength(255)]
+    public string? TradeName { get; init; }
+}
+
+/// <summary>
+/// Per-item outcome of a bulk client registration.
+/// </summary>
+public record BulkCreateGstClientsResult
+{
+    public int Created { get; init; }
+    public int Skipped { get; init; }
+    public int Failed { get; init; }
+    public List<BulkCreateGstClientItemResult> Items { get; init; } = [];
+}
+
+public record BulkCreateGstClientItemResult(string Gstin, string Status, string? Error);
+
+/// <summary>
 /// Request to update a GST client connection.
 /// </summary>
 public record UpdateGstClientRequest

@@ -434,6 +434,7 @@ public class NotificationTemplateService : INotificationTemplateService
             AddIfMissing(t.Type, NotificationChannel.Default, "hi", t.Subject, t.BodyHi);
         }
 
+
         // Billing notification content (channel-agnostic "default" channel —
         // the engine renders this once and reuses it for email/in-app/push).
         // Placeholders match the data keys emitted by BillingNotificationService;
@@ -503,6 +504,10 @@ public class NotificationTemplateService : INotificationTemplateService
                 "Automatic notice sync for {{clientName}} ({{gstin}}) has been paused: {{reason}}. Resume it from your sync settings."),
             (NotificationType.GstSyncImportCompleted, "GST notice import completed",
                 "Your notice import has finished: {{importedCount}} imported, {{failedCount}} failed out of {{totalCount}}. View them in your notices list."),
+            (NotificationType.GstSyncStaleClients, "{{staleCount}} client(s) need a GST portal visit",
+                "Notices for {{staleCount}} client(s) haven't refreshed in {{thresholdDays}}+ days: {{clientList}}. Log into their GST portals so the extension can capture any new notices."),
+            (NotificationType.GstSyncWeeklyDigest, "Weekly GST notice summary",
+                "This week across your clients: {{newNotices}} new notice(s), {{dueThisWeek}} due within 7 days, {{overdueCount}} overdue, {{staleCount}} client(s) needing a portal visit."),
         };
 
         foreach (var t in gstSyncTemplates)

@@ -11,11 +11,13 @@ namespace EffortlessInsight.Api.Services.GstSync;
 public class GstClientService : IGstClientService
 {
     private readonly ApplicationDbContext _context;
+    private readonly IGstinLinkService _gstinLink;
     private readonly ILogger<GstClientService> _logger;
 
-    public GstClientService(ApplicationDbContext context, ILogger<GstClientService> logger)
+    public GstClientService(ApplicationDbContext context, IGstinLinkService gstinLink, ILogger<GstClientService> logger)
     {
         _context = context;
+        _gstinLink = gstinLink;
         _logger = logger;
     }
 
@@ -62,11 +64,17 @@ public class GstClientService : IGstClientService
         // Extract state code from GSTIN
         var stateCode = request.Gstin[..2];
 
+        // Ensure the org's GSTIN registry has an entry for this GSTIN so
+        // imported notices can be linked to it (created unverified if new).
+        var registryEntry = await _gstinLink.FindOrCreateAsync(
+            organizationId, request.Gstin, request.TradeName, request.LegalName, cancellationToken);
+
         var client = new GstClient
         {
             OrganizationId = organizationId,
             CreatedByUserId = userId,
             Gstin = request.Gstin.ToUpperInvariant(),
+            OrganizationGstinId = registryEntry.Id,
             TradeName = request.TradeName,
             LegalName = request.LegalName,
             StateCode = stateCode,
@@ -86,6 +94,73 @@ public class GstClientService : IGstClientService
         await _context.Entry(client).Reference(c => c.CreatedByUser).LoadAsync(cancellationToken);
 
         return MapToDto(client);
+    }
+
+    public async Task<BulkCreateGstClientsResult> CreateClientsBulkAsync(Guid organizationId, Guid userId, BulkCreateGstClientsRequest request, CancellationToken cancellationToken = default)
+    {
+        var gstinPattern = new System.Text.RegularExpressions.Regex(
+            @"^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[A-Z0-9]{1}Z[A-Z0-9]{1}$");
+
+        var results = new List<BulkCreateGstClientItemResult>();
+        int created = 0, skipped = 0, failed = 0;
+
+        // De-duplicate within the batch itself
+        var seen = new HashSet<string>();
+
+        foreach (var item in request.Items)
+        {
+            var gstin = item.Gstin.Trim().ToUpperInvariant();
+
+            if (!gstinPattern.IsMatch(gstin))
+            {
+                results.Add(new BulkCreateGstClientItemResult(gstin, "failed", "Invalid GSTIN format"));
+                failed++;
+                continue;
+            }
+
+            if (!seen.Add(gstin))
+            {
+                results.Add(new BulkCreateGstClientItemResult(gstin, "skipped", "Duplicate within this batch"));
+                skipped++;
+                continue;
+            }
+
+            try
+            {
+                await CreateClientAsync(organizationId, userId, new CreateGstClientRequest
+                {
+                    Gstin = gstin,
+                    TradeName = item.TradeName?.Trim()
+                }, cancellationToken);
+
+                results.Add(new BulkCreateGstClientItemResult(gstin, "created", null));
+                created++;
+            }
+            catch (InvalidOperationException)
+            {
+                // Already registered in this organization
+                results.Add(new BulkCreateGstClientItemResult(gstin, "skipped", "Already registered"));
+                skipped++;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Bulk client creation failed for GSTIN {Gstin}", gstin);
+                results.Add(new BulkCreateGstClientItemResult(gstin, "failed", "Unexpected error"));
+                failed++;
+            }
+        }
+
+        _logger.LogInformation(
+            "Bulk client registration for organization {OrganizationId}: {Created} created, {Skipped} skipped, {Failed} failed",
+            organizationId, created, skipped, failed);
+
+        return new BulkCreateGstClientsResult
+        {
+            Created = created,
+            Skipped = skipped,
+            Failed = failed,
+            Items = results
+        };
     }
 
     public async Task<GstClientDto?> UpdateClientAsync(Guid clientId, UpdateGstClientRequest request, CancellationToken cancellationToken = default)

@@ -433,6 +433,13 @@ public interface INoticeServiceExtended : INoticeService
         Guid organizationId,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Per-GSTIN notice counts (total + overdue) for the client summary strip.
+    /// </summary>
+    Task<List<GstinNoticeSummary>> GetGstinSummariesAsync(
+        Guid organizationId,
+        CancellationToken cancellationToken = default);
+
     #endregion
 
     #region Relationships
@@ -486,6 +493,14 @@ public record NoticeStatistics(
     int DueThisMonth,
     decimal TotalDemandAmount,
     int TotalCount);
+
+/// <summary>
+/// Per-GSTIN notice counts for the client summary strip.
+/// </summary>
+public record GstinNoticeSummary(
+    string Gstin,
+    int TotalCount,
+    int OverdueCount);
 
 /// <summary>
 /// DTO for updating a notice.
@@ -590,12 +605,7 @@ public class NoticeServiceImpl : INoticeServiceExtended
         Guid? gstinId = null;
         if (!string.IsNullOrEmpty(gstin))
         {
-            var orgGstin = await _db.OrganizationGstins
-                .FirstOrDefaultAsync(g =>
-                    g.OrganizationId == organizationId &&
-                    g.Gstin == gstin.ToUpperInvariant() &&
-                    g.DeletedAt == null,
-                    cancellationToken);
+            var orgGstin = await FindOrgGstinAsync(organizationId, gstin, cancellationToken);
 
             if (orgGstin == null)
             {
@@ -758,12 +768,7 @@ public class NoticeServiceImpl : INoticeServiceExtended
         Guid? gstinId = null;
         if (!string.IsNullOrEmpty(gstin))
         {
-            var orgGstin = await _db.OrganizationGstins
-                .FirstOrDefaultAsync(g =>
-                    g.OrganizationId == organizationId &&
-                    g.Gstin == gstin.ToUpperInvariant() &&
-                    g.DeletedAt == null,
-                    cancellationToken);
+            var orgGstin = await FindOrgGstinAsync(organizationId, gstin, cancellationToken);
 
             if (orgGstin == null)
             {
@@ -840,12 +845,7 @@ public class NoticeServiceImpl : INoticeServiceExtended
         CancellationToken cancellationToken = default)
     {
         // Validate GSTIN
-        var orgGstin = await _db.OrganizationGstins
-            .FirstOrDefaultAsync(g =>
-                g.OrganizationId == organizationId &&
-                g.Gstin == request.Gstin.ToUpperInvariant() &&
-                g.DeletedAt == null,
-                cancellationToken);
+        var orgGstin = await FindOrgGstinAsync(organizationId, request.Gstin, cancellationToken);
 
         if (orgGstin == null)
         {
@@ -956,6 +956,27 @@ public class NoticeServiceImpl : INoticeServiceExtended
             existingNotice.CreatedAt);
     }
 
+    /// <summary>
+    /// Find the organization's registry entry for a GSTIN. The Gstin column is
+    /// AES-GCM encrypted with a random nonce, so it can never be matched in a
+    /// SQL WHERE clause — the org's rows are materialized (the value converter
+    /// decrypts them) and compared in memory.
+    /// </summary>
+    private async Task<OrganizationGstin?> FindOrgGstinAsync(
+        Guid organizationId,
+        string gstin,
+        CancellationToken cancellationToken)
+    {
+        var normalized = gstin.Trim().ToUpperInvariant();
+
+        var orgGstins = await _db.OrganizationGstins
+            .Where(g => g.OrganizationId == organizationId && g.DeletedAt == null)
+            .ToListAsync(cancellationToken);
+
+        return orgGstins.FirstOrDefault(g =>
+            string.Equals(g.Gstin, normalized, StringComparison.OrdinalIgnoreCase));
+    }
+
     /// <inheritdoc />
     public async Task<Notice?> GetByIdAsync(
         Guid noticeId,
@@ -1006,6 +1027,38 @@ public class NoticeServiceImpl : INoticeServiceExtended
         if (!string.IsNullOrEmpty(filter.Gstin))
         {
             query = query.Where(n => n.Gstin == filter.Gstin.ToUpperInvariant());
+        }
+
+        if (!string.IsNullOrEmpty(filter.Pan))
+        {
+            // PAN = characters 3-12 of the GSTIN; matches a client business
+            // across all of its state registrations
+            var pan = filter.Pan.ToUpperInvariant();
+            query = query.Where(n => n.Gstin != null && n.Gstin.Substring(2, 10) == pan);
+        }
+
+        if (filter.Overdue == true)
+        {
+            var today = DateOnly.FromDateTime(DateTime.UtcNow);
+            query = query.Where(n =>
+                n.ResponseDeadline.HasValue &&
+                n.ResponseDeadline < today &&
+                n.Status != NoticeStatus.Closed &&
+                n.Status != NoticeStatus.Archived &&
+                n.Status != NoticeStatus.Responded);
+        }
+
+        if (filter.DueWithinDays.HasValue)
+        {
+            var today = DateOnly.FromDateTime(DateTime.UtcNow);
+            var until = today.AddDays(filter.DueWithinDays.Value);
+            query = query.Where(n =>
+                n.ResponseDeadline.HasValue &&
+                n.ResponseDeadline >= today &&
+                n.ResponseDeadline <= until &&
+                n.Status != NoticeStatus.Closed &&
+                n.Status != NoticeStatus.Archived &&
+                n.Status != NoticeStatus.Responded);
         }
 
         if (filter.DeadlineFrom.HasValue)
@@ -2658,6 +2711,38 @@ public class NoticeServiceImpl : INoticeServiceExtended
             dueThisMonth,
             totalDemand,
             totalCount);
+    }
+
+    /// <inheritdoc />
+    public async Task<List<GstinNoticeSummary>> GetGstinSummariesAsync(
+        Guid organizationId,
+        CancellationToken cancellationToken = default)
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+
+        // Same overdue definition as GetStatisticsAsync: deadline passed and
+        // status not closed/archived/responded.
+        var summaries = await _db.Notices
+            .Where(n => n.OrganizationId == organizationId && n.DeletedAt == null && n.Gstin != null)
+            .GroupBy(n => n.Gstin!)
+            .Select(g => new
+            {
+                Gstin = g.Key,
+                TotalCount = g.Count(),
+                OverdueCount = g.Count(n =>
+                    n.ResponseDeadline.HasValue &&
+                    n.ResponseDeadline < today &&
+                    n.Status != NoticeStatus.Closed &&
+                    n.Status != NoticeStatus.Archived &&
+                    n.Status != NoticeStatus.Responded)
+            })
+            .OrderByDescending(g => g.OverdueCount)
+            .ThenByDescending(g => g.TotalCount)
+            .ToListAsync(cancellationToken);
+
+        return summaries
+            .Select(s => new GstinNoticeSummary(s.Gstin, s.TotalCount, s.OverdueCount))
+            .ToList();
     }
 
     #endregion

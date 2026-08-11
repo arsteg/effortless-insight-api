@@ -73,6 +73,7 @@ public static class ServiceExtensions
         services.AddScoped<Services.GstnIntegration.IGspClient, Services.GstnIntegration.WhiteBooksGspClient>();
 
         // Register GST Sync services (Chrome Extension / Desktop Agent integration)
+        services.AddScoped<Services.GstSync.IGstinLinkService, Services.GstSync.GstinLinkService>();
         services.AddScoped<Services.GstSync.IGstSyncNotificationService, Services.GstSync.GstSyncNotificationService>();
         services.AddScoped<Services.GstSync.IGstClientService, Services.GstSync.GstClientService>();
         services.AddScoped<Services.GstSync.IGstSyncService, Services.GstSync.GstSyncService>();

@@ -29,6 +29,12 @@ public interface IGstClientService
     Task<GstClientDto> CreateClientAsync(Guid organizationId, Guid userId, CreateGstClientRequest request, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Register many client GSTINs at once (CA bulk onboarding). Invalid or
+    /// duplicate GSTINs are reported per item, never fail the whole batch.
+    /// </summary>
+    Task<BulkCreateGstClientsResult> CreateClientsBulkAsync(Guid organizationId, Guid userId, BulkCreateGstClientsRequest request, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Update a GST client connection.
     /// </summary>
     Task<GstClientDto?> UpdateClientAsync(Guid clientId, UpdateGstClientRequest request, CancellationToken cancellationToken = default);

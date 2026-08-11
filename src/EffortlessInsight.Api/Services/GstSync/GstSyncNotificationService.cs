@@ -34,6 +34,12 @@ public static class GstSyncNotificationTypes
 
     /// <summary>Import to notices completed</summary>
     public const string ImportCompleted = "gst_sync.import_completed";
+
+    /// <summary>Clients whose notices haven't refreshed recently</summary>
+    public const string StaleClients = "gst_sync.stale_clients";
+
+    /// <summary>Weekly cross-client summary</summary>
+    public const string WeeklyDigest = "gst_sync.weekly_digest";
 }
 
 /// <summary>
@@ -70,6 +76,17 @@ public interface IGstSyncNotificationService
     /// Send notification when extension is disconnected
     /// </summary>
     Task NotifyExtensionDisconnectedAsync(Guid organizationId, Guid userId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Nudge the org when clients haven't been synced recently (the extension
+    /// only captures when the user visits that client's portal).
+    /// </summary>
+    Task NotifyStaleClientsAsync(Guid organizationId, int thresholdDays, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Weekly cross-client summary: new notices, deadlines, overdue, stale clients.
+    /// </summary>
+    Task SendWeeklyDigestAsync(Guid organizationId, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Send notification when sync is paused due to errors
@@ -304,6 +321,113 @@ public class GstSyncNotificationService : IGstSyncNotificationService
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to send due date overdue notification to user {UserId}", userId);
+            }
+        }
+    }
+
+    public async Task NotifyStaleClientsAsync(Guid organizationId, int thresholdDays, CancellationToken cancellationToken = default)
+    {
+        var cutoff = DateTime.UtcNow.AddDays(-thresholdDays);
+
+        // Stale = sync enabled but no successful sync since the cutoff
+        // (or never synced and created before the cutoff).
+        var staleClients = await _context.GstClients
+            .Where(c => c.OrganizationId == organizationId &&
+                        c.SyncEnabled &&
+                        c.Status == GstClientStatus.Active &&
+                        ((c.LastSuccessfulSyncAt != null && c.LastSuccessfulSyncAt < cutoff) ||
+                         (c.LastSuccessfulSyncAt == null && c.CreatedAt < cutoff)))
+            .Select(c => new { c.Gstin, c.TradeName, c.LegalName })
+            .ToListAsync(cancellationToken);
+
+        if (staleClients.Count == 0) return;
+
+        var clientList = string.Join(", ", staleClients
+            .Select(c => c.TradeName ?? c.LegalName ?? c.Gstin)
+            .Take(5));
+        if (staleClients.Count > 5)
+        {
+            clientList += $" and {staleClients.Count - 5} more";
+        }
+
+        var userIds = await GetOrganizationUserIdsAsync(organizationId, cancellationToken);
+
+        foreach (var userId in userIds)
+        {
+            try
+            {
+                await _notificationEngine.SendAsync(new SendNotificationRequest(
+                    UserId: userId,
+                    Type: GstSyncNotificationTypes.StaleClients,
+                    Data: new Dictionary<string, object>
+                    {
+                        ["staleCount"] = staleClients.Count,
+                        ["thresholdDays"] = thresholdDays,
+                        ["clientList"] = clientList,
+                        ["dashboardUrl"] = "/gst-sync"
+                    }
+                ), cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to send stale clients notification to user {UserId}", userId);
+            }
+        }
+    }
+
+    public async Task SendWeeklyDigestAsync(Guid organizationId, CancellationToken cancellationToken = default)
+    {
+        var now = DateTime.UtcNow;
+        var weekAgo = now.AddDays(-7);
+        var today = DateOnly.FromDateTime(now);
+        var staleCutoff = now.AddDays(-14);
+
+        var newNotices = await _context.GstNoticesRaw
+            .CountAsync(n => n.OrganizationId == organizationId && n.FirstSyncedAt >= weekAgo, cancellationToken);
+
+        var dueThisWeek = await _context.GstNoticesRaw
+            .CountAsync(n => n.OrganizationId == organizationId &&
+                             n.DueDate != null &&
+                             n.DueDate >= today &&
+                             n.DueDate <= today.AddDays(7), cancellationToken);
+
+        var overdueCount = await _context.GstNoticesRaw
+            .CountAsync(n => n.OrganizationId == organizationId &&
+                             n.DueDate != null &&
+                             n.DueDate < today, cancellationToken);
+
+        var staleCount = await _context.GstClients
+            .CountAsync(c => c.OrganizationId == organizationId &&
+                             c.SyncEnabled &&
+                             c.Status == GstClientStatus.Active &&
+                             ((c.LastSuccessfulSyncAt != null && c.LastSuccessfulSyncAt < staleCutoff) ||
+                              (c.LastSuccessfulSyncAt == null && c.CreatedAt < staleCutoff)), cancellationToken);
+
+        // Nothing worth a digest — stay quiet
+        if (newNotices == 0 && dueThisWeek == 0 && overdueCount == 0 && staleCount == 0) return;
+
+        var userIds = await GetOrganizationUserIdsAsync(organizationId, cancellationToken);
+
+        foreach (var userId in userIds)
+        {
+            try
+            {
+                await _notificationEngine.SendAsync(new SendNotificationRequest(
+                    UserId: userId,
+                    Type: GstSyncNotificationTypes.WeeklyDigest,
+                    Data: new Dictionary<string, object>
+                    {
+                        ["newNotices"] = newNotices,
+                        ["dueThisWeek"] = dueThisWeek,
+                        ["overdueCount"] = overdueCount,
+                        ["staleCount"] = staleCount,
+                        ["dashboardUrl"] = "/gst-sync"
+                    }
+                ), cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to send weekly digest to user {UserId}", userId);
             }
         }
     }

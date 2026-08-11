@@ -38,6 +38,17 @@ public class GstClient : BaseEntity
     public string Gstin { get; set; } = null!;
 
     /// <summary>
+    /// The organization's registered GSTIN record this client is linked to.
+    /// Created (unverified) automatically when the client is registered, so
+    /// notices imported from sync can be tied to the org's GSTIN registry.
+    /// Nullable to tolerate legacy rows; backfilled at startup.
+    /// </summary>
+    public Guid? OrganizationGstinId { get; set; }
+
+    [ForeignKey(nameof(OrganizationGstinId))]
+    public OrganizationGstin? OrganizationGstin { get; set; }
+
+    /// <summary>
     /// Trade name associated with this GSTIN (from GST portal).
     /// </summary>
     [MaxLength(255)]

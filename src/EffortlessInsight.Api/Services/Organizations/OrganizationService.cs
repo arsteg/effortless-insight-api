@@ -240,7 +240,8 @@ public class OrganizationManagementService : IOrganizationManagementService
                 gstin.Status,
                 gstin.IsPrimary,
                 gstin.IsVerified,
-                gstin.VerifiedAt
+                gstin.VerifiedAt,
+                gstin.Source
             )],
             Industry: organization.Industry,
             State: organization.State,
@@ -457,8 +458,9 @@ public class OrganizationManagementService : IOrganizationManagementService
             throw new InvalidOperationException($"INVALID_GSTIN: {gstinResult.ErrorMessage}");
         }
 
-        // Check if GSTIN already exists
-        if (await _gstinValidator.ExistsAsync(request.Gstin))
+        // Check if GSTIN is already registered in this organization
+        // (uniqueness is per-org: other orgs may manage the same GSTIN)
+        if (await _gstinValidator.ExistsInOrganizationAsync(organizationId, request.Gstin))
         {
             throw new InvalidOperationException("GSTIN_EXISTS");
         }
@@ -501,7 +503,8 @@ public class OrganizationManagementService : IOrganizationManagementService
             StateCode = gstinResult.StateCode!,
             StateName = stateName,
             IsPrimary = request.IsPrimary || !organization.OrganizationGstins.Any(),
-            Status = "active"
+            Status = "active",
+            Source = OrganizationGstinSource.Manual
         };
 
         _dbContext.OrganizationGstins.Add(gstin);
@@ -536,7 +539,8 @@ public class OrganizationManagementService : IOrganizationManagementService
             gstin.Status,
             gstin.IsPrimary,
             gstin.IsVerified,
-            gstin.VerifiedAt
+            gstin.VerifiedAt,
+            gstin.Source
         );
     }
 
