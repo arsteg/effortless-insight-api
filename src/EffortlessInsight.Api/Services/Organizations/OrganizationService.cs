@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities;
+using EffortlessInsight.Api.Data.Entities.Billing;
 using EffortlessInsight.Api.DTOs;
 using EffortlessInsight.Api.Services.Auth;
 using EffortlessInsight.Api.Services.Email;
@@ -126,7 +127,7 @@ public class OrganizationManagementService : IOrganizationManagementService
             var subscription = await _dbContext.BillingSubscriptions
                 .Include(s => s.Plan)
                 .FirstOrDefaultAsync(s => s.OrganizationId == user.OrganizationId.Value
-                    && s.Status == "active"
+                    && (s.Status == SubscriptionStatus.Active || s.Status == SubscriptionStatus.Trialing)
                     && s.DeletedAt == null);
 
             if (subscription?.Plan?.Limits.OrganizationsCount > 0)
@@ -472,7 +473,7 @@ public class OrganizationManagementService : IOrganizationManagementService
         var subscription = await _dbContext.BillingSubscriptions
             .Include(s => s.Plan)
             .FirstOrDefaultAsync(s => s.OrganizationId == organizationId
-                && s.Status == "active"
+                && (s.Status == SubscriptionStatus.Active || s.Status == SubscriptionStatus.Trialing)
                 && s.DeletedAt == null);
 
         // Note: GstinLimit is not in the new billing system's PlanLimits
@@ -1074,7 +1075,7 @@ public class OrganizationManagementService : IOrganizationManagementService
         var subscription = await _dbContext.BillingSubscriptions
             .Include(s => s.Plan)
             .FirstOrDefaultAsync(s => s.OrganizationId == organizationId
-                && s.Status == "active"
+                && (s.Status == SubscriptionStatus.Active || s.Status == SubscriptionStatus.Trialing)
                 && s.DeletedAt == null);
 
         var baseUserLimit = subscription?.Plan?.Limits.Users ?? DefaultMaxMembers;
@@ -1333,7 +1334,7 @@ public class OrganizationManagementService : IOrganizationManagementService
                 var subscription = await _dbContext.BillingSubscriptions
                     .Include(s => s.Plan)
                     .FirstOrDefaultAsync(s => s.OrganizationId == invitation.OrganizationId
-                        && s.Status == "active"
+                        && (s.Status == SubscriptionStatus.Active || s.Status == SubscriptionStatus.Trialing)
                         && s.DeletedAt == null);
 
                 var baseUserLimit = subscription?.Plan?.Limits.Users ?? DefaultMaxMembers;
