@@ -2511,16 +2511,19 @@ public class SubscriptionService : ISubscriptionService
             if (remainingDays > 0)
             {
                 // Step 1: Calculate the DAILY RATE of current plan
+                // Note: Plan prices are stored in paisa (1/100 rupee), so divide by 100 for display
                 var currentPeriodDays = oldBillingCycle == BillingCycle.Annually ? 365.0 : 30.0;
-                var currentPeriodPrice = oldBillingCycle == BillingCycle.Annually
+                var currentPeriodPricePaisa = oldBillingCycle == BillingCycle.Annually
                     ? currentPlan.PricingAnnually ?? 0
                     : currentPlan.PricingMonthly ?? 0;
 
                 // Add per-seat costs for current plan
-                currentPeriodPrice += subscription.SeatsAdditional * (oldBillingCycle == BillingCycle.Annually
+                currentPeriodPricePaisa += subscription.SeatsAdditional * (oldBillingCycle == BillingCycle.Annually
                     ? currentPlan.PerSeatAnnually ?? 0
                     : currentPlan.PerSeatMonthly ?? 0);
 
+                // Convert from paisa to rupees
+                var currentPeriodPrice = currentPeriodPricePaisa / 100m;
                 var currentDailyRate = currentPeriodPrice / (decimal)currentPeriodDays;
 
                 // Step 2: Calculate remaining value based on daily rate × remaining days
@@ -2528,15 +2531,17 @@ public class SubscriptionService : ISubscriptionService
 
                 // Step 3: Calculate the DAILY RATE of new plan
                 var newPeriodDays = newBillingCycle == BillingCycle.Annually ? 365.0 : 30.0;
-                var newPeriodPrice = newBillingCycle == BillingCycle.Annually
+                var newPeriodPricePaisa = newBillingCycle == BillingCycle.Annually
                     ? newPlan.PricingAnnually ?? 0
                     : newPlan.PricingMonthly ?? 0;
 
                 // Add per-seat costs for new plan
-                newPeriodPrice += additionalSeats * (newBillingCycle == BillingCycle.Annually
+                newPeriodPricePaisa += additionalSeats * (newBillingCycle == BillingCycle.Annually
                     ? newPlan.PerSeatAnnually ?? 0
                     : newPlan.PerSeatMonthly ?? 0);
 
+                // Convert from paisa to rupees
+                var newPeriodPrice = newPeriodPricePaisa / 100m;
                 var newDailyRate = newPeriodPrice / (decimal)newPeriodDays;
 
                 // Step 4: Calculate new period end date
@@ -2696,16 +2701,18 @@ public class SubscriptionService : ISubscriptionService
         {
             // Step 1: Calculate the DAILY RATE of current plan
             // This is what the user is effectively paying per day
+            // Note: Plan prices are stored in paisa (1/100 rupee), so divide by 100 for rupees
             var currentPeriodDays = oldBillingCycle == BillingCycle.Annually ? 365.0 : 30.0;
-            var currentPeriodPrice = oldBillingCycle == BillingCycle.Annually
+            var currentPeriodPricePaisa = oldBillingCycle == BillingCycle.Annually
                 ? oldPlan.PricingAnnually ?? 0
                 : oldPlan.PricingMonthly ?? 0;
 
             // Add per-seat costs for current plan
-            currentPeriodPrice += subscription.SeatsAdditional * (oldBillingCycle == BillingCycle.Annually
+            currentPeriodPricePaisa += subscription.SeatsAdditional * (oldBillingCycle == BillingCycle.Annually
                 ? oldPlan.PerSeatAnnually ?? 0
                 : oldPlan.PerSeatMonthly ?? 0);
 
+            var currentPeriodPrice = currentPeriodPricePaisa / 100.0;
             var currentDailyRate = currentPeriodPrice / currentPeriodDays;
 
             // Step 2: Calculate remaining value based on daily rate × remaining days
@@ -2714,15 +2721,16 @@ public class SubscriptionService : ISubscriptionService
 
             // Step 3: Calculate the DAILY RATE of new plan
             var newPeriodDays = newBillingCycle == BillingCycle.Annually ? 365.0 : 30.0;
-            var newPeriodPrice = newBillingCycle == BillingCycle.Annually
+            var newPeriodPricePaisa = newBillingCycle == BillingCycle.Annually
                 ? newPlan.PricingAnnually ?? 0
                 : newPlan.PricingMonthly ?? 0;
 
             // Add per-seat costs for new plan
-            newPeriodPrice += additionalSeats * (newBillingCycle == BillingCycle.Annually
+            newPeriodPricePaisa += additionalSeats * (newBillingCycle == BillingCycle.Annually
                 ? newPlan.PerSeatAnnually ?? 0
                 : newPlan.PerSeatMonthly ?? 0);
 
+            var newPeriodPrice = newPeriodPricePaisa / 100.0;
             var newDailyRate = newPeriodPrice / newPeriodDays;
 
             if (newDailyRate > 0)
