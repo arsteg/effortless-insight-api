@@ -22,6 +22,12 @@ public interface IGstinValidatorService
     Task<string?> GetStateNameAsync(string stateCode);
 
     /// <summary>
+    /// Checks if the GSTIN is already registered as a primary GSTIN for any organization.
+    /// Used during organization creation to ensure no two organizations share the same primary GSTIN.
+    /// </summary>
+    Task<bool> ExistsAsync(string gstin);
+
+    /// <summary>
     /// Checks if the GSTIN is already registered within the given organization.
     /// GSTIN uniqueness is per-organization (CA-firm model): different
     /// organizations may legitimately manage the same client GSTIN, so there
@@ -106,6 +112,20 @@ public class GstinValidatorService : IGstinValidatorService
         var state = await _dbContext.GstinStateCodes
             .FirstOrDefaultAsync(s => s.Code == stateCode);
         return state?.Name;
+    }
+
+    public async Task<bool> ExistsAsync(string gstin)
+    {
+        gstin = gstin.Trim().ToUpperInvariant();
+
+        // Check if any organization has this GSTIN as their primary GSTIN
+        // Gstin is stored AES-GCM encrypted, so we materialize and compare in memory
+        var primaryGstins = await _dbContext.OrganizationGstins
+            .Where(g => g.IsPrimary && g.DeletedAt == null && g.Organization.DeletedAt == null)
+            .Select(g => g.Gstin)
+            .ToListAsync();
+
+        return primaryGstins.Any(g => string.Equals(g, gstin, StringComparison.OrdinalIgnoreCase));
     }
 
     public async Task<bool> ExistsInOrganizationAsync(Guid organizationId, string gstin)
