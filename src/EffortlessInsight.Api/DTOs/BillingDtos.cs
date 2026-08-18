@@ -92,7 +92,8 @@ public record SubscriptionDto(
     DateOnly NextBillingDate,
     PaymentMethodSummaryDto? PaymentMethod,
     string? RazorpaySubscriptionId,
-    ScheduledChangeDto? ScheduledChange
+    ScheduledChangeDto? ScheduledChange,
+    bool HasUsedTrial
 );
 
 public record SeatsDto(

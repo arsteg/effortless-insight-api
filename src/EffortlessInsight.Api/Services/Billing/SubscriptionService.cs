@@ -57,9 +57,10 @@ public class SubscriptionService : ISubscriptionService
         if (plan == null)
             return null;
 
+        var org = await _dbContext.Organizations.FindAsync(organizationId);
         var usage = await _usageService.GetCurrentUsageAsync(organizationId);
 
-        var subscriptionDto = MapToSubscriptionDto(subscription, plan);
+        var subscriptionDto = MapToSubscriptionDto(subscription, plan, org?.HasUsedTrial ?? false);
         var usageDto = MapToUsageDto(usage, plan.Limits, subscription);
 
         return new CurrentSubscriptionResponse(subscriptionDto, usageDto);
@@ -879,7 +880,7 @@ public class SubscriptionService : ISubscriptionService
         await _dbContext.SaveChangesAsync();
 
         var plan = await _planService.GetPlanByIdAsync(subscription.PlanId);
-        return MapToSubscriptionDto(subscription, plan!);
+        return MapToSubscriptionDto(subscription, plan!, org?.HasUsedTrial ?? false);
     }
 
     public async Task<SubscriptionDto> StartTrialAsync(
@@ -917,7 +918,7 @@ public class SubscriptionService : ISubscriptionService
             if (existingSubscription.Status == SubscriptionStatus.Trialing)
             {
                 var existingPlan = await _planService.GetPlanByIdAsync(existingSubscription.PlanId);
-                return MapToSubscriptionDto(existingSubscription, existingPlan!);
+                return MapToSubscriptionDto(existingSubscription, existingPlan!, org?.HasUsedTrial ?? true);
             }
 
             // Check if current plan is free - allow free plan users to start a trial
@@ -984,7 +985,7 @@ public class SubscriptionService : ISubscriptionService
         // Send notification (fire-and-forget, don't block on errors)
         _ = SendTrialStartedNotificationAsync(organizationId, plan.DisplayName, subscription.TrialEnd!.Value);
 
-        return MapToSubscriptionDto(subscription, plan);
+        return MapToSubscriptionDto(subscription, plan, true);
     }
 
     public async Task<SubscriptionDto> ActivateFreePlanAsync(Guid organizationId, string planCode)
@@ -1001,6 +1002,8 @@ public class SubscriptionService : ISubscriptionService
         if (plan.ContactSales)
             throw new InvalidOperationException("Enterprise plans require contacting sales");
 
+        var org = await _dbContext.Organizations.FindAsync(organizationId);
+
         var existingSubscription = await GetSubscriptionEntityAsync(organizationId);
         if (existingSubscription != null)
         {
@@ -1009,7 +1012,7 @@ public class SubscriptionService : ISubscriptionService
                 existingSubscription.Status == SubscriptionStatus.Active)
             {
                 var existingPlan = await _planService.GetPlanByIdAsync(existingSubscription.PlanId);
-                return MapToSubscriptionDto(existingSubscription, existingPlan!);
+                return MapToSubscriptionDto(existingSubscription, existingPlan!, org?.HasUsedTrial ?? false);
             }
 
             // For downgrading from paid plan to free, or switching free plans
@@ -1045,8 +1048,7 @@ public class SubscriptionService : ISubscriptionService
 
         _dbContext.BillingSubscriptions.Add(subscription);
 
-        // Update organization status
-        var org = await _dbContext.Organizations.FindAsync(organizationId);
+        // Update organization status (org was fetched earlier)
         if (org != null)
         {
             org.SubscriptionStatus = "active";
@@ -1062,7 +1064,7 @@ public class SubscriptionService : ISubscriptionService
         // Send notification (fire-and-forget, don't block on errors)
         _ = SendFreePlanNotificationAsync(organizationId, plan.DisplayName);
 
-        return MapToSubscriptionDto(subscription, plan);
+        return MapToSubscriptionDto(subscription, plan, org?.HasUsedTrial ?? false);
     }
 
     /// <summary>
@@ -2773,7 +2775,7 @@ public class SubscriptionService : ISubscriptionService
         await _dbContext.SaveChangesAsync();
     }
 
-    private static SubscriptionDto MapToSubscriptionDto(BillingSubscription subscription, SubscriptionPlan plan)
+    private static SubscriptionDto MapToSubscriptionDto(BillingSubscription subscription, SubscriptionPlan plan, bool hasUsedTrial)
     {
         var pricing = new SubscriptionPricingDto(
             BaseAmount: subscription.BillingCycle == BillingCycle.Annually
@@ -2829,7 +2831,8 @@ public class SubscriptionService : ISubscriptionService
                 PlanCode: subscription.ScheduledPlanCode,
                 BillingCycle: subscription.ScheduledBillingCycle,
                 EffectiveDate: subscription.ScheduledChangeDate ?? subscription.CurrentPeriodEnd
-            )
+            ),
+            HasUsedTrial: hasUsedTrial
         );
     }
 
