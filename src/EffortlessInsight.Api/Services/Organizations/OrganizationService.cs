@@ -599,12 +599,18 @@ public class OrganizationManagementService : IOrganizationManagementService
             .FirstOrDefaultAsync(g => g.Id == gstinId && g.OrganizationId == organizationId)
             ?? throw new KeyNotFoundException("GSTIN_NOT_FOUND");
 
-        // Use transaction with serializable isolation to prevent race conditions (C1 fix)
-        await using var transaction = await _dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable);
-        try
+        // Use execution strategy to handle retrying execution strategy with transactions
+        var strategy = _dbContext.Database.CreateExecutionStrategy();
+
+        string? previousPrimary = null;
+
+        await strategy.ExecuteAsync(async () =>
         {
+            // Use transaction with serializable isolation to prevent race conditions (C1 fix)
+            await using var transaction = await _dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable);
+
             // Get previous primary for audit logging
-            var previousPrimary = await _dbContext.OrganizationGstins
+            previousPrimary = await _dbContext.OrganizationGstins
                 .Where(g => g.OrganizationId == organizationId && g.IsPrimary)
                 .Select(g => g.Gstin)
                 .FirstOrDefaultAsync();
@@ -620,27 +626,22 @@ public class OrganizationManagementService : IOrganizationManagementService
                 .ExecuteUpdateAsync(s => s.SetProperty(g => g.IsPrimary, true));
 
             await transaction.CommitAsync();
+        });
 
-            _logger.LogInformation("GSTIN {Gstin} set as primary for organization {OrganizationId} by user {UserId}",
-                targetGstin.Gstin, organizationId, userId);
+        _logger.LogInformation("GSTIN {Gstin} set as primary for organization {OrganizationId} by user {UserId}",
+            targetGstin.Gstin, organizationId, userId);
 
-            // Audit logging
-            await _auditService.LogAsync(new AuditLogEntry
-            {
-                Action = "gstin.primary_changed",
-                EntityType = "OrganizationGstin",
-                EntityId = gstinId,
-                UserId = userId,
-                OrganizationId = organizationId,
-                OldValues = new { PrimaryGstin = previousPrimary },
-                NewValues = new { PrimaryGstin = targetGstin.Gstin }
-            });
-        }
-        catch
+        // Audit logging (outside transaction)
+        await _auditService.LogAsync(new AuditLogEntry
         {
-            await transaction.RollbackAsync();
-            throw;
-        }
+            Action = "gstin.primary_changed",
+            EntityType = "OrganizationGstin",
+            EntityId = gstinId,
+            UserId = userId,
+            OrganizationId = organizationId,
+            OldValues = new { PrimaryGstin = previousPrimary },
+            NewValues = new { PrimaryGstin = targetGstin.Gstin }
+        });
     }
 
     #endregion
@@ -1321,10 +1322,16 @@ public class OrganizationManagementService : IOrganizationManagementService
             throw new InvalidOperationException("ALREADY_MEMBER");
         }
 
-        // Use transaction to ensure atomic plan limit check and membership creation (C4 fix)
-        await using var transaction = await _dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable);
-        try
+        // Use execution strategy to handle retrying execution strategy with transactions
+        var strategy = _dbContext.Database.CreateExecutionStrategy();
+
+        OrganizationMember? membership = null;
+
+        await strategy.ExecuteAsync(async () =>
         {
+            // Use transaction to ensure atomic plan limit check and membership creation (C4 fix)
+            await using var transaction = await _dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable);
+
             // Re-check plan limits atomically within transaction
             var organization = await _dbContext.Organizations
                 .FirstOrDefaultAsync(o => o.Id == invitation.OrganizationId);
@@ -1376,7 +1383,7 @@ public class OrganizationManagementService : IOrganizationManagementService
             }
 
             // Create membership
-            var membership = new OrganizationMember
+            membership = new OrganizationMember
             {
                 OrganizationId = invitation.OrganizationId,
                 UserId = userId,
@@ -1407,41 +1414,36 @@ public class OrganizationManagementService : IOrganizationManagementService
 
             await _dbContext.SaveChangesAsync();
             await transaction.CommitAsync();
+        });
 
-            _logger.LogInformation("User {UserId} accepted invitation and joined organization {OrganizationId}",
-                userId, invitation.OrganizationId);
+        _logger.LogInformation("User {UserId} accepted invitation and joined organization {OrganizationId}",
+            userId, invitation.OrganizationId);
 
-            // Audit logging
-            await _auditService.LogAsync(new AuditLogEntry
-            {
-                Action = "invitation.accepted",
-                EntityType = "OrganizationMember",
-                EntityId = membership.Id,
-                UserId = userId,
-                OrganizationId = invitation.OrganizationId,
-                NewValues = new
-                {
-                    membership.Role,
-                    membership.IsExternal,
-                    membership.JoinedAt,
-                    InvitationId = invitation.Id
-                }
-            });
-
-            return new AcceptInvitationResponse(
-                Message: "Successfully joined organization",
-                Organization: new OrganizationBasicDto(
-                    invitation.Organization.Id,
-                    invitation.Organization.Name,
-                    invitation.Role
-                )
-            );
-        }
-        catch
+        // Audit logging (outside transaction)
+        await _auditService.LogAsync(new AuditLogEntry
         {
-            await transaction.RollbackAsync();
-            throw;
-        }
+            Action = "invitation.accepted",
+            EntityType = "OrganizationMember",
+            EntityId = membership!.Id,
+            UserId = userId,
+            OrganizationId = invitation.OrganizationId,
+            NewValues = new
+            {
+                membership.Role,
+                membership.IsExternal,
+                membership.JoinedAt,
+                InvitationId = invitation.Id
+            }
+        });
+
+        return new AcceptInvitationResponse(
+            Message: "Successfully joined organization",
+            Organization: new OrganizationBasicDto(
+                invitation.Organization.Id,
+                invitation.Organization.Name,
+                invitation.Role
+            )
+        );
     }
 
     public async Task DeclineInvitationAsync(string token, Guid userId)
