@@ -1042,7 +1042,7 @@ public class AuthService : IAuthService
                 // Include User.Read scope for profile photo access
                 // Use prompt=login for forced re-authentication
                 var microsoftPrompt = forceReauth ? "&prompt=login" : "";
-                loginUrl = $"https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id={microsoftClientId}&redirect_uri={microsoftRedirectUri}&response_type=code&scope=openid%20email%20profile%20User.Read&state={stateToken}&response_mode=query{microsoftPrompt}";
+                loginUrl = $"https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize?client_id={microsoftClientId}&redirect_uri={microsoftRedirectUri}&response_type=code&scope=openid%20email%20profile%20User.Read&state={stateToken}&response_mode=query{microsoftPrompt}";
                 break;
 
             default:
@@ -1353,7 +1353,7 @@ public class AuthService : IAuthService
         };
 
         var tokenResponse = await httpClient.PostAsync(
-            "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+            "https://login.microsoftonline.com/consumers/oauth2/v2.0/token",
             new FormUrlEncodedContent(tokenRequest));
 
         if (!tokenResponse.IsSuccessStatusCode)
