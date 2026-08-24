@@ -1358,7 +1358,13 @@ public class AuthService : IAuthService
 
         if (!tokenResponse.IsSuccessStatusCode)
         {
-            _logger.LogWarning("Failed to exchange Microsoft code: {Status}", tokenResponse.StatusCode);
+            //_logger.LogWarning("Failed to exchange Microsoft code: {Status}", tokenResponse.StatusCode);
+            var errorBody = await tokenResponse.Content.ReadAsStringAsync();
+
+            _logger.LogWarning(
+                "Failed to exchange Microsoft code. Status: {Status}, Response: {Response}",
+                tokenResponse.StatusCode,
+                errorBody);
             return null;
         }
 
@@ -1373,7 +1379,14 @@ public class AuthService : IAuthService
         var userInfoResponse = await httpClient.GetAsync("https://graph.microsoft.com/v1.0/me");
         if (!userInfoResponse.IsSuccessStatusCode)
         {
-            _logger.LogWarning("Failed to get Microsoft user info: {Status}", userInfoResponse.StatusCode);
+            //_logger.LogWarning("Failed to get Microsoft user info: {Status}", userInfoResponse.StatusCode);
+            var errorBody = await userInfoResponse.Content.ReadAsStringAsync();
+
+            _logger.LogWarning(
+                "Failed to get Microsoft user info. Status: {Status}, Response: {Response}",
+                userInfoResponse.StatusCode,
+                errorBody);
+
             return null;
         }
 
