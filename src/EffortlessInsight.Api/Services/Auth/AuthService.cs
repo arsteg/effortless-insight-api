@@ -1349,7 +1349,7 @@ public class AuthService : IAuthService
             ["client_secret"] = clientSecret!,
             ["redirect_uri"] = redirectUri,
             ["grant_type"] = "authorization_code",
-            ["scope"] = "openid email profile User.Read"
+            ["scope"] = "openid profile email"
         };
 
         var tokenResponse = await httpClient.PostAsync(
@@ -1376,7 +1376,7 @@ public class AuthService : IAuthService
         httpClient.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
 
-        var userInfoResponse = await httpClient.GetAsync("https://graph.microsoft.com/v1.0/me");
+        var userInfoResponse = await httpClient.GetAsync("https://graph.microsoft.com/oidc/userinfo");
         if (!userInfoResponse.IsSuccessStatusCode)
         {
             //_logger.LogWarning("Failed to get Microsoft user info: {Status}", userInfoResponse.StatusCode);
@@ -1390,43 +1390,72 @@ public class AuthService : IAuthService
             return null;
         }
 
+        //var userInfoJson = await userInfoResponse.Content.ReadAsStringAsync();
+        //var userInfo = JsonSerializer.Deserialize<JsonElement>(userInfoJson);
+
+        //// Get email - Microsoft may return it in different fields
+        //string? email = null;
+        //if (userInfo.TryGetProperty("mail", out var mailProp))
+        //{
+        //    email = mailProp.GetString();
+        //}
+        //if (string.IsNullOrEmpty(email) && userInfo.TryGetProperty("userPrincipalName", out var upnProp))
+        //{
+        //    email = upnProp.GetString();
+        //}
+
+        //// Try to fetch profile photo from Microsoft Graph
+        //string? pictureUrl = null;
+        //try
+        //{
+        //    var photoResponse = await httpClient.GetAsync("https://graph.microsoft.com/v1.0/me/photo/$value");
+        //    if (photoResponse.IsSuccessStatusCode)
+        //    {
+        //        var photoBytes = await photoResponse.Content.ReadAsByteArrayAsync();
+        //        var contentType = photoResponse.Content.Headers.ContentType?.MediaType ?? "image/jpeg";
+        //        pictureUrl = $"data:{contentType};base64,{Convert.ToBase64String(photoBytes)}";
+        //    }
+        //}
+        //catch (Exception ex)
+        //{
+        //    _logger.LogDebug(ex, "Failed to fetch Microsoft profile photo (non-critical)");
+        //}
+
+        //return new OAuthUserInfo
+        //{
+        //    Id = userInfo.TryGetProperty("id", out var id) ? id.GetString() : null,
+        //    Email = email,
+        //    Name = userInfo.TryGetProperty("displayName", out var name) ? name.GetString() : null,
+        //    Picture = pictureUrl
+        //};
         var userInfoJson = await userInfoResponse.Content.ReadAsStringAsync();
         var userInfo = JsonSerializer.Deserialize<JsonElement>(userInfoJson);
 
-        // Get email - Microsoft may return it in different fields
         string? email = null;
-        if (userInfo.TryGetProperty("mail", out var mailProp))
+
+        if (userInfo.TryGetProperty("email", out var emailProp))
         {
-            email = mailProp.GetString();
-        }
-        if (string.IsNullOrEmpty(email) && userInfo.TryGetProperty("userPrincipalName", out var upnProp))
-        {
-            email = upnProp.GetString();
+            email = emailProp.GetString();
         }
 
-        // Try to fetch profile photo from Microsoft Graph
-        string? pictureUrl = null;
-        try
+        if (string.IsNullOrEmpty(email) && userInfo.TryGetProperty("preferred_username", out var usernameProp))
         {
-            var photoResponse = await httpClient.GetAsync("https://graph.microsoft.com/v1.0/me/photo/$value");
-            if (photoResponse.IsSuccessStatusCode)
-            {
-                var photoBytes = await photoResponse.Content.ReadAsByteArrayAsync();
-                var contentType = photoResponse.Content.Headers.ContentType?.MediaType ?? "image/jpeg";
-                pictureUrl = $"data:{contentType};base64,{Convert.ToBase64String(photoBytes)}";
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "Failed to fetch Microsoft profile photo (non-critical)");
+            email = usernameProp.GetString();
         }
 
         return new OAuthUserInfo
         {
-            Id = userInfo.TryGetProperty("id", out var id) ? id.GetString() : null,
+            Id = userInfo.TryGetProperty("sub", out var sub)
+                ? sub.GetString()
+                : null,
+
             Email = email,
-            Name = userInfo.TryGetProperty("displayName", out var name) ? name.GetString() : null,
-            Picture = pictureUrl
+
+            Name = userInfo.TryGetProperty("name", out var name)
+                ? name.GetString()
+                : null,
+
+            Picture = null
         };
     }
 
