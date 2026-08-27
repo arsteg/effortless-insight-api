@@ -93,6 +93,10 @@ public class WorkflowController : ControllerBase
         [FromBody] StartWorkflowRequest request,
         CancellationToken cancellationToken)
     {
+        // Check role-based permission
+        if (!_currentOrgService.HasPermission("workflow.transition"))
+            return Forbid();
+
         // Verify organization access
         if (!await VerifyNoticeAccessAsync(request.NoticeId, cancellationToken))
         {
@@ -174,6 +178,10 @@ public class WorkflowController : ControllerBase
         [FromBody] TransitionStageRequest request,
         CancellationToken cancellationToken)
     {
+        // Check role-based permission
+        if (!_currentOrgService.HasPermission("workflow.transition"))
+            return Forbid();
+
         // Verify organization access
         if (!await VerifyNoticeAccessAsync(noticeId, cancellationToken))
         {
@@ -237,10 +245,15 @@ public class WorkflowController : ControllerBase
     [HttpPost("bulk/transition")]
     [ProducesResponseType(typeof(BulkTransitionResult), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<ActionResult<BulkTransitionResult>> BulkTransition(
         [FromBody] BulkTransitionRequest request,
         CancellationToken cancellationToken)
     {
+        // Check role-based permission
+        if (!_currentOrgService.HasPermission("workflow.transition"))
+            return Forbid();
+
         // Filter to only authorized notices
         var authorizedIds = await GetAuthorizedNoticeIdsAsync(request.NoticeIds, cancellationToken);
 
@@ -271,6 +284,10 @@ public class WorkflowController : ControllerBase
         [FromBody] AssignWorkflowRequest request,
         CancellationToken cancellationToken)
     {
+        // Check role-based permission
+        if (!_currentOrgService.HasPermission("workflow.admin"))
+            return Forbid();
+
         // Verify organization access
         if (!await VerifyNoticeAccessAsync(noticeId, cancellationToken))
         {
@@ -293,10 +310,15 @@ public class WorkflowController : ControllerBase
     [HttpPost("bulk/assign")]
     [ProducesResponseType(typeof(BulkTransitionResult), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<ActionResult<BulkTransitionResult>> BulkAssign(
         [FromBody] BulkAssignRequest request,
         CancellationToken cancellationToken)
     {
+        // Check role-based permission
+        if (!_currentOrgService.HasPermission("workflow.admin"))
+            return Forbid();
+
         // Filter to only authorized notices
         var authorizedIds = await GetAuthorizedNoticeIdsAsync(request.NoticeIds, cancellationToken);
 
@@ -327,6 +349,10 @@ public class WorkflowController : ControllerBase
         [FromBody] PauseWorkflowRequest request,
         CancellationToken cancellationToken)
     {
+        // Check role-based permission
+        if (!_currentOrgService.HasPermission("workflow.admin"))
+            return Forbid();
+
         // Verify organization access
         if (!await VerifyNoticeAccessAsync(noticeId, cancellationToken))
         {
@@ -355,6 +381,10 @@ public class WorkflowController : ControllerBase
         [FromBody] ResumeWorkflowRequest request,
         CancellationToken cancellationToken)
     {
+        // Check role-based permission
+        if (!_currentOrgService.HasPermission("workflow.admin"))
+            return Forbid();
+
         // Verify organization access
         if (!await VerifyNoticeAccessAsync(noticeId, cancellationToken))
         {
@@ -383,6 +413,10 @@ public class WorkflowController : ControllerBase
         [FromBody] CancelWorkflowRequest request,
         CancellationToken cancellationToken)
     {
+        // Check role-based permission
+        if (!_currentOrgService.HasPermission("workflow.admin"))
+            return Forbid();
+
         // Verify organization access
         if (!await VerifyNoticeAccessAsync(noticeId, cancellationToken))
         {
@@ -520,6 +554,10 @@ public class WorkflowController : ControllerBase
         [FromBody] CompleteStageInstanceRequest request,
         CancellationToken cancellationToken)
     {
+        // Check role-based permission
+        if (!_currentOrgService.HasPermission("workflow.transition"))
+            return Forbid();
+
         if (!await VerifyNoticeAccessAsync(noticeId, cancellationToken))
         {
             return Forbid();
@@ -548,6 +586,10 @@ public class WorkflowController : ControllerBase
         [FromBody] ForkWorkflowRequest request,
         CancellationToken cancellationToken)
     {
+        // Check role-based permission
+        if (!_currentOrgService.HasPermission("workflow.admin"))
+            return Forbid();
+
         if (!await VerifyNoticeAccessAsync(noticeId, cancellationToken))
         {
             return Forbid();

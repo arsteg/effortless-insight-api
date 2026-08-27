@@ -234,6 +234,17 @@ public class CurrentOrganizationService : ICurrentOrganizationService
             "settings.view" => role is not "ca" || !IsExternal,
             "settings.edit" => role is "owner" or "admin",
 
+            // Task permissions
+            "tasks.view" => true,
+            "tasks.create" => role is not "viewer",
+            "tasks.edit" => role is not "viewer",
+            "tasks.delete" => role is not "viewer",
+
+            // Workflow permissions
+            "workflow.view" => true,
+            "workflow.transition" => role is not "viewer",
+            "workflow.admin" => role is "owner" or "admin" or "manager",
+
             _ => false
         };
     }

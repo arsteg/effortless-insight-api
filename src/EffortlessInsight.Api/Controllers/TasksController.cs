@@ -72,8 +72,12 @@ public class TasksController : ControllerBase
     [HttpPost("notices/{noticeId:guid}/tasks")]
     [ProducesResponseType(typeof(TaskDetailDto), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> CreateTask(Guid noticeId, [FromBody] CreateTaskDto dto)
     {
+        if (!_orgService.HasPermission("tasks.create"))
+            return Forbid();
+
         try
         {
             _logger.LogInformation("CreateTask: NoticeId={NoticeId}, Title={Title}, UserId={UserId}",
@@ -128,8 +132,12 @@ public class TasksController : ControllerBase
     [ProducesResponseType(typeof(TaskDetailDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> UpdateTask(Guid taskId, [FromBody] UpdateTaskDto dto)
     {
+        if (!_orgService.HasPermission("tasks.edit"))
+            return Forbid();
+
         try
         {
             var result = await _taskService.UpdateTaskAsync(taskId, dto, GetUserId());
@@ -151,8 +159,12 @@ public class TasksController : ControllerBase
     [HttpDelete("tasks/{taskId:guid}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> DeleteTask(Guid taskId)
     {
+        if (!_orgService.HasPermission("tasks.delete"))
+            return Forbid();
+
         try
         {
             await _taskService.DeleteTaskAsync(taskId, GetUserId());
@@ -206,8 +218,12 @@ public class TasksController : ControllerBase
     /// </summary>
     [HttpPost("task-templates")]
     [ProducesResponseType(typeof(TaskTemplateDto), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> CreateTaskTemplate([FromBody] CreateTaskTemplateDto dto)
     {
+        if (!_orgService.HasPermission("tasks.create"))
+            return Forbid();
+
         var orgId = _orgService.OrganizationId ?? throw new InvalidOperationException("No organization context");
         var result = await _taskService.CreateTaskTemplateAsync(dto, orgId, GetUserId());
         return CreatedAtAction(nameof(GetTaskTemplates), result);
@@ -218,8 +234,12 @@ public class TasksController : ControllerBase
     /// </summary>
     [HttpDelete("task-templates/{templateId:guid}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> DeleteTaskTemplate(Guid templateId)
     {
+        if (!_orgService.HasPermission("tasks.delete"))
+            return Forbid();
+
         try
         {
             var orgId = _orgService.OrganizationId ?? throw new InvalidOperationException("No organization context");
@@ -262,8 +282,12 @@ public class TasksController : ControllerBase
     [ProducesResponseType(typeof(TaskDependencyDto), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> AddTaskDependency(Guid taskId, [FromBody] CreateTaskDependencyDto dto)
     {
+        if (!_orgService.HasPermission("tasks.edit"))
+            return Forbid();
+
         try
         {
             var type = dto.Type ?? "blocks";
@@ -286,8 +310,12 @@ public class TasksController : ControllerBase
     [HttpDelete("tasks/{taskId:guid}/dependencies/{dependsOnId:guid}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> RemoveTaskDependency(Guid taskId, Guid dependsOnId)
     {
+        if (!_orgService.HasPermission("tasks.edit"))
+            return Forbid();
+
         try
         {
             await _taskService.RemoveDependencyAsync(taskId, dependsOnId, GetUserId());
@@ -348,8 +376,12 @@ public class TasksController : ControllerBase
     [ProducesResponseType(typeof(TaskReminderDto), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> CreateTaskReminder(Guid taskId, [FromBody] CreateTaskReminderDto dto)
     {
+        if (!_orgService.HasPermission("tasks.edit"))
+            return Forbid();
+
         try
         {
             var reminder = await _taskService.CreateReminderAsync(taskId, dto, GetUserId());
@@ -371,8 +403,12 @@ public class TasksController : ControllerBase
     [HttpDelete("tasks/{taskId:guid}/reminders/{reminderId:guid}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> DeleteTaskReminder(Guid taskId, Guid reminderId)
     {
+        if (!_orgService.HasPermission("tasks.delete"))
+            return Forbid();
+
         try
         {
             await _taskService.DeleteReminderAsync(taskId, reminderId, GetUserId());
@@ -414,11 +450,15 @@ public class TasksController : ControllerBase
     [ProducesResponseType(typeof(TaskAttachmentDto), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [RequestSizeLimit(52_428_800)] // 50MB
     public async Task<IActionResult> UploadTaskAttachment(
         Guid taskId,
         IFormFile file)
     {
+        if (!_orgService.HasPermission("tasks.edit"))
+            return Forbid();
+
         if (file == null || file.Length == 0)
         {
             return BadRequest(new { error = "No file provided" });
@@ -487,6 +527,9 @@ public class TasksController : ControllerBase
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> DeleteTaskAttachment(Guid taskId, Guid attachmentId)
     {
+        if (!_orgService.HasPermission("tasks.delete"))
+            return Forbid();
+
         try
         {
             await _taskService.DeleteAttachmentAsync(taskId, attachmentId, GetUserId());
@@ -558,8 +601,12 @@ public class TasksController : ControllerBase
     [ProducesResponseType(typeof(TimeEntryDto), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> LogTime(Guid taskId, [FromBody] CreateTimeEntryDto dto)
     {
+        if (!_orgService.HasPermission("tasks.edit"))
+            return Forbid();
+
         try
         {
             var entry = await _timeTrackingService.LogTimeAsync(
@@ -609,8 +656,12 @@ public class TasksController : ControllerBase
     [ProducesResponseType(typeof(TimeEntryDto), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> StartTimer(Guid taskId)
     {
+        if (!_orgService.HasPermission("tasks.edit"))
+            return Forbid();
+
         try
         {
             var entry = await _timeTrackingService.StartTimerAsync(taskId, GetUserId(), default);
@@ -653,8 +704,12 @@ public class TasksController : ControllerBase
     [ProducesResponseType(typeof(TimeEntryDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> StopTimer(Guid taskId, Guid entryId)
     {
+        if (!_orgService.HasPermission("tasks.edit"))
+            return Forbid();
+
         try
         {
             var entry = await _timeTrackingService.StopTimerAsync(entryId, default);
@@ -693,11 +748,15 @@ public class TasksController : ControllerBase
     [ProducesResponseType(typeof(TimeEntryDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> UpdateTimeEntry(
         Guid taskId,
         Guid entryId,
         [FromBody] UpdateTimeEntryDto dto)
     {
+        if (!_orgService.HasPermission("tasks.edit"))
+            return Forbid();
+
         try
         {
             var entry = await _timeTrackingService.UpdateTimeEntryAsync(entryId, GetUserId(), dto, default);
@@ -742,6 +801,9 @@ public class TasksController : ControllerBase
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> DeleteTimeEntry(Guid taskId, Guid entryId)
     {
+        if (!_orgService.HasPermission("tasks.delete"))
+            return Forbid();
+
         try
         {
             await _timeTrackingService.DeleteTimeEntryAsync(entryId, GetUserId(), default);

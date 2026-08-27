@@ -1,5 +1,6 @@
 using EffortlessInsight.Api.DTOs;
 using EffortlessInsight.Api.Services.Collaboration;
+using EffortlessInsight.Api.Services.Organizations;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
@@ -12,13 +13,16 @@ namespace EffortlessInsight.Api.Controllers;
 public class CommentsController : ControllerBase
 {
     private readonly ICommentService _commentService;
+    private readonly ICurrentOrganizationService _currentOrg;
     private readonly ILogger<CommentsController> _logger;
 
     public CommentsController(
         ICommentService commentService,
+        ICurrentOrganizationService currentOrg,
         ILogger<CommentsController> logger)
     {
         _commentService = commentService;
+        _currentOrg = currentOrg;
         _logger = logger;
     }
 
@@ -65,8 +69,12 @@ public class CommentsController : ControllerBase
     [HttpPost("notices/{noticeId:guid}/comments")]
     [ProducesResponseType(typeof(CommentResponseDto), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> CreateComment(Guid noticeId, [FromBody] CreateCommentRequestDto dto)
     {
+        if (!_currentOrg.HasPermission("notices.comment"))
+            return Forbid();
+
         try
         {
             var result = await _commentService.CreateCommentAsync(noticeId, dto, GetUserId());
@@ -121,8 +129,12 @@ public class CommentsController : ControllerBase
     [HttpPost("comments/{commentId:guid}/replies")]
     [ProducesResponseType(typeof(CommentResponseDto), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> ReplyToComment(Guid commentId, [FromBody] CreateCommentRequestDto dto)
     {
+        if (!_currentOrg.HasPermission("notices.comment"))
+            return Forbid();
+
         try
         {
             var result = await _commentService.ReplyToCommentAsync(commentId, dto, GetUserId());
@@ -147,6 +159,9 @@ public class CommentsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> UpdateComment(Guid commentId, [FromBody] UpdateCommentDto dto)
     {
+        if (!_currentOrg.HasPermission("notices.comment"))
+            return Forbid();
+
         try
         {
             var result = await _commentService.UpdateCommentAsync(commentId, dto, GetUserId());
@@ -175,6 +190,9 @@ public class CommentsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> DeleteComment(Guid commentId)
     {
+        if (!_currentOrg.HasPermission("notices.comment"))
+            return Forbid();
+
         try
         {
             await _commentService.DeleteCommentAsync(commentId, GetUserId());
@@ -200,8 +218,12 @@ public class CommentsController : ControllerBase
     [HttpPost("comments/{commentId:guid}/reactions")]
     [ProducesResponseType(typeof(ReactionResponseDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> AddReaction(Guid commentId, [FromBody] AddReactionDto dto)
     {
+        if (!_currentOrg.HasPermission("notices.comment"))
+            return Forbid();
+
         try
         {
             var result = await _commentService.AddReactionAsync(commentId, dto, GetUserId());
@@ -222,8 +244,12 @@ public class CommentsController : ControllerBase
     /// </summary>
     [HttpDelete("comments/{commentId:guid}/reactions/{emoji}")]
     [ProducesResponseType(typeof(ReactionResponseDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> RemoveReaction(Guid commentId, string emoji)
     {
+        if (!_currentOrg.HasPermission("notices.comment"))
+            return Forbid();
+
         try
         {
             // URL decode the emoji

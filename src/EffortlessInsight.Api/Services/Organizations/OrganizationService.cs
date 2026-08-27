@@ -1545,7 +1545,7 @@ public class OrganizationManagementService : IOrganizationManagementService
         await _dbContext.SaveChangesAsync();
 
         // Generate new tokens with organization context
-        var accessToken = _jwtService.GenerateAccessToken(user, organization);
+        var accessToken = _jwtService.GenerateAccessToken(user, organization, membership.Role, membership.IsExternal);
         var (refreshToken, jti, expiresAt) = _jwtService.GenerateRefreshToken();
 
         // Create session
