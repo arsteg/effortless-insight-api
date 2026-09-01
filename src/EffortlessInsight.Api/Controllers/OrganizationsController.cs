@@ -878,7 +878,9 @@ public class InvitationsController : ControllerBase
         try
         {
             var userId = GetCurrentUserId();
-            var result = await _organizationService.AcceptInvitationAsync(token, userId);
+            var ipAddress = GetClientIpAddress();
+            var userAgent = Request.Headers.UserAgent.ToString();
+            var result = await _organizationService.AcceptInvitationAsync(token, userId, ipAddress, userAgent);
             return Ok(new ApiResponse<AcceptInvitationResponse>(true, result));
         }
         catch (KeyNotFoundException ex) when (ex.Message == "INVALID_INVITATION")
@@ -951,5 +953,16 @@ public class InvitationsController : ControllerBase
             ?? throw new UnauthorizedAccessException("User ID not found in token");
 
         return Guid.Parse(userIdClaim);
+    }
+
+    private string GetClientIpAddress()
+    {
+        var forwardedFor = Request.Headers["X-Forwarded-For"].FirstOrDefault();
+        if (!string.IsNullOrEmpty(forwardedFor))
+        {
+            return forwardedFor.Split(',')[0].Trim();
+        }
+
+        return HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
     }
 }

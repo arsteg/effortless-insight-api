@@ -40,7 +40,7 @@ public interface IOrganizationManagementService
     Task<InvitationListResponse> GetInvitationsAsync(Guid organizationId, Guid userId);
     Task<ResendInvitationResponse> ResendInvitationAsync(Guid organizationId, Guid invitationId, Guid userId);
     Task CancelInvitationAsync(Guid organizationId, Guid invitationId, Guid userId);
-    Task<AcceptInvitationResponse> AcceptInvitationAsync(string token, Guid userId);
+    Task<AcceptInvitationResponse> AcceptInvitationAsync(string token, Guid userId, string ipAddress, string userAgent);
     Task DeclineInvitationAsync(string token, Guid userId);
 
     // Settings
@@ -1286,7 +1286,7 @@ public class OrganizationManagementService : IOrganizationManagementService
         _logger.LogInformation("Invitation {InvitationId} cancelled by user {UserId}", invitationId, userId);
     }
 
-    public async Task<AcceptInvitationResponse> AcceptInvitationAsync(string token, Guid userId)
+    public async Task<AcceptInvitationResponse> AcceptInvitationAsync(string token, Guid userId, string ipAddress, string userAgent)
     {
         var tokenHash = HashToken(token);
 
@@ -1436,13 +1436,41 @@ public class OrganizationManagementService : IOrganizationManagementService
             }
         });
 
+        // Generate new tokens with the organization context (same pattern as SwitchOrganizationAsync)
+        // This ensures the JWT includes the correct org_id and role claims
+        var accessToken = _jwtService.GenerateAccessToken(
+            user,
+            invitation.Organization,
+            membership.Role,
+            membership.IsExternal
+        );
+        var (refreshToken, jti, expiresAt) = _jwtService.GenerateRefreshToken();
+
+        // Create session for the new tokens
+        var session = new UserSession
+        {
+            UserId = user.Id,
+            RefreshTokenHash = HashToken(refreshToken),
+            RefreshTokenJti = jti,
+            IpAddress = ipAddress,
+            UserAgent = userAgent,
+            Platform = "web",
+            ExpiresAt = expiresAt,
+            LastActiveAt = DateTime.UtcNow
+        };
+
+        _dbContext.UserSessions.Add(session);
+        await _dbContext.SaveChangesAsync();
+
         return new AcceptInvitationResponse(
             Message: "Successfully joined organization",
             Organization: new OrganizationBasicDto(
                 invitation.Organization.Id,
                 invitation.Organization.Name,
                 invitation.Role
-            )
+            ),
+            AccessToken: accessToken,
+            RefreshToken: refreshToken
         );
     }
 

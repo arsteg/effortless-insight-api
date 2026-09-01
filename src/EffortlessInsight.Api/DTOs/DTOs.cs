@@ -459,7 +459,9 @@ public record ResendInvitationResponse(
 
 public record AcceptInvitationResponse(
     string Message,
-    OrganizationBasicDto Organization
+    OrganizationBasicDto Organization,
+    string AccessToken,
+    string RefreshToken
 );
 
 public record OrganizationBasicDto(
