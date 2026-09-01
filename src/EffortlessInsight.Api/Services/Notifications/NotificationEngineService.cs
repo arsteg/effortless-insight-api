@@ -1374,16 +1374,16 @@ public class NotificationEngineService : INotificationEngineService
         };
 
         var actionUrl = notification.ActionUrl != null
-            ? $"https://app.effortlessinsight.com{notification.ActionUrl}"
-            : "https://app.effortlessinsight.com";
+            ? $"https://effortlessinsight.in{notification.ActionUrl}"
+            : "https://effortlessinsight.in";
 
         // If the one-click unsubscribe token cannot be generated (secret not
         // configured), fall back to the preferences page so the email footer
         // stays valid instead of the whole email build throwing (audit BE-30).
         var unsubscribeToken = GenerateUnsubscribeToken(user.Id);
         var unsubscribeUrl = unsubscribeToken != null
-            ? $"https://app.effortlessinsight.com/unsubscribe?token={unsubscribeToken}"
-            : "https://app.effortlessinsight.com/settings/notifications";
+            ? $"https://effortlessinsight.in/unsubscribe?token={unsubscribeToken}"
+            : "https://effortlessinsight.in/settings/notifications";
 
         return $@"
 <!DOCTYPE html>
@@ -1413,7 +1413,7 @@ public class NotificationEngineService : INotificationEngineService
     <div style=""padding: 16px; text-align: center; color: #6B7280; font-size: 12px; border-top: 1px solid #e5e7eb;"">
       <p>You're receiving this because you have notifications enabled.</p>
       <p>
-        <a href=""https://app.effortlessinsight.com/settings/notifications"" style=""color: #1e40af;"">Manage Preferences</a> |
+        <a href=""https://effortlessinsight.in/settings/notifications"" style=""color: #1e40af;"">Manage Preferences</a> |
         <a href=""{unsubscribeUrl}"" style=""color: #1e40af;"">Unsubscribe</a>
       </p>
       <p>© {DateTime.UtcNow.Year} EffortlessInsight. All rights reserved.</p>

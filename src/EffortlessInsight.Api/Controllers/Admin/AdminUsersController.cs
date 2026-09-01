@@ -409,7 +409,7 @@ public class AdminUsersController : AdminControllerBase
             CurrentSessionId);
 
         // Build impersonation URL
-        var baseUrl = "https://app.effortlessinsight.com"; // From config in real impl
+        var baseUrl = "https://effortlessinsight.in"; // From config in real impl
         var impersonationUrl = $"{baseUrl}/impersonate?token={token}";
 
         return Success(new ImpersonationResponse

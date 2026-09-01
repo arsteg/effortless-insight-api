@@ -400,7 +400,7 @@ public static class TemplateRenderExtensions
         // Add common computed values
         model["currentDate"] = DateTime.UtcNow.ToString("dd MMM yyyy");
         model["currentYear"] = DateTime.UtcNow.Year;
-        model["appUrl"] = "https://app.effortlessinsight.com";
+        model["appUrl"] = "https://effortlessinsight.in";
 
         return model;
     }

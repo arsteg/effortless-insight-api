@@ -883,7 +883,7 @@ public class FirebasePushService : IPushChannelService
     private static WebpushConfig? BuildWebpushConfig(PushNotificationMessage message)
     {
         var link = message.ActionUrl != null
-            ? $"https://app.effortlessinsight.com{message.ActionUrl}"
+            ? $"https://effortlessinsight.in{message.ActionUrl}"
             : null;
 
         return new WebpushConfig
