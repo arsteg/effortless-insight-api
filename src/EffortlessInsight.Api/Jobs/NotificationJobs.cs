@@ -653,7 +653,7 @@ public class NotificationJobs
 
     <!-- CTA -->
     <div style=""padding: 24px 32px; text-align: center; border-top: 1px solid #E5E7EB;"">
-      <a href=""https://app.effortlessinsight.com/dashboard"" style=""background: #1e40af; color: white; padding: 14px 32px; text-decoration: none; border-radius: 8px; display: inline-block; font-weight: 600; font-size: 15px;"">
+      <a href=""https://effortlessinsight.in/dashboard"" style=""background: #1e40af; color: white; padding: 14px 32px; text-decoration: none; border-radius: 8px; display: inline-block; font-weight: 600; font-size: 15px;"">
         View Dashboard
       </a>
     </div>
@@ -661,9 +661,9 @@ public class NotificationJobs
     <!-- Footer -->
     <div style=""padding: 24px 32px; text-align: center; color: #6B7280; font-size: 12px; background: #F9FAFB;"">
       <p style=""margin: 0;"">
-        <a href=""https://app.effortlessinsight.com/settings/notifications"" style=""color: #1e40af; text-decoration: none;"">Manage Preferences</a>
+        <a href=""https://effortlessinsight.in/settings/notifications"" style=""color: #1e40af; text-decoration: none;"">Manage Preferences</a>
         &nbsp;|&nbsp;
-        <a href=""https://app.effortlessinsight.com/unsubscribe"" style=""color: #1e40af; text-decoration: none;"">Unsubscribe</a>
+        <a href=""https://effortlessinsight.in/unsubscribe"" style=""color: #1e40af; text-decoration: none;"">Unsubscribe</a>
       </p>
       <p style=""margin: 12px 0 0 0;"">&copy; {DateTime.UtcNow.Year} EffortlessInsight. All rights reserved.</p>
     </div>
@@ -971,7 +971,7 @@ public class NotificationJobs
       </div>" : "")}
 
       <div style=""text-align: center; margin: 24px 0;"">
-        <a href=""https://app.effortlessinsight.com/notifications"" style=""background: #1e40af; color: white; padding: 12px 32px; text-decoration: none; border-radius: 6px; display: inline-block; font-weight: bold;"">
+        <a href=""https://effortlessinsight.in/notifications"" style=""background: #1e40af; color: white; padding: 12px 32px; text-decoration: none; border-radius: 6px; display: inline-block; font-weight: bold;"">
           View All Notifications
         </a>
       </div>
@@ -979,8 +979,8 @@ public class NotificationJobs
 
     <div style=""padding: 16px; text-align: center; color: #6b7280; font-size: 12px; border-top: 1px solid #e5e7eb;"">
       <p>
-        <a href=""https://app.effortlessinsight.com/settings/notifications"" style=""color: #1e40af;"">Manage Digest Settings</a> |
-        <a href=""https://app.effortlessinsight.com/unsubscribe"" style=""color: #1e40af;"">Unsubscribe</a>
+        <a href=""https://effortlessinsight.in/settings/notifications"" style=""color: #1e40af;"">Manage Digest Settings</a> |
+        <a href=""https://effortlessinsight.in/unsubscribe"" style=""color: #1e40af;"">Unsubscribe</a>
       </p>
       <p>© {DateTime.UtcNow.Year} EffortlessInsight. All rights reserved.</p>
     </div>
