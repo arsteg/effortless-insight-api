@@ -32,7 +32,7 @@ public class AIAuditLog : BaseEntity
     /// <summary>
     /// Version of the prompt template used.
     /// </summary>
-    [MaxLength(20)]
+    [MaxLength(50)]
     public string? PromptVersion { get; set; }
 
     /// <summary>
