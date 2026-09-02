@@ -380,6 +380,17 @@ public interface INoticeServiceExtended : INoticeService
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Rejects a response, returning it to draft status.
+    /// </summary>
+    Task<NoticeResponse> RejectResponseAsync(
+        Guid responseId,
+        Guid noticeId,
+        Guid organizationId,
+        Guid userId,
+        string? reason = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Marks a response as submitted to the authority.
     /// </summary>
     Task<NoticeResponse> MarkAsSubmittedAsync(
@@ -2445,6 +2456,63 @@ public class NoticeServiceImpl : INoticeServiceExtended
         _logger.LogInformation(
             "Response {ResponseId} approved by user {UserId}",
             responseId, userId);
+
+        return response;
+    }
+
+    /// <inheritdoc />
+    public async Task<NoticeResponse> RejectResponseAsync(
+        Guid responseId,
+        Guid noticeId,
+        Guid organizationId,
+        Guid userId,
+        string? reason = null,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await _db.NoticeResponses
+            .Include(r => r.Notice)
+            .FirstOrDefaultAsync(r =>
+                r.Id == responseId &&
+                r.NoticeId == noticeId &&
+                r.Notice!.OrganizationId == organizationId &&
+                r.DeletedAt == null,
+                cancellationToken)
+            ?? throw new InvalidOperationException("Response not found");
+
+        if (response.Status != "review")
+        {
+            throw new InvalidOperationException($"Cannot reject response in status '{response.Status}'");
+        }
+
+        var oldStatus = response.Status;
+        response.Status = "draft";
+        response.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(cancellationToken);
+
+        // Audit log
+        var newValues = new Dictionary<string, object> { ["status"] = "draft", ["rejected_by"] = userId };
+        if (!string.IsNullOrWhiteSpace(reason))
+        {
+            newValues["rejection_reason"] = reason;
+        }
+
+        await _auditService.LogAsync(new AuditLogEntry
+        {
+            Action = "response.rejected",
+            EntityType = "NoticeResponse",
+            EntityId = responseId,
+            UserId = userId,
+            OrganizationId = organizationId,
+            OldValues = new Dictionary<string, object> { ["status"] = oldStatus },
+            NewValues = newValues
+        });
+
+        await _db.Entry(response).Reference(r => r.CreatedBy).LoadAsync(cancellationToken);
+        await _db.Entry(response).Reference(r => r.ApprovedBy).LoadAsync(cancellationToken);
+
+        _logger.LogInformation(
+            "Response {ResponseId} rejected by user {UserId}. Reason: {Reason}",
+            responseId, userId, reason ?? "No reason provided");
 
         return response;
     }

@@ -1030,6 +1030,53 @@ public class NoticesController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Export notice summary as PDF including all details and AI analysis
+    /// </summary>
+    [HttpGet("{noticeId:guid}/export-summary")]
+    [ProducesResponseType(typeof(FileResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ExportSummary(Guid noticeId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (!_currentOrg.HasPermission("notices.view"))
+            {
+                return Forbid();
+            }
+
+            var orgId = GetCurrentOrganizationId();
+            var notice = await _noticeService.GetByIdAsync(noticeId, orgId, cancellationToken);
+
+            if (notice == null)
+            {
+                return NotFound(new ApiErrorResponse(false, "NOT_FOUND", "Notice not found"));
+            }
+
+            var detailDto = MapToDetailDto(notice);
+            var generator = new Services.Reporting.NoticeSummaryPdfGenerator();
+            var pdfBytes = generator.Generate(detailDto);
+
+            var sanitizedNoticeNumber = SanitizeFileName(notice.NoticeNumber ?? notice.Id.ToString()[..8]);
+            var fileName = $"notice-{sanitizedNoticeNumber}-summary.pdf";
+
+            return File(pdfBytes, "application/pdf", fileName);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to export summary for notice {NoticeId}", noticeId);
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
+        }
+    }
+
+    private static string SanitizeFileName(string fileName)
+    {
+        var invalidChars = Path.GetInvalidFileNameChars();
+        var sanitized = string.Join("_", fileName.Split(invalidChars, StringSplitOptions.RemoveEmptyEntries));
+        return sanitized.Length > 50 ? sanitized[..50] : sanitized;
+    }
+
     #endregion
 
     #region AI Processing
@@ -1394,6 +1441,52 @@ public class NoticesController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to approve response {ResponseId}", responseId);
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
+        }
+    }
+
+    /// <summary>
+    /// Reject a response, returning it to draft status
+    /// </summary>
+    [HttpPost("{noticeId:guid}/responses/{responseId:guid}/reject")]
+    [ProducesResponseType(typeof(ApiResponse<NoticeResponseDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> RejectResponse(
+        Guid noticeId,
+        Guid responseId,
+        [FromBody] RejectResponseRequest? request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var orgId = GetCurrentOrganizationId();
+            var userId = GetCurrentUserId();
+
+            // Only admin/manager can reject (same as approve)
+            if (!_currentOrg.HasPermission("notices.approve"))
+            {
+                return Forbid();
+            }
+
+            var response = await _noticeService.RejectResponseAsync(
+                responseId, noticeId, orgId, userId,
+                request?.Reason, cancellationToken);
+
+            return Ok(new ApiResponse<NoticeResponseDto>(true, MapResponseToDto(response)));
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("not found"))
+        {
+            return NotFound(new ApiErrorResponse(false, "NOT_FOUND", ex.Message));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new ApiErrorResponse(false, "INVALID_OPERATION", ex.Message));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to reject response {ResponseId}", responseId);
             return StatusCode(StatusCodes.Status500InternalServerError,
                 new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
         }
@@ -2522,6 +2615,9 @@ public record SaveDraftRequest(string DraftContent);
 public record MarkSubmittedRequest(
     string? SubmissionReference = null,
     string? SubmissionProofUrl = null);
+
+public record RejectResponseRequest(
+    string? Reason = null);
 
 public record ReminderDto(
     Guid Id,
