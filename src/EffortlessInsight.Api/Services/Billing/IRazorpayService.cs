@@ -38,6 +38,49 @@ public interface IRazorpayService
     Task CancelSubscriptionAsync(string subscriptionId, bool cancelAtCycleEnd = true);
 
     /// <summary>
+    /// Reactivates a Razorpay subscription that was scheduled for cancellation.
+    /// This undoes a cancel_at_cycle_end cancellation by clearing the end_at timestamp.
+    /// </summary>
+    /// <param name="subscriptionId">The Razorpay subscription ID to reactivate.</param>
+    /// <returns>True if reactivation was successful.</returns>
+    Task<bool> ReactivateSubscriptionAsync(string subscriptionId);
+
+    /// <summary>
+    /// Updates the plan of an existing Razorpay subscription.
+    /// The change takes effect on the next billing cycle.
+    /// </summary>
+    /// <param name="subscriptionId">The Razorpay subscription ID to update.</param>
+    /// <param name="newRazorpayPlanId">The new Razorpay Plan ID to switch to.</param>
+    /// <returns>True if the update was successful.</returns>
+    Task<bool> UpdateSubscriptionPlanAsync(string subscriptionId, string newRazorpayPlanId);
+
+    /// <summary>
+    /// Creates a Razorpay subscription with trial period support.
+    /// Uses the start_at parameter to delay the first charge until trial ends.
+    /// </summary>
+    Task<RazorpaySubscriptionResult> CreateSubscriptionWithTrialAsync(CreateRazorpaySubscriptionWithTrialRequest request);
+
+    /// <summary>
+    /// Gets the current status of a Razorpay subscription.
+    /// </summary>
+    Task<RazorpaySubscriptionStatus> GetSubscriptionStatusAsync(string subscriptionId);
+
+    /// <summary>
+    /// Pauses a Razorpay subscription.
+    /// </summary>
+    Task PauseSubscriptionAsync(string subscriptionId);
+
+    /// <summary>
+    /// Resumes a paused Razorpay subscription.
+    /// </summary>
+    Task ResumeSubscriptionAsync(string subscriptionId);
+
+    /// <summary>
+    /// Verifies subscription signature from Razorpay checkout.
+    /// </summary>
+    bool VerifySubscriptionSignature(string subscriptionId, string paymentId, string signature);
+
+    /// <summary>
     /// Creates or gets a Razorpay customer.
     /// </summary>
     Task<RazorpayCustomerResult> CreateOrGetCustomerAsync(string name, string email, string? phone);
@@ -67,6 +110,16 @@ public interface IRazorpayService
     /// Gets order details including notes.
     /// </summary>
     Task<OrderDetails> GetOrderAsync(string orderId);
+
+    /// <summary>
+    /// Updates the start_at time of a Razorpay subscription to activate it immediately.
+    /// Used when converting a trial subscription to paid - changes the pending subscription
+    /// to start billing immediately instead of waiting for the trial period to end.
+    /// </summary>
+    /// <param name="subscriptionId">The Razorpay subscription ID.</param>
+    /// <param name="startAtTimestamp">Unix timestamp for when billing should start (typically now).</param>
+    /// <returns>True if update was successful.</returns>
+    Task<bool> UpdateSubscriptionStartAtAsync(string subscriptionId, long startAtTimestamp);
 }
 
 /// <summary>
@@ -281,4 +334,121 @@ public record RecurringPaymentResult
     /// Payment method used (card, upi, etc.).
     /// </summary>
     public string? Method { get; init; }
+}
+
+/// <summary>
+/// Request for creating a Razorpay subscription with trial period support.
+/// </summary>
+public record CreateRazorpaySubscriptionWithTrialRequest
+{
+    /// <summary>
+    /// Razorpay Plan ID (from Razorpay Dashboard).
+    /// </summary>
+    public string RazorpayPlanId { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Razorpay Customer ID.
+    /// </summary>
+    public string RazorpayCustomerId { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Organization ID for tracking.
+    /// </summary>
+    public Guid OrganizationId { get; init; }
+
+    /// <summary>
+    /// Billing cycle (monthly/annually).
+    /// </summary>
+    public string BillingCycle { get; init; } = "monthly";
+
+    /// <summary>
+    /// Quantity (for seat-based pricing).
+    /// </summary>
+    public int Quantity { get; init; } = 1;
+
+    /// <summary>
+    /// Trial period in days. If > 0, the first charge is delayed by this many days.
+    /// </summary>
+    public int TrialDays { get; init; }
+
+    /// <summary>
+    /// Whether to notify the customer about subscription events.
+    /// </summary>
+    public bool NotifyCustomer { get; init; } = true;
+
+    /// <summary>
+    /// Callback URL for mandate/authentication completion.
+    /// </summary>
+    public string? CallbackUrl { get; init; }
+
+    /// <summary>
+    /// Additional notes/metadata.
+    /// </summary>
+    public Dictionary<string, string>? Notes { get; init; }
+}
+
+/// <summary>
+/// Status of a Razorpay subscription.
+/// </summary>
+public record RazorpaySubscriptionStatus
+{
+    /// <summary>
+    /// Razorpay subscription ID.
+    /// </summary>
+    public string SubscriptionId { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Current status: created, authenticated, active, pending, halted, cancelled, completed, expired, paused.
+    /// </summary>
+    public string Status { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Razorpay Plan ID.
+    /// </summary>
+    public string PlanId { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Current billing period start (Unix timestamp).
+    /// </summary>
+    public long? CurrentStart { get; init; }
+
+    /// <summary>
+    /// Current billing period end (Unix timestamp).
+    /// </summary>
+    public long? CurrentEnd { get; init; }
+
+    /// <summary>
+    /// Number of billing cycles completed.
+    /// </summary>
+    public int? PaidCount { get; init; }
+
+    /// <summary>
+    /// Total billing cycles remaining.
+    /// </summary>
+    public int? RemainingCount { get; init; }
+
+    /// <summary>
+    /// Whether the subscription has an active mandate/token.
+    /// </summary>
+    public bool HasPaymentMethod { get; init; }
+
+    /// <summary>
+    /// The short URL for customer to complete mandate authentication.
+    /// </summary>
+    public string? ShortUrl { get; init; }
+
+    /// <summary>
+    /// Unix timestamp of when the subscription will end.
+    /// </summary>
+    public long? EndAt { get; init; }
+
+    /// <summary>
+    /// Unix timestamp of when the next charge will occur.
+    /// </summary>
+    public long? ChargeAt { get; init; }
+
+    /// <summary>
+    /// Whether this subscription is paused.
+    /// </summary>
+    public bool IsPaused { get; init; }
 }

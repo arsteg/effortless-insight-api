@@ -24,6 +24,7 @@ public class WebhooksController : ControllerBase
     private readonly IRazorpayService _razorpayService;
     private readonly ISubscriptionService _subscriptionService;
     private readonly IInvoiceService _invoiceService;
+    private readonly IPaymentMethodService _paymentMethodService;
     private readonly IDeliveryTrackingService _deliveryTracking;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly EmailOptions _emailOptions;
@@ -34,6 +35,7 @@ public class WebhooksController : ControllerBase
         IRazorpayService razorpayService,
         ISubscriptionService subscriptionService,
         IInvoiceService invoiceService,
+        IPaymentMethodService paymentMethodService,
         IDeliveryTrackingService deliveryTracking,
         IHttpClientFactory httpClientFactory,
         IOptions<EmailOptions> emailOptions,
@@ -43,6 +45,7 @@ public class WebhooksController : ControllerBase
         _razorpayService = razorpayService;
         _subscriptionService = subscriptionService;
         _invoiceService = invoiceService;
+        _paymentMethodService = paymentMethodService;
         _deliveryTracking = deliveryTracking;
         _httpClientFactory = httpClientFactory;
         _emailOptions = emailOptions.Value;
@@ -199,6 +202,38 @@ public class WebhooksController : ControllerBase
 
             case "refund.created":
                 await HandleRefundCreatedAsync(payload);
+                break;
+
+            case "token.cancelled":
+                await HandleTokenCancelledAsync(payload);
+                break;
+
+            case "subscription.pending":
+                await HandleSubscriptionPendingAsync(payload);
+                break;
+
+            case "subscription.paused":
+                await HandleSubscriptionPausedAsync(payload);
+                break;
+
+            case "subscription.authenticated":
+                await HandleSubscriptionAuthenticatedAsync(payload);
+                break;
+
+            case "subscription.completed":
+                await HandleSubscriptionCompletedAsync(payload);
+                break;
+
+            case "subscription.updated":
+                await HandleSubscriptionUpdatedAsync(payload);
+                break;
+
+            case "invoice.paid":
+                await HandleInvoicePaidAsync(payload);
+                break;
+
+            case "invoice.expired":
+                await HandleInvoiceExpiredAsync(payload);
                 break;
 
             default:
@@ -397,6 +432,344 @@ public class WebhooksController : ControllerBase
 
             await _dbContext.SaveChangesAsync();
         }
+    }
+
+    private async Task HandleTokenCancelledAsync(RazorpayWebhookPayload payload)
+    {
+        var tokenEntity = payload.Payload?.Token?.Entity;
+        if (tokenEntity == null) return;
+
+        var tokenId = tokenEntity.Id;
+        var reason = tokenEntity.Reason ?? "Mandate cancelled by customer or bank";
+
+        _logger.LogWarning(
+            "Token/mandate cancelled: {TokenId}, Reason: {Reason}",
+            tokenId, reason);
+
+        // Deactivate the associated payment method
+        var deactivated = await _paymentMethodService.DeactivateByMandateCancelledAsync(
+            tokenId!,
+            reason);
+
+        if (deactivated)
+        {
+            _logger.LogInformation(
+                "Payment method deactivated due to token cancellation: {TokenId}",
+                tokenId);
+        }
+        else
+        {
+            _logger.LogWarning(
+                "No payment method found to deactivate for cancelled token: {TokenId}",
+                tokenId);
+        }
+    }
+
+    private async Task HandleSubscriptionPendingAsync(RazorpayWebhookPayload payload)
+    {
+        var subscriptionEntity = payload.Payload?.Subscription?.Entity;
+        if (subscriptionEntity == null) return;
+
+        var razorpaySubId = subscriptionEntity.Id;
+
+        _logger.LogInformation(
+            "Subscription pending authentication: {SubscriptionId}",
+            razorpaySubId);
+
+        var subscription = await _subscriptionService.GetByRazorpayIdAsync(razorpaySubId!);
+        if (subscription != null)
+        {
+            // Subscription is waiting for customer to complete mandate authentication
+            // This typically happens for UPI AutoPay when user needs to approve from their app
+            subscription.Metadata ??= new Dictionary<string, object>();
+            subscription.Metadata["pendingSince"] = DateTime.UtcNow.ToString("O");
+            subscription.Metadata["awaitingMandateAuth"] = true;
+
+            await _dbContext.SaveChangesAsync();
+
+            _logger.LogInformation(
+                "Updated subscription {SubscriptionId} to pending state - awaiting mandate authentication",
+                subscription.Id);
+        }
+    }
+
+    private async Task HandleSubscriptionPausedAsync(RazorpayWebhookPayload payload)
+    {
+        var subscriptionEntity = payload.Payload?.Subscription?.Entity;
+        if (subscriptionEntity == null) return;
+
+        var razorpaySubId = subscriptionEntity.Id;
+
+        _logger.LogInformation("Subscription paused: {SubscriptionId}", razorpaySubId);
+
+        var subscription = await _subscriptionService.GetByRazorpayIdAsync(razorpaySubId!);
+        if (subscription != null)
+        {
+            subscription.Status = SubscriptionStatus.Paused;
+            subscription.Metadata ??= new Dictionary<string, object>();
+            subscription.Metadata["pausedAt"] = DateTime.UtcNow.ToString("O");
+            subscription.Metadata["pausedByRazorpay"] = true;
+
+            await _dbContext.SaveChangesAsync();
+
+            _logger.LogInformation(
+                "Updated subscription {SubscriptionId} to paused state",
+                subscription.Id);
+        }
+    }
+
+    private async Task HandleSubscriptionAuthenticatedAsync(RazorpayWebhookPayload payload)
+    {
+        var subscriptionEntity = payload.Payload?.Subscription?.Entity;
+        if (subscriptionEntity == null) return;
+
+        var razorpaySubId = subscriptionEntity.Id;
+
+        _logger.LogInformation(
+            "Subscription mandate authenticated: {RazorpaySubscriptionId}",
+            razorpaySubId);
+
+        var subscription = await _subscriptionService.GetByRazorpayIdAsync(razorpaySubId!);
+        if (subscription != null)
+        {
+            // Update metadata to indicate mandate is authenticated
+            // But DO NOT change status from trialing to active
+            // The subscription remains in trial until the first charge happens
+            subscription.Metadata ??= new Dictionary<string, object>();
+            subscription.Metadata["mandateAuthenticated"] = true;
+            subscription.Metadata["authenticatedAt"] = DateTime.UtcNow.ToString("O");
+            subscription.Metadata["razorpayStatus"] = "authenticated";
+
+            await _dbContext.SaveChangesAsync();
+
+            _logger.LogInformation(
+                "Mandate authenticated for subscription {SubscriptionId}, status remains: {Status}",
+                subscription.Id, subscription.Status);
+        }
+        else
+        {
+            _logger.LogWarning(
+                "No local subscription found for Razorpay subscription {RazorpaySubscriptionId}",
+                razorpaySubId);
+        }
+    }
+
+    private async Task HandleSubscriptionCompletedAsync(RazorpayWebhookPayload payload)
+    {
+        var subscriptionEntity = payload.Payload?.Subscription?.Entity;
+        if (subscriptionEntity == null) return;
+
+        var razorpaySubId = subscriptionEntity.Id;
+
+        _logger.LogInformation(
+            "Subscription completed all billing cycles: {RazorpaySubscriptionId}",
+            razorpaySubId);
+
+        var subscription = await _subscriptionService.GetByRazorpayIdAsync(razorpaySubId!);
+        if (subscription != null)
+        {
+            subscription.Status = SubscriptionStatus.Completed;
+            subscription.EndedAt = DateTime.UtcNow;
+            subscription.Metadata ??= new Dictionary<string, object>();
+            subscription.Metadata["completedAt"] = DateTime.UtcNow.ToString("O");
+            subscription.Metadata["totalCyclesCompleted"] = subscriptionEntity.PaidCount;
+
+            // Update organization subscription status
+            var org = await _dbContext.Organizations.FindAsync(subscription.OrganizationId);
+            if (org != null)
+            {
+                org.SubscriptionStatus = "completed";
+            }
+
+            await _dbContext.SaveChangesAsync();
+
+            _logger.LogInformation(
+                "Subscription {SubscriptionId} marked as completed after {PaidCount} billing cycles",
+                subscription.Id, subscriptionEntity.PaidCount);
+        }
+        else
+        {
+            _logger.LogWarning(
+                "No local subscription found for completed Razorpay subscription {RazorpaySubscriptionId}",
+                razorpaySubId);
+        }
+    }
+
+    private async Task HandleSubscriptionUpdatedAsync(RazorpayWebhookPayload payload)
+    {
+        var subscriptionEntity = payload.Payload?.Subscription?.Entity;
+        if (subscriptionEntity == null) return;
+
+        var razorpaySubId = subscriptionEntity.Id;
+
+        _logger.LogInformation(
+            "Subscription updated: {RazorpaySubscriptionId}",
+            razorpaySubId);
+
+        var subscription = await _subscriptionService.GetByRazorpayIdAsync(razorpaySubId!);
+        if (subscription != null)
+        {
+            var changes = new List<string>();
+
+            // Sync plan if changed - find local plan by Razorpay plan ID
+            if (!string.IsNullOrEmpty(subscriptionEntity.PlanId))
+            {
+                var newPlan = await _dbContext.SubscriptionPlans
+                    .FirstOrDefaultAsync(p =>
+                        p.RazorpayPlanIdMonthly == subscriptionEntity.PlanId ||
+                        p.RazorpayPlanIdAnnually == subscriptionEntity.PlanId);
+
+                if (newPlan != null && subscription.PlanId != newPlan.Id)
+                {
+                    changes.Add($"plan: {subscription.PlanCode} -> {newPlan.Code}");
+                    subscription.PlanId = newPlan.Id;
+                    subscription.PlanCode = newPlan.Code;
+
+                    // Update billing cycle based on which Razorpay plan ID matched
+                    if (newPlan.RazorpayPlanIdAnnually == subscriptionEntity.PlanId)
+                    {
+                        subscription.BillingCycle = BillingCycle.Annually;
+                    }
+                    else
+                    {
+                        subscription.BillingCycle = BillingCycle.Monthly;
+                    }
+                }
+            }
+
+            // Sync status if changed
+            var mappedStatus = MapRazorpayStatus(subscriptionEntity.Status);
+            if (!string.IsNullOrEmpty(mappedStatus) && subscription.Status != mappedStatus)
+            {
+                changes.Add($"status: {subscription.Status} -> {mappedStatus}");
+                subscription.Status = mappedStatus;
+            }
+
+            subscription.Metadata ??= new Dictionary<string, object>();
+            subscription.Metadata["lastSyncedAt"] = DateTime.UtcNow.ToString("O");
+
+            if (changes.Count > 0)
+            {
+                subscription.Metadata["lastChanges"] = string.Join(", ", changes);
+                await _dbContext.SaveChangesAsync();
+
+                _logger.LogInformation(
+                    "Subscription {SubscriptionId} synced with Razorpay. Changes: {Changes}",
+                    subscription.Id, string.Join(", ", changes));
+            }
+            else
+            {
+                _logger.LogInformation(
+                    "Subscription {SubscriptionId} already in sync with Razorpay",
+                    subscription.Id);
+            }
+        }
+        else
+        {
+            _logger.LogWarning(
+                "No local subscription found for updated Razorpay subscription {RazorpaySubscriptionId}",
+                razorpaySubId);
+        }
+    }
+
+    private async Task HandleInvoicePaidAsync(RazorpayWebhookPayload payload)
+    {
+        var invoiceEntity = payload.Payload?.Invoice?.Entity;
+        if (invoiceEntity == null) return;
+
+        var invoiceId = invoiceEntity.Id;
+        var subscriptionId = invoiceEntity.Notes?.GetValueOrDefault("subscription_id")?.ToString();
+
+        _logger.LogInformation(
+            "Invoice paid: {InvoiceId}, Amount: {Amount} paise",
+            invoiceId, invoiceEntity.Amount);
+
+        // This event can serve as a backup confirmation for subscription.charged
+        // Check if we have a subscription linked to this invoice
+        if (!string.IsNullOrEmpty(subscriptionId))
+        {
+            var subscription = await _subscriptionService.GetByRazorpayIdAsync(subscriptionId);
+            if (subscription != null)
+            {
+                // Ensure subscription is active (in case subscription.charged was missed)
+                if (subscription.Status == SubscriptionStatus.PastDue ||
+                    subscription.Status == SubscriptionStatus.Paused)
+                {
+                    _logger.LogInformation(
+                        "Reactivating subscription {SubscriptionId} based on invoice.paid event",
+                        subscription.Id);
+
+                    subscription.Status = SubscriptionStatus.Active;
+                    subscription.Metadata ??= new Dictionary<string, object>();
+                    subscription.Metadata["reactivatedViaInvoice"] = invoiceId;
+                    subscription.Metadata["reactivatedAt"] = DateTime.UtcNow.ToString("O");
+
+                    await _dbContext.SaveChangesAsync();
+                }
+            }
+        }
+    }
+
+    private async Task HandleInvoiceExpiredAsync(RazorpayWebhookPayload payload)
+    {
+        var invoiceEntity = payload.Payload?.Invoice?.Entity;
+        if (invoiceEntity == null) return;
+
+        var invoiceId = invoiceEntity.Id;
+        var subscriptionId = invoiceEntity.Notes?.GetValueOrDefault("subscription_id")?.ToString();
+
+        _logger.LogWarning(
+            "Invoice expired without payment: {InvoiceId}, Amount: {Amount} paise",
+            invoiceId, invoiceEntity.Amount);
+
+        // Find associated subscription and update status
+        if (!string.IsNullOrEmpty(subscriptionId))
+        {
+            var subscription = await _subscriptionService.GetByRazorpayIdAsync(subscriptionId);
+            if (subscription != null)
+            {
+                // Mark as past due if not already cancelled
+                if (subscription.Status != SubscriptionStatus.Cancelled &&
+                    subscription.Status != SubscriptionStatus.Expired)
+                {
+                    subscription.Status = SubscriptionStatus.PastDue;
+                    subscription.Metadata ??= new Dictionary<string, object>();
+                    subscription.Metadata["expiredInvoiceId"] = invoiceId;
+                    subscription.Metadata["invoiceExpiredAt"] = DateTime.UtcNow.ToString("O");
+
+                    var org = await _dbContext.Organizations.FindAsync(subscription.OrganizationId);
+                    if (org != null)
+                    {
+                        org.SubscriptionStatus = "past_due";
+                    }
+
+                    await _dbContext.SaveChangesAsync();
+
+                    _logger.LogWarning(
+                        "Subscription {SubscriptionId} marked as past_due due to expired invoice {InvoiceId}",
+                        subscription.Id, invoiceId);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Maps Razorpay subscription status to local status.
+    /// </summary>
+    private static string? MapRazorpayStatus(string? razorpayStatus)
+    {
+        return razorpayStatus?.ToLowerInvariant() switch
+        {
+            "created" => SubscriptionStatus.Trialing,
+            "authenticated" => SubscriptionStatus.Trialing,
+            "active" => SubscriptionStatus.Active,
+            "paused" => SubscriptionStatus.Paused,
+            "halted" => SubscriptionStatus.PastDue,
+            "cancelled" => SubscriptionStatus.Cancelled,
+            "completed" => SubscriptionStatus.Completed,
+            "expired" => SubscriptionStatus.Expired,
+            _ => null
+        };
     }
 
     /// <summary>

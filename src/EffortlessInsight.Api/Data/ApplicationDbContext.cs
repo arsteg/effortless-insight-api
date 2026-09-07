@@ -132,6 +132,7 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
     public DbSet<PromptVersion> PromptVersions => Set<PromptVersion>();
     public DbSet<AdminSession> AdminSessions => Set<AdminSession>();
     public DbSet<AdminPasswordHistory> AdminPasswordHistory => Set<AdminPasswordHistory>();
+    public DbSet<SystemSetting> SystemSettings => Set<SystemSetting>();
 
     // Custom Roles and Teams
     public DbSet<CustomRole> CustomRoles => Set<CustomRole>();

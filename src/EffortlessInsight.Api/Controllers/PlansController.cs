@@ -1,4 +1,6 @@
+using EffortlessInsight.Api.Data.Entities.Admin;
 using EffortlessInsight.Api.DTOs;
+using EffortlessInsight.Api.Services.Admin;
 using EffortlessInsight.Api.Services.Billing;
 using Microsoft.AspNetCore.Mvc;
 
@@ -12,13 +14,16 @@ namespace EffortlessInsight.Api.Controllers;
 public class PlansController : ControllerBase
 {
     private readonly IPlanService _planService;
+    private readonly ISystemSettingsService _settingsService;
     private readonly ILogger<PlansController> _logger;
 
     public PlansController(
         IPlanService planService,
+        ISystemSettingsService settingsService,
         ILogger<PlansController> logger)
     {
         _planService = planService;
+        _settingsService = settingsService;
         _logger = logger;
     }
 
@@ -27,6 +32,7 @@ public class PlansController : ControllerBase
     /// </summary>
     /// <remarks>
     /// Returns all active plans with pricing, limits, and features.
+    /// Also includes global billing settings (e.g., whether additional seats are enabled).
     /// This endpoint is public and does not require authentication.
     /// </remarks>
     [HttpGet]
@@ -34,7 +40,23 @@ public class PlansController : ControllerBase
     public async Task<IActionResult> GetPlans()
     {
         var plans = await _planService.GetAllPlansAsync();
-        return Ok(new ApiResponse<PlansListResponse>(true, plans));
+
+        // Include global billing settings
+        var additionalSeatsEnabled = await _settingsService.GetBoolSettingAsync(
+            SystemSettingKeys.AdditionalSeatsEnabled, defaultValue: true);
+        var downgradesAllowed = await _settingsService.GetBoolSettingAsync(
+            SystemSettingKeys.DowngradesAllowed, defaultValue: false);
+
+        var response = new PlansListResponse(
+            Plans: plans.Plans,
+            AddOns: plans.AddOns,
+            GlobalSettings: new GlobalBillingSettingsDto(
+                AdditionalSeatsEnabled: additionalSeatsEnabled,
+                DowngradesAllowed: downgradesAllowed
+            )
+        );
+
+        return Ok(new ApiResponse<PlansListResponse>(true, response));
     }
 
     /// <summary>

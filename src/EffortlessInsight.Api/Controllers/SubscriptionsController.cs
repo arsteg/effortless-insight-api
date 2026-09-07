@@ -176,6 +176,34 @@ public class SubscriptionsController : ControllerBase
     }
 
     /// <summary>
+    /// Verify subscription payment and activate subscription (for Razorpay Subscription API flow).
+    /// Used for true auto-recurring billing with mandate/token registration.
+    /// </summary>
+    [HttpPost("verify-subscription")]
+    [ProducesResponseType(typeof(ApiResponse<VerifyPaymentResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> VerifySubscriptionPayment([FromBody] VerifySubscriptionPaymentRequest request)
+    {
+        try
+        {
+            var orgId = _currentOrganization.OrganizationId;
+            var userId = GetCurrentUserId();
+
+            if (orgId == null)
+            {
+                return BadRequest(new ApiErrorResponse(false, "NO_ORG", "No organization selected"));
+            }
+
+            var result = await _subscriptionService.VerifySubscriptionPaymentAsync(orgId.Value, userId, request);
+            return Ok(new ApiResponse<VerifyPaymentResponse>(true, result));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new ApiErrorResponse(false, "VERIFY_FAILED", ex.Message));
+        }
+    }
+
+    /// <summary>
     /// Validate a plan change before executing it.
     /// Returns validation result with any blockers that would prevent the change.
     /// </summary>
@@ -391,6 +419,7 @@ public class SubscriptionsController : ControllerBase
     [HttpPost("current/resume")]
     [ProducesResponseType(typeof(ApiResponse<SubscriptionResumeResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status402PaymentRequired)]
     public async Task<IActionResult> ResumeSubscription()
     {
         try
@@ -418,6 +447,12 @@ public class SubscriptionsController : ControllerBase
                 Status: result.Status.ToString().ToLowerInvariant(),
                 CurrentPeriodEnd: result.CurrentPeriodEnd
             )));
+        }
+        catch (RazorpayService.PaymentRequiredException ex)
+        {
+            // Return 402 Payment Required - frontend should redirect to checkout
+            return StatusCode(StatusCodes.Status402PaymentRequired,
+                new ApiErrorResponse(false, "PAYMENT_REQUIRED", ex.Message));
         }
         catch (InvalidOperationException ex)
         {

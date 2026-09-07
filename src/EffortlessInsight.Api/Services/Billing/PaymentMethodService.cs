@@ -205,6 +205,121 @@ public class PaymentMethodService : IPaymentMethodService
         }
     }
 
+    /// <summary>
+    /// Deactivates a payment method when its mandate is cancelled or revoked.
+    /// Called from webhook handlers when a token.cancelled event is received.
+    /// </summary>
+    public async Task<bool> DeactivateByMandateCancelledAsync(
+        string razorpayTokenId,
+        string? cancellationReason = null,
+        CancellationToken cancellationToken = default)
+    {
+        var paymentMethod = await _context.PaymentMethods
+            .FirstOrDefaultAsync(pm => pm.RazorpayTokenId == razorpayTokenId && pm.IsActive, cancellationToken);
+
+        if (paymentMethod == null)
+        {
+            _logger.LogWarning(
+                "No active payment method found for Razorpay token {TokenId}",
+                razorpayTokenId);
+            return false;
+        }
+
+        paymentMethod.IsActive = false;
+        paymentMethod.MandateStatus = MandateStatusType.Cancelled;
+        paymentMethod.UpdatedAt = DateTime.UtcNow;
+        paymentMethod.Metadata ??= new Dictionary<string, object>();
+        paymentMethod.Metadata["cancellationReason"] = cancellationReason ?? "Mandate cancelled by customer or bank";
+        paymentMethod.Metadata["cancelledAt"] = DateTime.UtcNow.ToString("O");
+
+        // If this was the default payment method, we need to clear it
+        // The organization will need to add a new payment method
+        if (paymentMethod.IsDefault)
+        {
+            paymentMethod.IsDefault = false;
+
+            // Try to set another active payment method as default
+            var nextDefault = await _context.PaymentMethods
+                .Where(pm => pm.OrganizationId == paymentMethod.OrganizationId &&
+                            pm.Id != paymentMethod.Id &&
+                            pm.IsActive)
+                .OrderByDescending(pm => pm.LastUsedAt)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (nextDefault != null)
+            {
+                nextDefault.IsDefault = true;
+                nextDefault.UpdatedAt = DateTime.UtcNow;
+
+                _logger.LogInformation(
+                    "Set payment method {NewDefaultId} as new default after cancellation of {CancelledId}",
+                    nextDefault.Id, paymentMethod.Id);
+            }
+        }
+
+        await _context.SaveChangesAsync(cancellationToken);
+
+        _logger.LogInformation(
+            "Deactivated payment method {PaymentMethodId} due to mandate cancellation for organization {OrganizationId}. Reason: {Reason}",
+            paymentMethod.Id, paymentMethod.OrganizationId, cancellationReason);
+
+        return true;
+    }
+
+    /// <summary>
+    /// Updates the mandate status for a payment method.
+    /// </summary>
+    public async Task UpdateMandateStatusAsync(
+        string razorpayTokenId,
+        string newStatus,
+        CancellationToken cancellationToken = default)
+    {
+        var paymentMethod = await _context.PaymentMethods
+            .FirstOrDefaultAsync(pm => pm.RazorpayTokenId == razorpayTokenId, cancellationToken);
+
+        if (paymentMethod == null)
+        {
+            _logger.LogWarning(
+                "Payment method not found for Razorpay token {TokenId} when updating mandate status",
+                razorpayTokenId);
+            return;
+        }
+
+        paymentMethod.MandateStatus = newStatus;
+        paymentMethod.UpdatedAt = DateTime.UtcNow;
+
+        // If mandate becomes active, ensure payment method is active
+        if (newStatus == MandateStatusType.Active && !paymentMethod.IsActive)
+        {
+            paymentMethod.IsActive = true;
+        }
+
+        // If mandate failed, deactivate the payment method
+        if (newStatus == MandateStatusType.Failed || newStatus == MandateStatusType.Expired)
+        {
+            paymentMethod.IsActive = false;
+        }
+
+        await _context.SaveChangesAsync(cancellationToken);
+
+        _logger.LogInformation(
+            "Updated mandate status to {Status} for payment method {PaymentMethodId}",
+            newStatus, paymentMethod.Id);
+    }
+
+    /// <summary>
+    /// Gets a payment method by Razorpay token ID.
+    /// </summary>
+    public async Task<PaymentMethodDto?> GetByRazorpayTokenAsync(
+        string razorpayTokenId,
+        CancellationToken cancellationToken = default)
+    {
+        var paymentMethod = await _context.PaymentMethods
+            .FirstOrDefaultAsync(pm => pm.RazorpayTokenId == razorpayTokenId, cancellationToken);
+
+        return paymentMethod != null ? MapToDto(paymentMethod) : null;
+    }
+
     private static PaymentMethodDto MapToDto(PaymentMethod pm) =>
         new PaymentMethodDto(
             Id: pm.Id,

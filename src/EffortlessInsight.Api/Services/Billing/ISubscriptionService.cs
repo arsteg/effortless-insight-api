@@ -27,12 +27,21 @@ public interface ISubscriptionService
         CreateSubscriptionRequest request);
 
     /// <summary>
-    /// Verifies a payment and activates the subscription.
+    /// Verifies a payment and activates the subscription (order-based checkout).
     /// </summary>
     Task<VerifyPaymentResponse> VerifyPaymentAsync(
         Guid organizationId,
         Guid userId,
         VerifyPaymentRequest request);
+
+    /// <summary>
+    /// Verifies a subscription payment and activates the subscription (Razorpay Subscription API checkout).
+    /// Used for true auto-recurring billing with mandate/token registration.
+    /// </summary>
+    Task<VerifyPaymentResponse> VerifySubscriptionPaymentAsync(
+        Guid organizationId,
+        Guid userId,
+        VerifySubscriptionPaymentRequest request);
 
     /// <summary>
     /// Validates if a plan change is allowed based on current usage.
@@ -176,6 +185,7 @@ public interface ISubscriptionService
     /// Fixes Issue #10: Grace Period Expiration Not Automatically Handled
     /// </summary>
     Task ExpireGracePeriodSubscriptionsAsync();
+
 }
 
 /// <summary>

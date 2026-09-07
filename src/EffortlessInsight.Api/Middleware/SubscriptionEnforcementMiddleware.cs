@@ -1,4 +1,5 @@
 using EffortlessInsight.Api.Data;
+using EffortlessInsight.Api.Data.Entities.Billing;
 using EffortlessInsight.Api.Services.Organizations;
 using Microsoft.EntityFrameworkCore;
 
@@ -13,8 +14,8 @@ public class SubscriptionEnforcementMiddleware
     private readonly RequestDelegate _next;
     private readonly ILogger<SubscriptionEnforcementMiddleware> _logger;
 
-    // Paths that don't require a subscription
-    private static readonly HashSet<string> PublicPaths = new(StringComparer.OrdinalIgnoreCase)
+    // Paths that don't require a subscription - use exact matching for security
+    private static readonly HashSet<string> ExactPublicPaths = new(StringComparer.OrdinalIgnoreCase)
     {
         // Auth endpoints - always allowed
         "/api/v1/auth/login",
@@ -28,28 +29,39 @@ public class SubscriptionEnforcementMiddleware
         "/api/v1/auth/me",
         "/api/v1/auth/oauth",
 
-        // Billing/subscription endpoints - needed during checkout
+        // Billing/subscription endpoints - specific paths only (not broad prefix)
         "/api/v1/plans",
+        "/api/v1/subscriptions",  // POST to create new subscription
         "/api/v1/subscriptions/trial",
-        "/api/v1/subscriptions",
+        "/api/v1/subscriptions/create",
         "/api/v1/subscriptions/verify",
+        "/api/v1/subscriptions/verify-subscription",
         "/api/v1/subscriptions/current",
+        "/api/v1/subscriptions/current/resume",  // Allow paused users to resume
+        "/api/v1/subscriptions/current/pause",   // Allow active users to pause
+        "/api/v1/subscriptions/current/reactivate",  // Allow cancelled users to reactivate
         "/api/v1/coupons/validate",
         "/api/v1/invoices",
         "/api/v1/payment-methods",
 
-        // Organization endpoints - needed during onboarding
+        // Organization list/create endpoints - needed during onboarding
         "/api/v1/organizations",
-
-        // Health/monitoring endpoints
-        "/health",
-        "/metrics",
-        "/hangfire",
+        "/api/v1/organizations/current",
 
         // SignalR hubs - needed for real-time notifications regardless of subscription status
         "/hubs/notifications",
         "/hubs/notices",
         "/hubs/chat"
+    };
+
+    // Prefixes that are safe to allow (truly public endpoints)
+    private static readonly string[] SafePrefixes = new[]
+    {
+        "/health",
+        "/metrics",
+        "/hangfire",
+        "/hubs/",
+        "/api/v1/organizations/validate-gstin/"  // GSTIN validation during onboarding
     };
 
     public SubscriptionEnforcementMiddleware(
@@ -87,12 +99,18 @@ public class SubscriptionEnforcementMiddleware
             return;
         }
 
-        // Check subscription status
+        // SECURITY FIX #9: Block requests without organization selection
         var orgId = currentOrganization.OrganizationId;
         if (orgId == null)
         {
-            _logger.LogWarning("User authenticated but no organization selected");
-            await _next(context);
+            _logger.LogWarning("User authenticated but no organization selected - blocking access");
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            await context.Response.WriteAsJsonAsync(new
+            {
+                success = false,
+                error = "NO_ORGANIZATION_SELECTED",
+                message = "Please select an organization to continue"
+            });
             return;
         }
 
@@ -113,8 +131,85 @@ public class SubscriptionEnforcementMiddleware
             return;
         }
 
-        // Check subscription status
-        var validStatuses = new[] { "trial", "active", "past_due" };
+        // SECURITY FIX #1: Block paused subscriptions immediately
+        if (org.SubscriptionStatus == "paused")
+        {
+            _logger.LogWarning(
+                "Access denied: Subscription paused for organization {OrganizationId}",
+                orgId.Value);
+
+            context.Response.StatusCode = StatusCodes.Status402PaymentRequired;
+            await context.Response.WriteAsJsonAsync(new
+            {
+                success = false,
+                error = "SUBSCRIPTION_PAUSED",
+                message = "Your subscription is paused. Please resume your subscription to continue using the application.",
+                subscriptionStatus = org.SubscriptionStatus
+            });
+            return;
+        }
+
+        // SECURITY FIX #2: Check grace period expiration for past_due subscriptions
+        if (org.SubscriptionStatus == "past_due")
+        {
+            var subscription = await dbContext.BillingSubscriptions
+                .AsNoTracking()
+                .Where(s => s.OrganizationId == orgId.Value && s.DeletedAt == null)
+                .FirstOrDefaultAsync();
+
+            if (subscription?.GracePeriodEndAt != null && subscription.GracePeriodEndAt <= DateTime.UtcNow)
+            {
+                _logger.LogWarning(
+                    "Access denied: Grace period expired for organization {OrganizationId}. Grace period ended at {GracePeriodEnd}",
+                    orgId.Value, subscription.GracePeriodEndAt);
+
+                context.Response.StatusCode = StatusCodes.Status402PaymentRequired;
+                await context.Response.WriteAsJsonAsync(new
+                {
+                    success = false,
+                    error = "GRACE_PERIOD_EXPIRED",
+                    message = "Your grace period has expired. Please update your payment method to continue using the application.",
+                    subscriptionStatus = org.SubscriptionStatus,
+                    gracePeriodEndedAt = subscription.GracePeriodEndAt
+                });
+                return;
+            }
+        }
+
+        // SECURITY FIX #3: Check CurrentPeriodEnd as fallback for active subscriptions
+        if (org.SubscriptionStatus == "active")
+        {
+            var subscription = await dbContext.BillingSubscriptions
+                .AsNoTracking()
+                .Where(s => s.OrganizationId == orgId.Value && s.DeletedAt == null)
+                .FirstOrDefaultAsync();
+
+            if (subscription?.CurrentPeriodEnd != null && subscription.CurrentPeriodEnd < DateTime.UtcNow)
+            {
+                // Only check for non-Razorpay-managed subscriptions or those without auto-renewal
+                // Razorpay-managed subscriptions will be updated via webhook
+                if (string.IsNullOrEmpty(subscription.RazorpaySubscriptionId) || subscription.CancelAtPeriodEnd)
+                {
+                    _logger.LogWarning(
+                        "Access denied: Subscription period ended for organization {OrganizationId}. Period ended at {CurrentPeriodEnd}",
+                        orgId.Value, subscription.CurrentPeriodEnd);
+
+                    context.Response.StatusCode = StatusCodes.Status402PaymentRequired;
+                    await context.Response.WriteAsJsonAsync(new
+                    {
+                        success = false,
+                        error = "SUBSCRIPTION_PERIOD_ENDED",
+                        message = "Your subscription period has ended. Please renew your subscription to continue.",
+                        subscriptionStatus = org.SubscriptionStatus,
+                        periodEndedAt = subscription.CurrentPeriodEnd
+                    });
+                    return;
+                }
+            }
+        }
+
+        // Check subscription status - allow trial (or trialing), active, past_due (within grace period)
+        var validStatuses = new[] { "trial", "trialing", "active", "past_due" };
         if (!validStatuses.Contains(org.SubscriptionStatus))
         {
             _logger.LogInformation(
@@ -132,8 +227,8 @@ public class SubscriptionEnforcementMiddleware
             return;
         }
 
-        // Check if trial has expired
-        if (org.SubscriptionStatus == "trial" && org.TrialEndsAt.HasValue)
+        // Check if trial has expired (support both "trial" and "trialing" for backwards compatibility)
+        if ((org.SubscriptionStatus == "trial" || org.SubscriptionStatus == "trialing") && org.TrialEndsAt.HasValue)
         {
             if (org.TrialEndsAt.Value < DateTime.UtcNow)
             {
@@ -157,16 +252,18 @@ public class SubscriptionEnforcementMiddleware
         await _next(context);
     }
 
+    // SECURITY FIX #8: Use exact path matching for sensitive endpoints
     private static bool IsPublicPath(string path)
     {
-        // Exact match
-        if (PublicPaths.Contains(path))
+        // Exact match for most public paths
+        if (ExactPublicPaths.Contains(path))
             return true;
 
-        // Check if path starts with any public path
-        foreach (var publicPath in PublicPaths)
+        // Only allow prefix matching for truly safe prefixes (health, metrics, hubs)
+        // This prevents path manipulation attacks like /api/v1/subscriptions/../refund
+        foreach (var prefix in SafePrefixes)
         {
-            if (path.StartsWith(publicPath, StringComparison.OrdinalIgnoreCase))
+            if (path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
                 return true;
         }
 

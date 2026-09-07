@@ -26,6 +26,9 @@ public static class AdminServiceExtensions
         services.AddScoped<IAdminMfaService, AdminMfaService>();
         services.AddScoped<IAdminSessionService, AdminSessionService>();
 
+        // Register system settings service
+        services.AddScoped<ISystemSettingsService, SystemSettingsService>();
+
         return services;
     }
 

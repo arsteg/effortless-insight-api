@@ -126,8 +126,13 @@ public class Organization : BaseEntity
     [MaxLength(10)]
     public string? Tan { get; set; }
 
+    /// <summary>
+    /// Subscription status. Use OrganizationSubscriptionStatus constants.
+    /// Note: "trialing" is the preferred value for trial status (consistent with BillingSubscription).
+    /// "trial" is kept for backwards compatibility but "trialing" should be used for new records.
+    /// </summary>
     [MaxLength(20)]
-    public string SubscriptionStatus { get; set; } = "trial";
+    public string SubscriptionStatus { get; set; } = OrganizationSubscriptionStatus.Trialing;
 
     public DateTime? TrialEndsAt { get; set; }
 
@@ -189,4 +194,54 @@ public class Organization : BaseEntity
     /// Teams/departments in this organization
     /// </summary>
     public ICollection<Team> Teams { get; set; } = [];
+}
+
+/// <summary>
+/// Organization subscription status constants.
+/// These should match the values in BillingSubscription.SubscriptionStatus for consistency.
+/// SECURITY FIX #10: Standardized status naming across Organization and BillingSubscription entities.
+/// </summary>
+public static class OrganizationSubscriptionStatus
+{
+    /// <summary>
+    /// No subscription - organization has not started a trial or subscription.
+    /// </summary>
+    public const string None = "none";
+
+    /// <summary>
+    /// Trial period active. Preferred value (consistent with BillingSubscription.SubscriptionStatus.Trialing).
+    /// </summary>
+    public const string Trialing = "trialing";
+
+    /// <summary>
+    /// Legacy trial status value. Kept for backwards compatibility.
+    /// New code should use Trialing instead.
+    /// </summary>
+    [Obsolete("Use Trialing instead for consistency with BillingSubscription")]
+    public const string Trial = "trial";
+
+    /// <summary>
+    /// Active paid subscription.
+    /// </summary>
+    public const string Active = "active";
+
+    /// <summary>
+    /// Payment is past due but within grace period.
+    /// </summary>
+    public const string PastDue = "past_due";
+
+    /// <summary>
+    /// Subscription is paused.
+    /// </summary>
+    public const string Paused = "paused";
+
+    /// <summary>
+    /// Subscription has been cancelled.
+    /// </summary>
+    public const string Cancelled = "cancelled";
+
+    /// <summary>
+    /// Subscription has expired (trial ended without conversion, or grace period ended).
+    /// </summary>
+    public const string Expired = "expired";
 }

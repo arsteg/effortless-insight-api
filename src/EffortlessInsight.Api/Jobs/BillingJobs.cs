@@ -73,6 +73,7 @@ public class BillingJobs
     /// <summary>
     /// Process subscription renewals - runs daily at 6 AM.
     /// Skips paused subscriptions - they will be handled when resumed.
+    /// Skips subscriptions managed by Razorpay Subscription API - they are auto-charged.
     /// </summary>
     public async Task ProcessSubscriptionRenewalsAsync()
     {
@@ -81,11 +82,21 @@ public class BillingJobs
         var now = DateTime.UtcNow;
 
         // Skip paused subscriptions - they should not be renewed while paused
+        // Skip subscriptions with RazorpaySubscriptionId - Razorpay handles these automatically
         var subscriptionsToRenew = await _dbContext.BillingSubscriptions
             .Where(s => s.Status == SubscriptionStatus.Active &&
                        s.CurrentPeriodEnd <= now &&
-                       !s.CancelAtPeriodEnd)
+                       !s.CancelAtPeriodEnd &&
+                       string.IsNullOrEmpty(s.RazorpaySubscriptionId)) // Only process legacy subscriptions
             .ToListAsync();
+
+        _logger.LogInformation(
+            "Found {Count} legacy subscriptions to renew (subscriptions with Razorpay Subscription API are auto-charged)",
+            subscriptionsToRenew.Count);
+
+        // SECURITY FIX #3: Verify Razorpay-managed subscriptions are actually being charged
+        // This prevents subscriptions from staying active indefinitely if Razorpay halts them
+        await VerifyRazorpaySubscriptionsAsync(now);
 
         foreach (var subscription in subscriptionsToRenew)
         {
@@ -133,6 +144,119 @@ public class BillingJobs
         _logger.LogInformation(
             "Processed {Renewals} renewals and {Cancellations} cancellations",
             subscriptionsToRenew.Count, cancellations.Count);
+    }
+
+    /// <summary>
+    /// SECURITY FIX #3: Verify Razorpay-managed subscriptions are actually being charged.
+    /// Checks subscriptions with RazorpaySubscriptionId that are due for renewal.
+    /// If Razorpay reports them as halted or cancelled, marks local subscription as past_due.
+    /// </summary>
+    private async Task VerifyRazorpaySubscriptionsAsync(DateTime now)
+    {
+        _logger.LogInformation("Verifying Razorpay-managed subscriptions...");
+
+        // Find Razorpay-managed subscriptions that are:
+        // 1. Currently marked as Active
+        // 2. Due for renewal within 1 day (or already past due)
+        // 3. Have a RazorpaySubscriptionId
+        var razorpaySubscriptions = await _dbContext.BillingSubscriptions
+            .Where(s => s.Status == SubscriptionStatus.Active &&
+                       s.CurrentPeriodEnd <= now.AddDays(1) &&
+                       !string.IsNullOrEmpty(s.RazorpaySubscriptionId))
+            .ToListAsync();
+
+        if (razorpaySubscriptions.Count == 0)
+        {
+            _logger.LogInformation("No Razorpay subscriptions to verify");
+            return;
+        }
+
+        _logger.LogInformation(
+            "Verifying {Count} Razorpay-managed subscriptions for renewal status",
+            razorpaySubscriptions.Count);
+
+        var haltedCount = 0;
+        var errorCount = 0;
+
+        foreach (var subscription in razorpaySubscriptions)
+        {
+            try
+            {
+                var razorpayStatus = await _razorpayService.GetSubscriptionStatusAsync(
+                    subscription.RazorpaySubscriptionId!);
+
+                // Check if Razorpay has halted or cancelled the subscription
+                // Razorpay statuses: created, authenticated, active, pending, halted, cancelled, completed, expired, paused
+                if (razorpayStatus.Status == "halted" ||
+                    razorpayStatus.Status == "cancelled" ||
+                    razorpayStatus.Status == "expired")
+                {
+                    _logger.LogWarning(
+                        "Razorpay subscription {RazorpayId} is {Status}, marking local subscription {SubscriptionId} as past_due",
+                        subscription.RazorpaySubscriptionId, razorpayStatus.Status, subscription.Id);
+
+                    subscription.Status = SubscriptionStatus.PastDue;
+                    subscription.GracePeriodEndAt = DateTime.UtcNow.AddDays(7);
+
+                    // Update organization status
+                    var org = await _dbContext.Organizations.FindAsync(subscription.OrganizationId);
+                    if (org != null)
+                    {
+                        org.SubscriptionStatus = "past_due";
+                    }
+
+                    // Send notification to owner about payment issue
+                    var owner = await _dbContext.Users
+                        .FirstOrDefaultAsync(u => u.OrganizationId == subscription.OrganizationId &&
+                                                 u.Role == "owner");
+                    if (owner != null)
+                    {
+                        await _billingNotificationService.SendPaymentFailedAsync(
+                            owner.Id,
+                            subscription.TotalAmount,
+                            subscription.PlanCode ?? "your plan",
+                            $"Razorpay subscription is {razorpayStatus.Status}",
+                            0);
+                    }
+
+                    haltedCount++;
+                }
+                else if (razorpayStatus.Status == "paused" && subscription.Status == SubscriptionStatus.Active)
+                {
+                    // Sync paused status from Razorpay
+                    _logger.LogWarning(
+                        "Razorpay subscription {RazorpayId} is paused, syncing local subscription {SubscriptionId}",
+                        subscription.RazorpaySubscriptionId, subscription.Id);
+
+                    subscription.Status = SubscriptionStatus.Paused;
+                    subscription.PausedAt = DateTime.UtcNow;
+
+                    var org = await _dbContext.Organizations.FindAsync(subscription.OrganizationId);
+                    if (org != null)
+                    {
+                        org.SubscriptionStatus = "paused";
+                    }
+
+                    haltedCount++;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "Failed to verify Razorpay subscription {RazorpayId} for subscription {SubscriptionId}",
+                    subscription.RazorpaySubscriptionId, subscription.Id);
+                errorCount++;
+            }
+        }
+
+        if (haltedCount > 0 || errorCount > 0)
+        {
+            await _dbContext.SaveChangesAsync();
+        }
+
+        _logger.LogInformation(
+            "Verified {Total} Razorpay subscriptions: {Halted} halted/cancelled, {Errors} errors",
+            razorpaySubscriptions.Count, haltedCount, errorCount);
     }
 
     /// <summary>

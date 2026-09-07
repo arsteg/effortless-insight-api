@@ -1,7 +1,9 @@
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities;
+using EffortlessInsight.Api.Data.Entities.Admin;
 using EffortlessInsight.Api.Data.Entities.Billing;
 using EffortlessInsight.Api.DTOs;
+using EffortlessInsight.Api.Services.Admin;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Distributed;
 
@@ -20,6 +22,7 @@ public class SubscriptionService : ISubscriptionService
     private readonly IInvoiceService _invoiceService;
     private readonly IBillingNotificationService _billingNotificationService;
     private readonly IPaymentMethodService _paymentMethodService;
+    private readonly ISystemSettingsService _systemSettingsService;
     private readonly IDistributedCache _cache;
     private readonly ILogger<SubscriptionService> _logger;
 
@@ -32,6 +35,7 @@ public class SubscriptionService : ISubscriptionService
         IInvoiceService invoiceService,
         IBillingNotificationService billingNotificationService,
         IPaymentMethodService paymentMethodService,
+        ISystemSettingsService systemSettingsService,
         IDistributedCache cache,
         ILogger<SubscriptionService> logger)
     {
@@ -43,6 +47,7 @@ public class SubscriptionService : ISubscriptionService
         _invoiceService = invoiceService;
         _billingNotificationService = billingNotificationService;
         _paymentMethodService = paymentMethodService;
+        _systemSettingsService = systemSettingsService;
         _cache = cache;
         _logger = logger;
     }
@@ -170,37 +175,129 @@ public class SubscriptionService : ISubscriptionService
         var user = await _dbContext.Users.FindAsync(userId);
         var org = await _dbContext.Organizations.FindAsync(organizationId);
 
-        // Create Razorpay order
-        var order = await _razorpayService.CreateOrderAsync(new CreateOrderRequest
+        // All paid plans MUST use Razorpay Subscription API for auto-recurring billing
+        // This ensures users complete mandate authentication upfront
+        var razorpayPlanId = request.BillingCycle == BillingCycle.Annually
+            ? plan.RazorpayPlanIdAnnually
+            : plan.RazorpayPlanIdMonthly;
+
+        if (string.IsNullOrEmpty(razorpayPlanId))
         {
-            AmountInPaise = pricing.Total,
-            Currency = pricing.Currency,
-            Receipt = $"sub_{subscription.Id:N}",
-            OrganizationId = organizationId,
-            PlanCode = plan.Code,
-            SubscriptionId = subscription.Id
-        });
+            // Razorpay Plan ID is required for subscription-based billing
+            _logger.LogError(
+                "Plan {PlanCode} does not have Razorpay Plan ID configured for {BillingCycle}. " +
+                "All paid plans must have Razorpay Plan IDs for recurring billing.",
+                plan.Code, request.BillingCycle);
 
-        var checkoutOptions = new CheckoutOptionsDto(
-            Key: order.Key,
-            Amount: order.Amount,
-            Currency: order.Currency,
-            Name: "EffortlessInsight",
-            Description: $"{plan.DisplayName} Plan ({request.BillingCycle})",
-            OrderId: order.Id,
-            Prefill: new CheckoutPrefillDto(
-                Name: user?.Name,
-                Email: user?.Email,
-                Contact: user?.PhoneNumber
-            ),
-            Theme: new CheckoutThemeDto(Color: "#3B82F6")
-        );
+            throw new InvalidOperationException(
+                $"Plan '{plan.DisplayName}' is not properly configured for subscriptions. " +
+                "Please contact support to resolve this issue.");
+        }
 
-        return new CreateSubscriptionResponse(
-            SubscriptionId: subscription.Id,
-            RazorpayOrder: order,
-            CheckoutOptions: checkoutOptions
-        );
+        // Use Razorpay Subscription API for auto-recurring billing
+        // - Plans with trial: User completes mandate auth, no charge until trial ends
+        // - Plans without trial: User pays immediately during checkout
+        return await CreateSubscriptionWithRazorpayApiAsync(
+            subscription, plan, razorpayPlanId, user, org, request.AdditionalSeats);
+    }
+
+    /// <summary>
+    /// Creates a subscription using Razorpay Subscription API for true auto-recurring billing.
+    /// </summary>
+    private async Task<CreateSubscriptionResponse> CreateSubscriptionWithRazorpayApiAsync(
+        BillingSubscription subscription,
+        SubscriptionPlan plan,
+        string razorpayPlanId,
+        ApplicationUser? user,
+        Organization? org,
+        int additionalSeats)
+    {
+        try
+        {
+            // Create or get Razorpay customer
+            var customerName = org?.Name ?? user?.Name ?? "Customer";
+            var customerEmail = user?.Email ?? "";
+            var customerPhone = user?.PhoneNumber;
+
+            var customer = await _razorpayService.CreateOrGetCustomerAsync(
+                customerName, customerEmail, customerPhone);
+
+            subscription.RazorpayCustomerId = customer.CustomerId;
+
+            // Create Razorpay subscription with trial period
+            var trialDays = plan.TrialDays;
+
+            var razorpaySub = await _razorpayService.CreateSubscriptionWithTrialAsync(
+                new CreateRazorpaySubscriptionWithTrialRequest
+                {
+                    RazorpayPlanId = razorpayPlanId,
+                    RazorpayCustomerId = customer.CustomerId,
+                    OrganizationId = subscription.OrganizationId,
+                    BillingCycle = subscription.BillingCycle,
+                    Quantity = 1 + additionalSeats, // Base + additional seats
+                    TrialDays = trialDays,
+                    NotifyCustomer = true,
+                    Notes = new Dictionary<string, string>
+                    {
+                        { "subscription_id", subscription.Id.ToString() },
+                        { "plan_code", plan.Code },
+                        { "organization_name", customerName }
+                    }
+                });
+
+            // Store Razorpay subscription ID
+            subscription.RazorpaySubscriptionId = razorpaySub.SubscriptionId;
+
+            // Set trial end date and period dates if applicable
+            if (trialDays > 0)
+            {
+                var trialEndDate = DateTime.UtcNow.AddDays(trialDays);
+                subscription.TrialEnd = trialEndDate;
+                subscription.Status = SubscriptionStatus.Trialing;
+                // Initialize period dates for trial - period reflects trial period until billing starts
+                subscription.CurrentPeriodStart = DateTime.UtcNow;
+                subscription.CurrentPeriodEnd = trialEndDate;
+            }
+
+            subscription.Metadata ??= new Dictionary<string, object>();
+            subscription.Metadata["razorpaySubscriptionCreated"] = DateTime.UtcNow.ToString("O");
+            subscription.Metadata["useRazorpaySubscriptionApi"] = true;
+
+            await _dbContext.SaveChangesAsync();
+
+            _logger.LogInformation(
+                "Created Razorpay subscription {RazorpaySubscriptionId} for subscription {SubscriptionId}. " +
+                "Plan: {PlanCode}, Trial: {TrialDays} days, Status: {Status}",
+                razorpaySub.SubscriptionId, subscription.Id, plan.Code, trialDays, razorpaySub.Status);
+
+            // Return subscription checkout options
+            // User must complete mandate authentication (and payment for non-trial plans)
+            return new CreateSubscriptionResponse(
+                SubscriptionId: subscription.Id,
+                RazorpayOrder: null,
+                CheckoutOptions: null,
+                IsFreePlan: false,
+                Subscription: null,
+                RazorpaySubscription: new RazorpaySubscriptionCheckoutDto(
+                    SubscriptionId: razorpaySub.SubscriptionId,
+                    Key: _razorpayService.GetPublicKey(),
+                    Status: razorpaySub.Status,
+                    ShortUrl: !string.IsNullOrEmpty(razorpaySub.ShortUrl) ? razorpaySub.ShortUrl : null,
+                    TrialDays: trialDays
+                )
+            );
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Failed to create Razorpay subscription. Subscription: {SubscriptionId}, Plan: {PlanCode}",
+                subscription.Id, plan.Code);
+
+            // Don't fall back to Order-based checkout - subscriptions require mandate auth
+            throw new InvalidOperationException(
+                "Unable to create subscription at this time. Please try again or contact support.",
+                ex);
+        }
     }
 
     public async Task<VerifyPaymentResponse> VerifyPaymentAsync(
@@ -409,7 +506,7 @@ public class SubscriptionService : ISubscriptionService
                 try
                 {
                     var customerId = payment.CustomerId ?? subscription.RazorpayCustomerId;
-                    if (!string.IsNullOrEmpty(customerId) && !string.IsNullOrEmpty(payment.TokenId))
+                    if (!string.IsNullOrEmpty(customerId))
                     {
                         await _paymentMethodService.CreateFromRazorpayAsync(
                             organizationId,
@@ -424,8 +521,7 @@ public class SubscriptionService : ISubscriptionService
                     else
                     {
                         _logger.LogDebug(
-                            "Skipping payment method save - no customer ID or token. CustomerId: {CustomerId}, HasToken: {HasToken}",
-                            customerId, !string.IsNullOrEmpty(payment.TokenId));
+                            "Skipping payment method save - no customer ID available");
                     }
                 }
                 catch (Exception pmEx)
@@ -480,6 +576,189 @@ public class SubscriptionService : ISubscriptionService
         });
     }
 
+    public async Task<VerifyPaymentResponse> VerifySubscriptionPaymentAsync(
+        Guid organizationId,
+        Guid userId,
+        VerifySubscriptionPaymentRequest request)
+    {
+        var strategy = _dbContext.Database.CreateExecutionStrategy();
+
+        return await strategy.ExecuteAsync(async () =>
+        {
+            using var transaction = await _dbContext.Database.BeginTransactionAsync();
+
+            try
+            {
+                // Verify subscription signature
+                var isValid = _razorpayService.VerifySubscriptionSignature(
+                    request.RazorpaySubscriptionId,
+                    request.RazorpayPaymentId,
+                    request.RazorpaySignature);
+
+                if (!isValid)
+                    throw new InvalidOperationException("Subscription signature verification failed");
+
+                var subscription = await _dbContext.BillingSubscriptions
+                    .FirstOrDefaultAsync(s => s.RazorpaySubscriptionId == request.RazorpaySubscriptionId)
+                    ?? throw new InvalidOperationException("Subscription not found for Razorpay subscription ID");
+
+                if (subscription.OrganizationId != organizationId)
+                    throw new InvalidOperationException("Subscription does not belong to this organization");
+
+                // Get subscription status from Razorpay
+                var razorpayStatus = await _razorpayService.GetSubscriptionStatusAsync(request.RazorpaySubscriptionId);
+
+                var plan = await _planService.GetPlanByIdAsync(subscription.PlanId)
+                    ?? throw new InvalidOperationException("Plan not found");
+
+                var now = DateTime.UtcNow;
+
+                // Update subscription based on Razorpay status
+                // "authenticated" = mandate approved but billing not started yet (still in trial)
+                // "active" = subscription is active and has been charged at least once
+                if (razorpayStatus.Status == "active")
+                {
+                    // Subscription is actually active (billing started)
+                    subscription.Status = SubscriptionStatus.Active;
+                    subscription.Metadata ??= new Dictionary<string, object>();
+                    subscription.Metadata["razorpayActivatedAt"] = now.ToString("O");
+                    subscription.Metadata["razorpayStatus"] = razorpayStatus.Status;
+                    subscription.Metadata["activatedBy"] = userId.ToString();
+
+                    // Set period from Razorpay data if available
+                    if (razorpayStatus.CurrentStart.HasValue && razorpayStatus.CurrentEnd.HasValue)
+                    {
+                        subscription.CurrentPeriodStart = DateTimeOffset.FromUnixTimeSeconds(razorpayStatus.CurrentStart.Value).UtcDateTime;
+                        subscription.CurrentPeriodEnd = DateTimeOffset.FromUnixTimeSeconds(razorpayStatus.CurrentEnd.Value).UtcDateTime;
+                    }
+                    else
+                    {
+                        // Set period based on billing cycle
+                        subscription.CurrentPeriodStart = now;
+                        subscription.CurrentPeriodEnd = subscription.BillingCycle == BillingCycle.Annually
+                            ? now.AddYears(1)
+                            : now.AddMonths(1);
+                    }
+
+                    subscription.TrialEnd = null; // Clear trial as subscription is now active
+                    subscription.FailedPaymentAttempts = 0;
+                }
+                else if (razorpayStatus.Status == "authenticated")
+                {
+                    // Mandate authenticated but billing not started yet (trial continues)
+                    // DO NOT change status from trialing to active
+                    subscription.Metadata ??= new Dictionary<string, object>();
+                    subscription.Metadata["mandateAuthenticated"] = true;
+                    subscription.Metadata["razorpayStatus"] = razorpayStatus.Status;
+                    subscription.Metadata["authenticatedAt"] = now.ToString("O");
+                    subscription.Metadata["authenticatedBy"] = userId.ToString();
+
+                    // Ensure period dates reflect trial period if in trial
+                    if (subscription.TrialEnd.HasValue && subscription.Status == SubscriptionStatus.Trialing)
+                    {
+                        // Keep trial period dates - ensure they're set correctly
+                        if (subscription.CurrentPeriodEnd == default || subscription.CurrentPeriodEnd < subscription.TrialEnd.Value)
+                        {
+                            subscription.CurrentPeriodEnd = subscription.TrialEnd.Value;
+                        }
+                        if (subscription.CurrentPeriodStart == default)
+                        {
+                            subscription.CurrentPeriodStart = now;
+                        }
+                    }
+                }
+                else
+                {
+                    // Other states (pending, created, etc.)
+                    subscription.Metadata ??= new Dictionary<string, object>();
+                    subscription.Metadata["razorpayStatus"] = razorpayStatus.Status;
+                }
+
+                // Update organization status based on subscription status
+                var org = await _dbContext.Organizations.FindAsync(organizationId);
+                if (org != null)
+                {
+                    // Only set to active if subscription is actually active (not just authenticated)
+                    if (subscription.Status == SubscriptionStatus.Active)
+                    {
+                        org.SubscriptionStatus = "active";
+                    }
+                    else if (subscription.Status == SubscriptionStatus.Trialing)
+                    {
+                        org.SubscriptionStatus = "trialing";
+                    }
+                }
+
+                await _dbContext.SaveChangesAsync();
+                await transaction.CommitAsync();
+
+                _logger.LogInformation(
+                    "Subscription payment verified: Subscription {SubscriptionId} for organization {OrganizationId}. " +
+                    "Razorpay subscription: {RazorpaySubscriptionId}, Status: {Status}",
+                    subscription.Id, organizationId, request.RazorpaySubscriptionId, razorpayStatus.Status);
+
+                // Save payment method for future use (best effort)
+                try
+                {
+                    if (!string.IsNullOrEmpty(request.RazorpayPaymentId))
+                    {
+                        var payment = await _razorpayService.GetPaymentAsync(request.RazorpayPaymentId);
+                        var customerId = payment?.CustomerId ?? subscription.RazorpayCustomerId;
+
+                        if (!string.IsNullOrEmpty(customerId))
+                        {
+                            await _paymentMethodService.CreateFromRazorpayAsync(
+                                organizationId,
+                                request.RazorpayPaymentId,
+                                customerId,
+                                setAsDefault: true);
+
+                            _logger.LogInformation(
+                                "Payment method saved for organization {OrganizationId} from subscription payment {PaymentId}",
+                                organizationId, request.RazorpayPaymentId);
+                        }
+                    }
+                }
+                catch (Exception pmEx)
+                {
+                    _logger.LogWarning(pmEx,
+                        "Failed to save payment method for organization {OrganizationId}",
+                        organizationId);
+                }
+
+                // Send notification (fire-and-forget)
+                _ = SendSubscriptionPaymentNotificationAsync(
+                    organizationId,
+                    plan.DisplayName,
+                    subscription.TotalAmount,
+                    subscription.BillingCycle,
+                    "",
+                    false);
+
+                return new VerifyPaymentResponse(
+                    Success: true,
+                    Subscription: new SubscriptionActivatedDto(
+                        Id: subscription.Id,
+                        Status: subscription.Status,
+                        PlanCode: subscription.PlanCode,
+                        ActivatedAt: now
+                    ),
+                    Invoice: null // Invoice is generated by Razorpay for subscription
+                );
+            }
+            catch (Exception ex)
+            {
+                await transaction.RollbackAsync();
+
+                _logger.LogError(ex,
+                    "Failed to verify subscription payment for organization {OrganizationId}. Transaction rolled back.",
+                    organizationId);
+
+                throw;
+            }
+        });
+    }
+
     public async Task<PlanChangeValidationResult> ValidatePlanChangeAsync(
         Guid organizationId,
         string newPlanCode,
@@ -508,6 +787,15 @@ public class SubscriptionService : ISubscriptionService
         var subscription = await GetSubscriptionEntityAsync(organizationId)
             ?? throw new InvalidOperationException("No active subscription found");
 
+        // SECURITY FIX #4: Validate subscription status before allowing plan change
+        var allowedStatuses = new[] { SubscriptionStatus.Active, SubscriptionStatus.Trialing };
+        if (!allowedStatuses.Contains(subscription.Status))
+        {
+            throw new InvalidOperationException(
+                $"INVALID_STATUS: Cannot change plan while subscription is {subscription.Status}. " +
+                "Only active or trial subscriptions can change plans.");
+        }
+
         var currentPlan = await _planService.GetPlanByIdAsync(subscription.PlanId)
             ?? throw new InvalidOperationException("Current plan not found");
 
@@ -534,6 +822,41 @@ public class SubscriptionService : ISubscriptionService
             throw new InvalidOperationException("Cannot switch to free plan from a paid plan. Please cancel your subscription first.");
         }
 
+        // Check if this is a downgrade (new plan is cheaper than current plan)
+        var currentBillingCycle = subscription.BillingCycle;
+        var newBillingCycle = request.BillingCycle ?? currentBillingCycle;
+
+        var currentPlanPrice = currentBillingCycle == "annually"
+            ? currentPlan.PricingAnnually ?? 0
+            : currentPlan.PricingMonthly ?? 0;
+        var newPlanPrice = newBillingCycle == "annually"
+            ? newPlan.PricingAnnually ?? 0
+            : newPlan.PricingMonthly ?? 0;
+
+        // Convert to daily rates for accurate comparison
+        var currentDailyRate = currentBillingCycle == "annually"
+            ? currentPlanPrice / 365.0
+            : currentPlanPrice / 30.0;
+        var newDailyRate = newBillingCycle == "annually"
+            ? newPlanPrice / 365.0
+            : newPlanPrice / 30.0;
+
+        var isDowngrade = newDailyRate < currentDailyRate;
+
+        if (isDowngrade)
+        {
+            // Check if downgrades are allowed
+            var downgradesAllowed = await _systemSettingsService.GetBoolSettingAsync(
+                SystemSettingKeys.DowngradesAllowed, defaultValue: false);
+
+            if (!downgradesAllowed)
+            {
+                throw new InvalidOperationException(
+                    "Plan downgrades are not allowed. You can only upgrade to a higher plan. " +
+                    "Please contact support if you need assistance.");
+            }
+        }
+
         var additionalSeats = request.AdditionalSeats ?? subscription.SeatsAdditional;
 
         // Validate plan change is allowed (check usage limits)
@@ -551,6 +874,44 @@ public class SubscriptionService : ISubscriptionService
         // - Upgrade: End date decreases (remaining value covers fewer days at higher rate)
         // - Downgrade: End date increases (remaining value covers more days at lower rate)
         await ApplyPlanChangeAsync(subscription, newPlan, request.BillingCycle, additionalSeats);
+
+        // Update Razorpay subscription if one exists
+        // This ensures the next automatic renewal uses the new plan's pricing
+        if (!string.IsNullOrEmpty(subscription.RazorpaySubscriptionId))
+        {
+            var razorpayBillingCycle = request.BillingCycle ?? subscription.BillingCycle;
+            var newRazorpayPlanId = razorpayBillingCycle == "monthly"
+                ? newPlan.RazorpayPlanIdMonthly
+                : newPlan.RazorpayPlanIdAnnually;
+
+            if (!string.IsNullOrEmpty(newRazorpayPlanId))
+            {
+                try
+                {
+                    await _razorpayService.UpdateSubscriptionPlanAsync(
+                        subscription.RazorpaySubscriptionId,
+                        newRazorpayPlanId);
+
+                    _logger.LogInformation(
+                        "Updated Razorpay subscription {RazorpaySubscriptionId} to plan {NewPlanId} for organization {OrganizationId}",
+                        subscription.RazorpaySubscriptionId, newRazorpayPlanId, organizationId);
+                }
+                catch (Exception ex)
+                {
+                    // Log but don't fail the plan change - local subscription is already updated
+                    // The next renewal webhook will handle any pricing discrepancies
+                    _logger.LogError(ex,
+                        "Failed to update Razorpay subscription {RazorpaySubscriptionId} to plan {NewPlanId}. Local change applied.",
+                        subscription.RazorpaySubscriptionId, newRazorpayPlanId);
+                }
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "New plan {PlanCode} does not have a Razorpay Plan ID for {BillingCycle} billing. Razorpay subscription not updated.",
+                    newPlan.Code, newBillingCycle);
+            }
+        }
 
         // Invalidate feature access cache since plan features may have changed
         await InvalidateFeatureCacheAsync(organizationId);
@@ -617,6 +978,29 @@ public class SubscriptionService : ISubscriptionService
         subscription.CancellationReason = request.Reason;
         subscription.CancellationFeedback = request.Feedback;
 
+        // Cancel the Razorpay subscription if one exists
+        // This stops Razorpay from auto-charging the customer
+        if (!string.IsNullOrEmpty(subscription.RazorpaySubscriptionId))
+        {
+            try
+            {
+                await _razorpayService.CancelSubscriptionAsync(
+                    subscription.RazorpaySubscriptionId,
+                    cancelAtCycleEnd: !request.CancelImmediately);
+
+                _logger.LogInformation(
+                    "Cancelled Razorpay subscription {RazorpaySubscriptionId} for subscription {SubscriptionId}",
+                    subscription.RazorpaySubscriptionId, subscription.Id);
+            }
+            catch (Exception ex)
+            {
+                // Log but don't fail the cancellation - the local subscription is already being cancelled
+                _logger.LogError(ex,
+                    "Failed to cancel Razorpay subscription {RazorpaySubscriptionId}. Local cancellation will proceed.",
+                    subscription.RazorpaySubscriptionId);
+            }
+        }
+
         if (request.CancelImmediately)
         {
             subscription.Status = SubscriptionStatus.Cancelled;
@@ -681,6 +1065,14 @@ public class SubscriptionService : ISubscriptionService
         // Block adding seats for cancelled/expired subscriptions
         if (subscription.Status == SubscriptionStatus.Cancelled || subscription.Status == SubscriptionStatus.Expired)
             throw new InvalidOperationException("INACTIVE_SUBSCRIPTION: Cannot add seats to an inactive subscription. Please reactivate or create a new subscription.");
+
+        // SECURITY FIX #5: Block adding seats for paused subscriptions
+        if (subscription.Status == SubscriptionStatus.Paused)
+            throw new InvalidOperationException("SUBSCRIPTION_PAUSED: Cannot add seats while subscription is paused. Please resume your subscription first.");
+
+        // Block adding seats for past_due subscriptions
+        if (subscription.Status == SubscriptionStatus.PastDue)
+            throw new InvalidOperationException("PAYMENT_OVERDUE: Cannot add seats while payment is overdue. Please update your payment method first.");
 
         if (!plan.Limits.AdditionalUsersAllowed)
             throw new InvalidOperationException("ADDITIONAL_USERS_NOT_ALLOWED: This plan does not allow additional seats. Please upgrade to a higher tier plan.");
@@ -819,7 +1211,7 @@ public class SubscriptionService : ISubscriptionService
         try
         {
             var customerId = payment.CustomerId ?? subscription.RazorpayCustomerId;
-            if (!string.IsNullOrEmpty(customerId) && !string.IsNullOrEmpty(payment.TokenId))
+            if (!string.IsNullOrEmpty(customerId))
             {
                 await _paymentMethodService.CreateFromRazorpayAsync(
                     organizationId,
@@ -856,14 +1248,58 @@ public class SubscriptionService : ISubscriptionService
         var subscription = await GetSubscriptionEntityAsync(organizationId)
             ?? throw new InvalidOperationException("No subscription found");
 
-        if (subscription.Status != SubscriptionStatus.Cancelled)
-            throw new InvalidOperationException("Subscription is not cancelled");
+        // Handle two cases:
+        // 1. CancelAtPeriodEnd = true with Active status: Scheduled cancellation that hasn't happened yet
+        // 2. Status = Cancelled: Immediate cancellation or past period end
+        var isScheduledCancellation = subscription.CancelAtPeriodEnd && subscription.Status == SubscriptionStatus.Active;
+        var isCancelled = subscription.Status == SubscriptionStatus.Cancelled;
 
-        // Check if within reactivation period (30 days)
-        var daysSinceCancellation = (DateTime.UtcNow - (subscription.EndedAt ?? subscription.CancelledAt ?? DateTime.UtcNow)).TotalDays;
-        if (daysSinceCancellation > 30)
-            throw new InvalidOperationException("Reactivation period has expired. Please create a new subscription.");
+        if (!isScheduledCancellation && !isCancelled)
+        {
+            throw new InvalidOperationException("Subscription is not cancelled or scheduled for cancellation");
+        }
 
+        // For fully cancelled subscriptions, check if within reactivation period (30 days)
+        if (isCancelled)
+        {
+            var daysSinceCancellation = (DateTime.UtcNow - (subscription.EndedAt ?? subscription.CancelledAt ?? DateTime.UtcNow)).TotalDays;
+            if (daysSinceCancellation > 30)
+            {
+                throw new InvalidOperationException("Reactivation period has expired. Please create a new subscription.");
+            }
+        }
+
+        // Reactivate in Razorpay if there's a Razorpay subscription
+        if (!string.IsNullOrEmpty(subscription.RazorpaySubscriptionId))
+        {
+            try
+            {
+                await _razorpayService.ReactivateSubscriptionAsync(subscription.RazorpaySubscriptionId);
+                _logger.LogInformation(
+                    "Reactivated Razorpay subscription {RazorpaySubscriptionId} for subscription {SubscriptionId}",
+                    subscription.RazorpaySubscriptionId, subscription.Id);
+            }
+            catch (InvalidOperationException ex) when (ex.Message.StartsWith("SUBSCRIPTION_FULLY_CANCELLED") ||
+                                                        ex.Message.StartsWith("CANNOT_REACTIVATE"))
+            {
+                // Razorpay subscription is fully cancelled - user needs a new subscription
+                _logger.LogWarning(
+                    "Cannot reactivate Razorpay subscription {RazorpaySubscriptionId} - it's fully cancelled. User needs to create a new subscription.",
+                    subscription.RazorpaySubscriptionId);
+                throw new InvalidOperationException(
+                    "This subscription has been fully cancelled in Razorpay and cannot be reactivated. Please create a new subscription.");
+            }
+            catch (Exception ex)
+            {
+                // Log but don't fail - the user can still try again
+                _logger.LogError(ex,
+                    "Failed to reactivate Razorpay subscription {RazorpaySubscriptionId}. Will update local subscription only.",
+                    subscription.RazorpaySubscriptionId);
+                // Continue with local update - the Razorpay state can be synced later
+            }
+        }
+
+        // Update local subscription state
         subscription.Status = SubscriptionStatus.Active;
         subscription.CancelAtPeriodEnd = false;
         subscription.CancelledAt = null;
@@ -878,6 +1314,10 @@ public class SubscriptionService : ISubscriptionService
         }
 
         await _dbContext.SaveChangesAsync();
+
+        _logger.LogInformation(
+            "Subscription {SubscriptionId} reactivated for organization {OrganizationId}",
+            subscription.Id, organizationId);
 
         var plan = await _planService.GetPlanByIdAsync(subscription.PlanId);
         return MapToSubscriptionDto(subscription, plan!, org?.HasUsedTrial ?? false);
@@ -1396,6 +1836,17 @@ public class SubscriptionService : ISubscriptionService
         if (subscription == null)
         {
             _logger.LogWarning("Subscription {SubscriptionId} not found for renewal", subscriptionId);
+            return;
+        }
+
+        // SECURITY FIX #6: Prevent reactivating cancelled/expired subscriptions via webhook
+        if (subscription.Status == SubscriptionStatus.Cancelled ||
+            subscription.Status == SubscriptionStatus.Expired)
+        {
+            _logger.LogWarning(
+                "Ignoring renewal webhook for {Status} subscription {SubscriptionId}. " +
+                "Cancelled/expired subscriptions cannot be reactivated via webhook.",
+                subscription.Status, subscriptionId);
             return;
         }
 
@@ -2073,6 +2524,24 @@ public class SubscriptionService : ISubscriptionService
         if (subscription == null || string.IsNullOrEmpty(subscription.ScheduledPlanCode))
             return;
 
+        // SECURITY FIX #7: Don't apply scheduled changes to invalid subscription states
+        if (subscription.Status == SubscriptionStatus.Cancelled ||
+            subscription.Status == SubscriptionStatus.Expired ||
+            subscription.Status == SubscriptionStatus.Paused)
+        {
+            _logger.LogWarning(
+                "Clearing scheduled change for {Status} subscription {SubscriptionId}. " +
+                "Cannot apply changes to inactive subscriptions.",
+                subscription.Status, subscriptionId);
+
+            // Clear the scheduled change instead of applying it
+            subscription.ScheduledPlanCode = null;
+            subscription.ScheduledBillingCycle = null;
+            subscription.ScheduledChangeDate = null;
+            await _dbContext.SaveChangesAsync();
+            return;
+        }
+
         var newPlan = await _planService.GetPlanByCodeAsync(subscription.ScheduledPlanCode);
         if (newPlan == null) return;
 
@@ -2126,6 +2595,26 @@ public class SubscriptionService : ISubscriptionService
                 $"Only active subscriptions can be paused. Current status: {subscription.Status}");
         }
 
+        // Pause subscription in Razorpay first (if exists)
+        if (!string.IsNullOrEmpty(subscription.RazorpaySubscriptionId))
+        {
+            try
+            {
+                await _razorpayService.PauseSubscriptionAsync(subscription.RazorpaySubscriptionId);
+                _logger.LogInformation(
+                    "Paused Razorpay subscription {RazorpaySubscriptionId} for subscription {SubscriptionId}",
+                    subscription.RazorpaySubscriptionId, subscriptionId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "Failed to pause Razorpay subscription {RazorpaySubscriptionId}. Aborting local pause.",
+                    subscription.RazorpaySubscriptionId);
+                throw new InvalidOperationException(
+                    "Failed to pause subscription with payment provider. Please try again later.", ex);
+            }
+        }
+
         var now = DateTime.UtcNow;
 
         subscription.Status = SubscriptionStatus.Paused;
@@ -2162,6 +2651,56 @@ public class SubscriptionService : ISubscriptionService
         {
             throw new InvalidOperationException(
                 $"Only paused subscriptions can be resumed. Current status: {subscription.Status}");
+        }
+
+        // Resume subscription in Razorpay first (if exists)
+        if (!string.IsNullOrEmpty(subscription.RazorpaySubscriptionId))
+        {
+            try
+            {
+                // Pre-flight check: Get Razorpay subscription status before attempting resume
+                var razorpayStatus = await _razorpayService.GetSubscriptionStatusAsync(
+                    subscription.RazorpaySubscriptionId);
+
+                // Validate subscription is eligible for resume
+                if (!razorpayStatus.HasPaymentMethod)
+                {
+                    throw new RazorpayService.PaymentRequiredException(
+                        "No valid payment method found. Please update your payment method to resume.");
+                }
+
+                var nowUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                if (razorpayStatus.ChargeAt.HasValue && razorpayStatus.ChargeAt.Value < nowUnix)
+                {
+                    _logger.LogWarning(
+                        "Subscription {SubscriptionId} billing period has ended. ChargeAt: {ChargeAt}, Now: {Now}",
+                        subscriptionId, razorpayStatus.ChargeAt.Value, nowUnix);
+                    throw new RazorpayService.PaymentRequiredException(
+                        "Your billing period has ended. Please select a plan to continue.");
+                }
+
+                // Proceed with Razorpay resume
+                await _razorpayService.ResumeSubscriptionAsync(subscription.RazorpaySubscriptionId);
+                _logger.LogInformation(
+                    "Resumed Razorpay subscription {RazorpaySubscriptionId} for subscription {SubscriptionId}",
+                    subscription.RazorpaySubscriptionId, subscriptionId);
+            }
+            catch (RazorpayService.PaymentRequiredException ex)
+            {
+                // Payment is required to resume - rethrow with specific message
+                _logger.LogWarning(ex,
+                    "Payment required to resume Razorpay subscription {RazorpaySubscriptionId}",
+                    subscription.RazorpaySubscriptionId);
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "Failed to resume Razorpay subscription {RazorpaySubscriptionId}. Aborting local resume.",
+                    subscription.RazorpaySubscriptionId);
+                throw new InvalidOperationException(
+                    "Failed to resume subscription with payment provider. Please try again later.", ex);
+            }
         }
 
         var now = DateTime.UtcNow;

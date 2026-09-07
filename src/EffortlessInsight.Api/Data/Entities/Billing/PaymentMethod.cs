@@ -83,6 +83,29 @@ public class PaymentMethod : BaseEntity
     [MaxLength(50)]
     public string? RazorpayCustomerId { get; set; }
 
+    // Mandate fields (for UPI AutoPay and NetBanking SI)
+    /// <summary>
+    /// Razorpay mandate ID for e-mandate/auto-debit.
+    /// </summary>
+    [MaxLength(50)]
+    public string? MandateId { get; set; }
+
+    /// <summary>
+    /// Mandate status: pending, authenticated, active, cancelled, expired.
+    /// </summary>
+    [MaxLength(20)]
+    public string? MandateStatus { get; set; }
+
+    /// <summary>
+    /// Maximum amount that can be debited per mandate cycle (in paise).
+    /// </summary>
+    public int? MandateMaxAmount { get; set; }
+
+    /// <summary>
+    /// When the mandate expires.
+    /// </summary>
+    public DateTime? MandateExpiresAt { get; set; }
+
     /// <summary>
     /// When the payment method was last used.
     /// </summary>
@@ -103,4 +126,40 @@ public static class PaymentMethodType
     public const string Upi = "upi";
     public const string NetBanking = "netbanking";
     public const string Wallet = "wallet";
+}
+
+/// <summary>
+/// Mandate status constants for UPI AutoPay and NetBanking SI.
+/// </summary>
+public static class MandateStatusType
+{
+    /// <summary>
+    /// Mandate created but not yet authenticated by customer.
+    /// </summary>
+    public const string Pending = "pending";
+
+    /// <summary>
+    /// Customer has completed authentication, mandate is being processed.
+    /// </summary>
+    public const string Authenticated = "authenticated";
+
+    /// <summary>
+    /// Mandate is active and can be used for auto-debit.
+    /// </summary>
+    public const string Active = "active";
+
+    /// <summary>
+    /// Mandate was cancelled by customer or bank.
+    /// </summary>
+    public const string Cancelled = "cancelled";
+
+    /// <summary>
+    /// Mandate has expired.
+    /// </summary>
+    public const string Expired = "expired";
+
+    /// <summary>
+    /// Mandate creation/authentication failed.
+    /// </summary>
+    public const string Failed = "failed";
 }

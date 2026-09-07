@@ -2,6 +2,7 @@ using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.Data.Entities.Billing;
 using EffortlessInsight.Api.DTOs;
+using EffortlessInsight.Api.Services.Admin;
 using EffortlessInsight.Api.Services.Billing;
 using EffortlessInsight.Api.Tests.Fixtures;
 using EffortlessInsight.Api.Tests.Helpers;
@@ -22,6 +23,7 @@ public class SubscriptionServiceTests : IDisposable
     private readonly IInvoiceService _invoiceService;
     private readonly IBillingNotificationService _billingNotificationService;
     private readonly IPaymentMethodService _paymentMethodService;
+    private readonly ISystemSettingsService _systemSettingsService;
     private readonly IDistributedCache _cache;
     private readonly ILogger<SubscriptionService> _logger;
     private readonly SubscriptionService _sut;
@@ -36,6 +38,7 @@ public class SubscriptionServiceTests : IDisposable
         _invoiceService = Substitute.For<IInvoiceService>();
         _billingNotificationService = Substitute.For<IBillingNotificationService>();
         _paymentMethodService = Substitute.For<IPaymentMethodService>();
+        _systemSettingsService = Substitute.For<ISystemSettingsService>();
         _cache = Substitute.For<IDistributedCache>();
         _logger = Substitute.For<ILogger<SubscriptionService>>();
 
@@ -48,6 +51,7 @@ public class SubscriptionServiceTests : IDisposable
             _invoiceService,
             _billingNotificationService,
             _paymentMethodService,
+            _systemSettingsService,
             _cache,
             _logger);
     }

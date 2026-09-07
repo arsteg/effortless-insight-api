@@ -223,6 +223,7 @@ public static class SubscriptionStatus
     public const string PastDue = "past_due";
     public const string Cancelled = "cancelled";
     public const string Expired = "expired";
+    public const string Completed = "completed";
 }
 
 /// <summary>

@@ -55,7 +55,25 @@ public record PlanLimitsDto(
 
 public record PlansListResponse(
     List<PlanDto> Plans,
-    List<AddOnDto>? AddOns
+    List<AddOnDto>? AddOns,
+    GlobalBillingSettingsDto? GlobalSettings = null
+);
+
+/// <summary>
+/// Global billing settings exposed to frontend.
+/// </summary>
+public record GlobalBillingSettingsDto(
+    /// <summary>
+    /// Whether additional seats/per-seat pricing is enabled globally.
+    /// When false, the "Add Seats" feature should be hidden from UI.
+    /// </summary>
+    bool AdditionalSeatsEnabled,
+
+    /// <summary>
+    /// Whether plan downgrades are allowed.
+    /// When false, users can only upgrade to higher plans.
+    /// </summary>
+    bool DowngradesAllowed
 );
 
 public record AddOnDto(
@@ -197,7 +215,38 @@ public record CreateSubscriptionResponse(
     RazorpayOrderDto? RazorpayOrder,
     CheckoutOptionsDto? CheckoutOptions,
     bool IsFreePlan = false,
-    SubscriptionDto? Subscription = null
+    SubscriptionDto? Subscription = null,
+    /// <summary>
+    /// Razorpay subscription details for recurring billing setup.
+    /// When present, frontend should use subscription checkout instead of order checkout.
+    /// </summary>
+    RazorpaySubscriptionCheckoutDto? RazorpaySubscription = null
+);
+
+/// <summary>
+/// Details for Razorpay subscription checkout (for true auto-recurring billing).
+/// </summary>
+public record RazorpaySubscriptionCheckoutDto(
+    /// <summary>
+    /// Razorpay subscription ID (starts with sub_).
+    /// </summary>
+    string SubscriptionId,
+    /// <summary>
+    /// Razorpay public key for checkout.
+    /// </summary>
+    string Key,
+    /// <summary>
+    /// Subscription status (created, authenticated, active, etc.).
+    /// </summary>
+    string Status,
+    /// <summary>
+    /// Short URL for customer to complete mandate authentication if needed.
+    /// </summary>
+    string? ShortUrl,
+    /// <summary>
+    /// Number of trial days before first charge.
+    /// </summary>
+    int TrialDays
 );
 
 public record RazorpayOrderDto(
@@ -236,6 +285,15 @@ public record CheckoutThemeDto(
 public record VerifyPaymentRequest(
     string RazorpayPaymentId,
     string RazorpayOrderId,
+    string RazorpaySignature
+);
+
+/// <summary>
+/// Request for verifying subscription-based payments (true auto-recurring).
+/// </summary>
+public record VerifySubscriptionPaymentRequest(
+    string RazorpayPaymentId,
+    string RazorpaySubscriptionId,
     string RazorpaySignature
 );
 
@@ -591,6 +649,7 @@ public record WebhookPayloadData
     public WebhookSubscription? Subscription { get; init; }
     public WebhookInvoice? Invoice { get; init; }
     public WebhookRefund? Refund { get; init; }
+    public WebhookToken? Token { get; init; }
 }
 
 public record WebhookPayment
@@ -611,6 +670,27 @@ public record WebhookInvoice
 public record WebhookRefund
 {
     public WebhookEntity? Entity { get; init; }
+}
+
+public record WebhookToken
+{
+    public WebhookTokenEntity? Entity { get; init; }
+}
+
+public record WebhookTokenEntity
+{
+    public string? Id { get; init; }
+    public string? Entity { get; init; }
+    public string? TokenId { get; init; }
+    public string? CustomerId { get; init; }
+    public string? Method { get; init; }
+    public bool? Recurring { get; init; }
+    public string? RecurringStatus { get; init; }
+    public string? AuthType { get; init; }
+    public int? MaxPaymentAmount { get; init; }
+    public long? ExpireAt { get; init; }
+    public string? Reason { get; init; }
+    public long? CreatedAt { get; init; }
 }
 
 public record WebhookEntity
@@ -636,7 +716,7 @@ public record WebhookEntity
     public long? StartAt { get; init; }
     public long? EndAt { get; init; }
     public long? EndedAt { get; init; }
-    public int? ShortUrl { get; init; }
+    public string? ShortUrl { get; init; }
 }
 
 // ============================================================================
