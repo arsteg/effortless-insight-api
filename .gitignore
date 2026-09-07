@@ -487,3 +487,5 @@ $RECYCLE.BIN/
 src/EffortlessInsight.Api/appsettings.json
 src/EffortlessInsight.Api/appsettings.json
 src/EffortlessInsight.Api/appsettings.Production.json
+/src/EffortlessInsight.Api/appsettings.Production.json
+/src/EffortlessInsight.Api/appsettings.json
