@@ -61,7 +61,11 @@ public class SubscriptionEnforcementMiddleware
         "/metrics",
         "/hangfire",
         "/hubs/",
-        "/api/v1/organizations/validate-gstin/"  // GSTIN validation during onboarding
+        "/api/v1/organizations/validate-gstin/",  // GSTIN validation during onboarding
+        // In-app support must work regardless of subscription state — a customer
+        // blocked by a payment/limit problem is exactly who needs to raise a ticket.
+        // Endpoints are still [Authorize]-protected and org-scoped.
+        "/api/v1/support/"
     };
 
     public SubscriptionEnforcementMiddleware(
