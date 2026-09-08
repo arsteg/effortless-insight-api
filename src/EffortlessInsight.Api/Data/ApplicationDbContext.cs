@@ -13,14 +13,14 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
 {
     private readonly ITenantContext? _tenantContext;
 
-    public ApplicationDbContext(DbContextOptions<ApplicationDbContext> options)
+    public ApplicationDbContext( DbContextOptions<ApplicationDbContext> options )
         : base(options)
     {
     }
 
     public ApplicationDbContext(
         DbContextOptions<ApplicationDbContext> options,
-        ITenantContext tenantContext)
+        ITenantContext tenantContext )
         : base(options)
     {
         _tenantContext = tenantContext;
@@ -183,7 +183,7 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
     public DbSet<GstExtensionEvent> GstExtensionEvents => Set<GstExtensionEvent>();
     public DbSet<GstSyncReminder> GstSyncReminders => Set<GstSyncReminder>();
 
-    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    protected override void OnModelCreating( ModelBuilder modelBuilder )
     {
         base.OnModelCreating(modelBuilder);
 
@@ -628,6 +628,11 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
                 .WithMany()
                 .HasForeignKey(n => n.GstinId)
                 .OnDelete(DeleteBehavior.SetNull);
+
+            // TotalDemand is a PostgreSQL STORED GENERATED column
+            // It computes the sum of TaxAmount, PenaltyAmount, and InterestAmount
+            entity.Property(n => n.TotalDemand)
+                .HasComputedColumnSql(@"COALESCE(""TaxAmount"", 0) + COALESCE(""PenaltyAmount"", 0) + COALESCE(""InterestAmount"", 0)", stored: true);
         });
 
         // ============================================================================
@@ -3014,7 +3019,7 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
         SeedData(modelBuilder);
     }
 
-    private static void SeedData(ModelBuilder modelBuilder)
+    private static void SeedData( ModelBuilder modelBuilder )
     {
         // Use a fixed date for seed data to avoid migration changes
         var seedDate = new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc);
@@ -3067,7 +3072,7 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
         // See migration "SeedSubscriptionPlans" for the seed data.
     }
 
-    public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    public override Task<int> SaveChangesAsync( CancellationToken cancellationToken = default )
     {
         UpdateTimestamps();
         return base.SaveChangesAsync(cancellationToken);

@@ -20,7 +20,7 @@ public interface IAuthService
     // 2FA Setup
     Task<TwoFactorSetupResponse> Setup2faAsync(Guid userId);
     Task<TwoFactorVerifySetupResponse> VerifySetup2faAsync(Guid userId, string code);
-    Task Disable2faAsync(Guid userId, string password);
+    Task Disable2faAsync(Guid userId, string? password, string code);
 
     // 2FA Login
     Task<TwoFactorLoginResponse> Complete2faLoginAsync(TwoFactorLoginRequest request, string ipAddress, string? userAgent);

@@ -40,7 +40,7 @@ public class AuthService : IAuthService
         IConfiguration configuration,
         ITwoFactorService twoFactorService,
         IOtpService otpService,
-        IGeoLocationService geoLocationService)
+        IGeoLocationService geoLocationService )
     {
         _userManager = userManager;
         _dbContext = dbContext;
@@ -54,7 +54,7 @@ public class AuthService : IAuthService
         _geoLocationService = geoLocationService;
     }
 
-    public async Task<RegisterResponse> RegisterAsync(RegisterRequest request, string ipAddress, string? userAgent)
+    public async Task<RegisterResponse> RegisterAsync( RegisterRequest request, string ipAddress, string? userAgent )
     {
         // Check if email already exists
         var existingUser = await _userManager.FindByEmailAsync(request.Email);
@@ -194,7 +194,7 @@ public class AuthService : IAuthService
         );
     }
 
-    public async Task<object> LoginAsync(LoginRequest request, string ipAddress, string? userAgent)
+    public async Task<object> LoginAsync( LoginRequest request, string ipAddress, string? userAgent )
     {
         var user = await _userManager.FindByEmailAsync(request.Email);
 
@@ -275,7 +275,7 @@ public class AuthService : IAuthService
         return loginResponse;
     }
 
-    public async Task<TokenResponse> RefreshTokenAsync(string refreshToken, string ipAddress, string? userAgent)
+    public async Task<TokenResponse> RefreshTokenAsync( string refreshToken, string ipAddress, string? userAgent )
     {
         // Parse the refresh token to get JTI
         var tokenParts = refreshToken.Split(':');
@@ -362,7 +362,7 @@ public class AuthService : IAuthService
         );
     }
 
-    public async Task VerifyEmailAsync(string token)
+    public async Task VerifyEmailAsync( string token )
     {
         var cacheKey = $"email_verify:{token}";
         var cachedData = await _cache.GetStringAsync(cacheKey);
@@ -405,7 +405,7 @@ public class AuthService : IAuthService
         _logger.LogInformation("Email verified for user: {Email}", user.Email);
     }
 
-    public async Task ForgotPasswordAsync(string email, string ipAddress)
+    public async Task ForgotPasswordAsync( string email, string ipAddress )
     {
         var user = await _userManager.FindByEmailAsync(email);
 
@@ -460,7 +460,7 @@ public class AuthService : IAuthService
         _logger.LogInformation("Password reset requested for: {Email}", user.Email);
     }
 
-    public async Task ResetPasswordAsync(ResetPasswordRequest request)
+    public async Task ResetPasswordAsync( ResetPasswordRequest request )
     {
         if (request.Password != request.ConfirmPassword)
         {
@@ -523,7 +523,7 @@ public class AuthService : IAuthService
         _logger.LogInformation("Password reset successful for: {Email}", user.Email);
     }
 
-    public async Task ChangePasswordAsync(Guid userId, ChangePasswordRequest request)
+    public async Task ChangePasswordAsync( Guid userId, ChangePasswordRequest request )
     {
         if (request.NewPassword != request.ConfirmPassword)
         {
@@ -570,7 +570,7 @@ public class AuthService : IAuthService
         _logger.LogInformation("Password changed for user: {UserId}", userId);
     }
 
-    public async Task LogoutAsync(Guid userId, string? refreshTokenJti, bool allDevices)
+    public async Task LogoutAsync( Guid userId, string? refreshTokenJti, bool allDevices )
     {
         var user = await _userManager.FindByIdAsync(userId.ToString());
 
@@ -602,7 +602,7 @@ public class AuthService : IAuthService
 
     #region OTP Login
 
-    public async Task<OtpResponse> RequestOtpLoginAsync(string mobile, string ipAddress)
+    public async Task<OtpResponse> RequestOtpLoginAsync( string mobile, string ipAddress )
     {
         // For login purpose, verify mobile exists in database first
         var normalizedMobile = NormalizeMobile(mobile);
@@ -617,7 +617,7 @@ public class AuthService : IAuthService
         return await _otpService.RequestOtpAsync(mobile, "login", ipAddress);
     }
 
-    public async Task<object> VerifyOtpLoginAsync(OtpVerifyRequest request, string ipAddress, string? userAgent)
+    public async Task<object> VerifyOtpLoginAsync( OtpVerifyRequest request, string ipAddress, string? userAgent )
     {
         var isValid = await _otpService.VerifyOtpAsync(request.Mobile, request.Otp, "login");
         if (!isValid)
@@ -691,7 +691,7 @@ public class AuthService : IAuthService
 
     #region 2FA Setup
 
-    public async Task<TwoFactorSetupResponse> Setup2faAsync(Guid userId)
+    public async Task<TwoFactorSetupResponse> Setup2faAsync( Guid userId )
     {
         var user = await _userManager.FindByIdAsync(userId.ToString());
         if (user == null)
@@ -734,7 +734,7 @@ public class AuthService : IAuthService
         );
     }
 
-    public async Task<TwoFactorVerifySetupResponse> VerifySetup2faAsync(Guid userId, string code)
+    public async Task<TwoFactorVerifySetupResponse> VerifySetup2faAsync( Guid userId, string code )
     {
         var user = await _userManager.FindByIdAsync(userId.ToString());
         if (user == null)
@@ -784,11 +784,11 @@ public class AuthService : IAuthService
 
         return new TwoFactorVerifySetupResponse(
             Message: "Two-factor authentication enabled successfully",
-            BackupCodesRemaining: setupData.BackupCodes.Count
+            RecoveryCodes: setupData.BackupCodes
         );
     }
 
-    public async Task Disable2faAsync(Guid userId, string password)
+    public async Task Disable2faAsync( Guid userId, string? password, string code )
     {
         var user = await _userManager.FindByIdAsync(userId.ToString());
         if (user == null)
@@ -801,11 +801,55 @@ public class AuthService : IAuthService
             throw new InvalidOperationException("2FA_NOT_ENABLED");
         }
 
-        // Verify password
-        var isPasswordValid = await _userManager.CheckPasswordAsync(user, password);
-        if (!isPasswordValid)
+        // Check if user has a password set
+        var hasPassword = await _userManager.HasPasswordAsync(user);
+
+        // If user has password, require password verification
+        if (hasPassword)
         {
-            throw new UnauthorizedAccessException("INVALID_PASSWORD");
+            if (string.IsNullOrEmpty(password))
+            {
+                throw new InvalidOperationException("PASSWORD_REQUIRED");
+            }
+
+            var isPasswordValid = await _userManager.CheckPasswordAsync(user, password);
+            if (!isPasswordValid)
+            {
+                throw new UnauthorizedAccessException("INVALID_PASSWORD");
+            }
+        }
+
+        // Always verify TOTP/backup code
+        if (user.TotpSecretEncrypted == null)
+        {
+            throw new InvalidOperationException("2FA_NOT_CONFIGURED");
+        }
+
+        var isCodeValid = false;
+        var backupCodeUsed = false;
+
+        // Check if it's a backup code (8 alphanumeric characters)
+        if (code.Length == 8 && code.All(c => char.IsLetterOrDigit(c)))
+        {
+            if (user.BackupCodesHash != null &&
+                _twoFactorService.VerifyBackupCode(user.BackupCodesHash, code, out var usedIndex))
+            {
+                user.BackupCodesHash[usedIndex] = string.Empty;
+                isCodeValid = true;
+                backupCodeUsed = true;
+            }
+        }
+
+        // If not a valid backup code, try TOTP
+        if (!isCodeValid)
+        {
+            var secret = _twoFactorService.DecryptSecret(user.TotpSecretEncrypted);
+            isCodeValid = _twoFactorService.VerifyCode(secret, code);
+        }
+
+        if (!isCodeValid)
+        {
+            throw new UnauthorizedAccessException("INVALID_2FA_CODE");
         }
 
         // Disable 2FA
@@ -817,7 +861,8 @@ public class AuthService : IAuthService
         await _userManager.UpdateAsync(user);
 
         // Audit log
-        await LogAuthEventAsync(user.Id, user.Email, AuthEventTypes.TwoFactorDisabled, true, null, null, null);
+        await LogAuthEventAsync(user.Id, user.Email, AuthEventTypes.TwoFactorDisabled, true,
+            backupCodeUsed ? "Disabled using backup code" : "Disabled using TOTP", null, null);
 
         _logger.LogInformation("2FA disabled for user: {UserId}", userId);
     }
@@ -826,7 +871,7 @@ public class AuthService : IAuthService
 
     #region 2FA Login
 
-    public async Task<TwoFactorLoginResponse> Complete2faLoginAsync(TwoFactorLoginRequest request, string ipAddress, string? userAgent)
+    public async Task<TwoFactorLoginResponse> Complete2faLoginAsync( TwoFactorLoginRequest request, string ipAddress, string? userAgent )
     {
         // Get partial token data
         var partialTokenDataJson = await _cache.GetStringAsync($"2fa_partial:{request.PartialToken}");
@@ -944,7 +989,7 @@ public class AuthService : IAuthService
 
     #region Password History
 
-    public async Task<bool> IsPasswordRecentlyUsedAsync(Guid userId, string password)
+    public async Task<bool> IsPasswordRecentlyUsedAsync( Guid userId, string password )
     {
         var recentPasswords = await _dbContext.PasswordHistory
             .Where(p => p.UserId == userId)
@@ -979,7 +1024,7 @@ public class AuthService : IAuthService
         return false;
     }
 
-    public async Task AddPasswordHistoryAsync(Guid userId, string passwordHash)
+    public async Task AddPasswordHistoryAsync( Guid userId, string passwordHash )
     {
         var passwordHistory = new PasswordHistory
         {
@@ -1031,7 +1076,7 @@ public class AuthService : IAuthService
         return await Task.FromResult(new OAuthProvidersResponse(providers));
     }
 
-    public async Task<OAuthLoginUrlResponse> GetOAuthLoginUrlAsync(string provider, string? state, bool forceReauth = false, string? redirectUri = null, string? platform = null)
+    public async Task<OAuthLoginUrlResponse> GetOAuthLoginUrlAsync( string provider, string? state, bool forceReauth = false, string? redirectUri = null, string? platform = null )
     {
         var oauthSection = _configuration.GetSection("OAuth");
         var callbackBaseUrl = oauthSection.GetValue<string>("CallbackBaseUrl") ?? "http://localhost:3000";
@@ -1098,7 +1143,7 @@ public class AuthService : IAuthService
         return new OAuthLoginUrlResponse(loginUrl, stateToken);
     }
 
-    public async Task<object> HandleOAuthCallbackAsync(string provider, string code, string state, string ipAddress, string? userAgent)
+    public async Task<object> HandleOAuthCallbackAsync( string provider, string code, string state, string ipAddress, string? userAgent )
     {
         // State is required for CSRF protection
         if (string.IsNullOrEmpty(state))
@@ -1322,7 +1367,7 @@ public class AuthService : IAuthService
         return loginResponse;
     }
 
-    private async Task<OAuthUserInfo?> ExchangeGoogleCodeAsync(string code, string callbackBaseUrl)
+    private async Task<OAuthUserInfo?> ExchangeGoogleCodeAsync( string code, string callbackBaseUrl )
     {
         var oauthSection = _configuration.GetSection("OAuth:Google");
         var clientId = oauthSection.GetValue<string>("ClientId");
@@ -1378,7 +1423,7 @@ public class AuthService : IAuthService
         };
     }
 
-    private async Task<OAuthUserInfo?> ExchangeMicrosoftCodeAsync(string code, string callbackBaseUrl)
+    private async Task<OAuthUserInfo?> ExchangeMicrosoftCodeAsync( string code, string callbackBaseUrl )
     {
         var oauthSection = _configuration.GetSection("OAuth:Microsoft");
         var clientId = oauthSection.GetValue<string>("ClientId");
@@ -1505,7 +1550,7 @@ public class AuthService : IAuthService
         };
     }
 
-    public async Task DisconnectOAuthAsync(Guid userId, string provider, string password)
+    public async Task DisconnectOAuthAsync( Guid userId, string provider, string password )
     {
         var user = await _userManager.FindByIdAsync(userId.ToString());
         if (user == null)
@@ -1578,7 +1623,7 @@ public class AuthService : IAuthService
         _logger.LogInformation("OAuth disconnected for user {UserId}: {Provider}", userId, provider);
     }
 
-    public async Task<UserOAuthInfoResponse?> GetUserOAuthInfoAsync(Guid userId)
+    public async Task<UserOAuthInfoResponse?> GetUserOAuthInfoAsync( Guid userId )
     {
         var user = await _userManager.FindByIdAsync(userId.ToString());
         if (user == null)
@@ -1611,7 +1656,7 @@ public class AuthService : IAuthService
         );
     }
 
-    public async Task<UserOAuthProvidersResponse> GetUserOAuthProvidersAsync(Guid userId)
+    public async Task<UserOAuthProvidersResponse> GetUserOAuthProvidersAsync( Guid userId )
     {
         var user = await _userManager.FindByIdAsync(userId.ToString());
         if (user == null)
@@ -1663,7 +1708,7 @@ public class AuthService : IAuthService
         );
     }
 
-    public async Task<LinkedOAuthProviderDto> LinkOAuthProviderAsync(Guid userId, string provider, string code, string state)
+    public async Task<LinkedOAuthProviderDto> LinkOAuthProviderAsync( Guid userId, string provider, string code, string state )
     {
         var user = await _userManager.FindByIdAsync(userId.ToString());
         if (user == null)
@@ -1780,7 +1825,7 @@ public class AuthService : IAuthService
         bool rememberMe,
         DeviceInfo? deviceInfo,
         string ipAddress,
-        string? userAgent)
+        string? userAgent )
     {
         // Get user's organization from memberships first (multi-org support), then fallback to legacy field
         var membership = await _dbContext.OrganizationMembers
@@ -1863,7 +1908,7 @@ public class AuthService : IAuthService
         );
     }
 
-    private async Task HandleFailedLoginAsync(ApplicationUser user, string ipAddress, string? userAgent)
+    private async Task HandleFailedLoginAsync( ApplicationUser user, string ipAddress, string? userAgent )
     {
         user.FailedLoginAttempts++;
         user.LastFailedLoginAt = DateTime.UtcNow;
@@ -1894,7 +1939,7 @@ public class AuthService : IAuthService
         }
     }
 
-    private async Task ResetFailedLoginAttemptsAsync(ApplicationUser user, string? ipAddress = null, string? userAgent = null)
+    private async Task ResetFailedLoginAttemptsAsync( ApplicationUser user, string? ipAddress = null, string? userAgent = null )
     {
         var wasLocked = user.IsLocked;
         if (user.FailedLoginAttempts > 0 || user.IsLocked)
@@ -1919,7 +1964,7 @@ public class AuthService : IAuthService
         }
     }
 
-    private async Task RevokeAllUserSessionsAsync(Guid userId, string reason)
+    private async Task RevokeAllUserSessionsAsync( Guid userId, string reason )
     {
         var activeSessions = await _dbContext.UserSessions
             .Where(s => s.UserId == userId && s.RevokedAt == null)
@@ -1941,7 +1986,7 @@ public class AuthService : IAuthService
         string? failureReason,
         string ipAddress,
         string? userAgent,
-        string authMethod)
+        string authMethod )
     {
         await LogAuthEventAsync(
             userId,
@@ -1963,7 +2008,7 @@ public class AuthService : IAuthService
         string? ipAddress,
         string? userAgent,
         string? authMethod = null,
-        string? metadata = null)
+        string? metadata = null )
     {
         var audit = new LoginAudit
         {
@@ -1991,13 +2036,13 @@ public class AuthService : IAuthService
         return Convert.ToBase64String(randomBytes).Replace("+", "-").Replace("/", "_").TrimEnd('=');
     }
 
-    private static string ComputeSha256Hash(string input)
+    private static string ComputeSha256Hash( string input )
     {
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(input));
         return Convert.ToHexString(bytes).ToLower();
     }
 
-    private static string? NormalizeMobile(string? mobile)
+    private static string? NormalizeMobile( string? mobile )
     {
         if (string.IsNullOrEmpty(mobile))
             return null;
@@ -2007,7 +2052,7 @@ public class AuthService : IAuthService
         return digits.Length >= 10 ? digits[^10..] : digits;
     }
 
-    private static string ExtractDeviceName(string? userAgent)
+    private static string ExtractDeviceName( string? userAgent )
     {
         if (string.IsNullOrEmpty(userAgent))
             return "Unknown Device";

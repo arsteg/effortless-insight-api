@@ -26,7 +26,7 @@ public class AuthController : ControllerBase
         IOrganizationManagementService organizationService,
         IOtpService otpService,
         ApplicationDbContext dbContext,
-        ILogger<AuthController> logger)
+        ILogger<AuthController> logger )
     {
         _authService = authService;
         _sessionService = sessionService;
@@ -44,7 +44,7 @@ public class AuthController : ControllerBase
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status409Conflict)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status503ServiceUnavailable)]
-    public async Task<IActionResult> Register([FromBody] RegisterRequest request)
+    public async Task<IActionResult> Register( [FromBody] RegisterRequest request )
     {
         try
         {
@@ -94,7 +94,7 @@ public class AuthController : ControllerBase
     [HttpPost("verify-email")]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
-    public async Task<IActionResult> VerifyEmail([FromBody] VerifyEmailRequest request)
+    public async Task<IActionResult> VerifyEmail( [FromBody] VerifyEmailRequest request )
     {
         try
         {
@@ -131,7 +131,7 @@ public class AuthController : ControllerBase
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status403Forbidden)]
-    public async Task<IActionResult> Login([FromBody] LoginRequest request)
+    public async Task<IActionResult> Login( [FromBody] LoginRequest request )
     {
         try
         {
@@ -180,7 +180,7 @@ public class AuthController : ControllerBase
     [HttpPost("refresh")]
     [ProducesResponseType(typeof(ApiResponse<TokenResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status401Unauthorized)]
-    public async Task<IActionResult> RefreshToken([FromBody] RefreshTokenRequest request)
+    public async Task<IActionResult> RefreshToken( [FromBody] RefreshTokenRequest request )
     {
         try
         {
@@ -216,7 +216,7 @@ public class AuthController : ControllerBase
     /// </summary>
     [HttpPost("forgot-password")]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordRequest request)
+    public async Task<IActionResult> ForgotPassword( [FromBody] ForgotPasswordRequest request )
     {
         try
         {
@@ -247,7 +247,7 @@ public class AuthController : ControllerBase
     [HttpPost("reset-password")]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
-    public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordRequest request)
+    public async Task<IActionResult> ResetPassword( [FromBody] ResetPasswordRequest request )
     {
         try
         {
@@ -286,7 +286,7 @@ public class AuthController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status401Unauthorized)]
-    public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequest request)
+    public async Task<IActionResult> ChangePassword( [FromBody] ChangePasswordRequest request )
     {
         try
         {
@@ -324,7 +324,7 @@ public class AuthController : ControllerBase
     [Authorize]
     [HttpPost("logout")]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> Logout([FromBody] LogoutRequest? request)
+    public async Task<IActionResult> Logout( [FromBody] LogoutRequest? request )
     {
         try
         {
@@ -359,7 +359,7 @@ public class AuthController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<UserProfileDto>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
-    public async Task<IActionResult> UpdateCurrentUser([FromBody] UpdateProfileRequest request)
+    public async Task<IActionResult> UpdateCurrentUser( [FromBody] UpdateProfileRequest request )
     {
         var userId = GetCurrentUserId();
 
@@ -507,6 +507,7 @@ public class AuthController : ControllerBase
                 EmailVerified: user.EmailConfirmed,
                 MobileVerified: user.IsMobileVerified,
                 Is2faEnabled: user.Is2faEnabled,
+                HasPassword: !string.IsNullOrEmpty(user.PasswordHash),
                 Role: currentOrg?.Role ?? user.Role,
                 Organization: currentOrg,
                 Organizations: organizations,
@@ -532,7 +533,7 @@ public class AuthController : ControllerBase
     [HttpPost("switch-organization")]
     [ProducesResponseType(typeof(ApiResponse<SwitchOrganizationResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status403Forbidden)]
-    public async Task<IActionResult> SwitchOrganization([FromBody] SwitchOrganizationRequest request)
+    public async Task<IActionResult> SwitchOrganization( [FromBody] SwitchOrganizationRequest request )
     {
         try
         {
@@ -566,7 +567,7 @@ public class AuthController : ControllerBase
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status409Conflict)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status429TooManyRequests)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status503ServiceUnavailable)]
-    public async Task<IActionResult> RequestSignupOtp([FromBody] OtpRequestRequest request)
+    public async Task<IActionResult> RequestSignupOtp( [FromBody] OtpRequestRequest request )
     {
         try
         {
@@ -617,7 +618,7 @@ public class AuthController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<MobileVerificationResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status401Unauthorized)]
-    public async Task<IActionResult> VerifySignupOtp([FromBody] SignupOtpVerifyRequest request)
+    public async Task<IActionResult> VerifySignupOtp( [FromBody] SignupOtpVerifyRequest request )
     {
         try
         {
@@ -656,7 +657,7 @@ public class AuthController : ControllerBase
         }
     }
 
-    private async Task UpsertSignupAttemptAsync(SignupOtpVerifyRequest request)
+    private async Task UpsertSignupAttemptAsync( SignupOtpVerifyRequest request )
     {
         var digits = new string(request.Mobile.Where(char.IsDigit).ToArray());
         if (digits.Length < 10)
@@ -705,7 +706,7 @@ public class AuthController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<OtpResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status429TooManyRequests)]
-    public async Task<IActionResult> RequestOtp([FromBody] OtpRequestRequest request)
+    public async Task<IActionResult> RequestOtp( [FromBody] OtpRequestRequest request )
     {
         try
         {
@@ -740,7 +741,7 @@ public class AuthController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<TwoFactorRequiredResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status401Unauthorized)]
-    public async Task<IActionResult> VerifyOtp([FromBody] OtpVerifyRequest request)
+    public async Task<IActionResult> VerifyOtp( [FromBody] OtpVerifyRequest request )
     {
         try
         {
@@ -817,7 +818,7 @@ public class AuthController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<TwoFactorVerifySetupResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status401Unauthorized)]
-    public async Task<IActionResult> VerifySetup2fa([FromBody] TwoFactorVerifySetupRequest request)
+    public async Task<IActionResult> VerifySetup2fa( [FromBody] TwoFactorVerifySetupRequest request )
     {
         try
         {
@@ -853,7 +854,7 @@ public class AuthController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<TwoFactorLoginResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status401Unauthorized)]
-    public async Task<IActionResult> Login2fa([FromBody] TwoFactorLoginRequest request)
+    public async Task<IActionResult> Login2fa( [FromBody] TwoFactorLoginRequest request )
     {
         try
         {
@@ -892,12 +893,12 @@ public class AuthController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status401Unauthorized)]
-    public async Task<IActionResult> Disable2fa([FromBody] TwoFactorDisableRequest request)
+    public async Task<IActionResult> Disable2fa( [FromBody] TwoFactorDisableRequest request )
     {
         try
         {
             var userId = GetCurrentUserId();
-            await _authService.Disable2faAsync(userId, request.Password);
+            await _authService.Disable2faAsync(userId, request.Password, request.Code);
 
             return Ok(new ApiResponse<object>(true, new
             {
@@ -908,9 +909,21 @@ public class AuthController : ControllerBase
         {
             return BadRequest(new ApiErrorResponse(false, "2FA_NOT_ENABLED", "Two-factor authentication is not enabled"));
         }
+        catch (InvalidOperationException ex) when (ex.Message == "PASSWORD_REQUIRED")
+        {
+            return BadRequest(new ApiErrorResponse(false, "PASSWORD_REQUIRED", "Password is required for users with password authentication"));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "2FA_NOT_CONFIGURED")
+        {
+            return BadRequest(new ApiErrorResponse(false, "2FA_NOT_CONFIGURED", "Two-factor authentication is not properly configured"));
+        }
         catch (UnauthorizedAccessException ex) when (ex.Message == "INVALID_PASSWORD")
         {
             return Unauthorized(new ApiErrorResponse(false, "INVALID_PASSWORD", "Password is incorrect"));
+        }
+        catch (UnauthorizedAccessException ex) when (ex.Message == "INVALID_2FA_CODE")
+        {
+            return Unauthorized(new ApiErrorResponse(false, "INVALID_2FA_CODE", "Verification code is invalid"));
         }
         catch (Exception ex)
         {
@@ -953,7 +966,7 @@ public class AuthController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> RevokeSession(Guid sessionId)
+    public async Task<IActionResult> RevokeSession( Guid sessionId )
     {
         try
         {
@@ -1019,7 +1032,7 @@ public class AuthController : ControllerBase
         [FromQuery] string? state,
         [FromQuery] bool forceReauth = false,
         [FromQuery] string? redirectUri = null,
-        [FromQuery] string? platform = null)
+        [FromQuery] string? platform = null )
     {
         try
         {
@@ -1051,7 +1064,7 @@ public class AuthController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<TwoFactorRequiredResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status401Unauthorized)]
-    public async Task<IActionResult> HandleOAuthCallback(string provider, [FromBody] OAuthCallbackRequest request)
+    public async Task<IActionResult> HandleOAuthCallback( string provider, [FromBody] OAuthCallbackRequest request )
     {
         try
         {
@@ -1167,7 +1180,7 @@ public class AuthController : ControllerBase
     [HttpPost("oauth/{provider}/link")]
     [ProducesResponseType(typeof(ApiResponse<LinkedOAuthProviderDto>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
-    public async Task<IActionResult> LinkOAuthProvider(string provider, [FromBody] OAuthCallbackRequest request)
+    public async Task<IActionResult> LinkOAuthProvider( string provider, [FromBody] OAuthCallbackRequest request )
     {
         try
         {
@@ -1221,7 +1234,7 @@ public class AuthController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status401Unauthorized)]
-    public async Task<IActionResult> DisconnectOAuth(string provider, [FromBody] DisconnectOAuthRequest request)
+    public async Task<IActionResult> DisconnectOAuth( string provider, [FromBody] DisconnectOAuthRequest request )
     {
         try
         {
@@ -1263,7 +1276,7 @@ public class AuthController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status401Unauthorized)]
-    public async Task<IActionResult> DisconnectOAuthLegacy([FromBody] DisconnectOAuthRequest request)
+    public async Task<IActionResult> DisconnectOAuthLegacy( [FromBody] DisconnectOAuthRequest request )
     {
         // Redirect to the new endpoint
         return await DisconnectOAuth(request.Provider, request);

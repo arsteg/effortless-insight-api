@@ -18,7 +18,7 @@ public record RegisterRequest(
     [MaxLength(128)] string? MobileVerificationToken = null
 );
 
-public record MobileVerificationResponse(string VerificationToken, int ExpiresIn);
+public record MobileVerificationResponse( string VerificationToken, int ExpiresIn );
 
 public record RegisterResponse(
     Guid UserId,
@@ -57,9 +57,9 @@ public record TwoFactorRequiredResponse(
     List<string> Methods
 );
 
-public record VerifyEmailRequest([MaxLength(500)] string Token);
+public record VerifyEmailRequest( [MaxLength(500)] string Token );
 
-public record RefreshTokenRequest([MaxLength(2000)] string RefreshToken);
+public record RefreshTokenRequest( [MaxLength(2000)] string RefreshToken );
 
 public record TokenResponse(
     string AccessToken,
@@ -68,7 +68,7 @@ public record TokenResponse(
     int ExpiresIn
 );
 
-public record ForgotPasswordRequest([MaxLength(255)] string Email);
+public record ForgotPasswordRequest( [MaxLength(255)] string Email );
 
 public record ResetPasswordRequest(
     [MaxLength(500)] string Token,
@@ -92,12 +92,12 @@ public record UpdateProfileRequest(
     [MaxLength(500)] string? AvatarUrl = null
 );
 
-public record LogoutRequest(bool AllDevices = false);
+public record LogoutRequest( bool AllDevices = false );
 
 // OTP DTOs
-public record OtpRequestRequest([MaxLength(20)] string Mobile, [MaxLength(20)] string Purpose = "login");
-public record OtpResponse(string Message, string MaskedMobile, int ExpiresIn, int RetryAfter);
-public record OtpVerifyRequest([MaxLength(20)] string Mobile, [MaxLength(10)] string Otp);
+public record OtpRequestRequest( [MaxLength(20)] string Mobile, [MaxLength(20)] string Purpose = "login" );
+public record OtpResponse( string Message, string MaskedMobile, int ExpiresIn, int RetryAfter );
+public record OtpVerifyRequest( [MaxLength(20)] string Mobile, [MaxLength(10)] string Otp );
 
 // Signup OTP verify carries whatever contact details the form already has, so
 // abandoned signups can be followed up from the admin portal (SignupAttempt).
@@ -106,7 +106,7 @@ public record SignupOtpVerifyRequest(
     [MaxLength(10)] string Otp,
     [MaxLength(100)] string? Name = null,
     [MaxLength(256)] string? Email = null,
-    [MaxLength(20)] string? Source = null);
+    [MaxLength(20)] string? Source = null );
 
 // Admin: incomplete-signup lead list
 public record SignupAttemptDto(
@@ -118,15 +118,15 @@ public record SignupAttemptDto(
     DateTime MobileVerifiedAt,
     DateTime? ContactedAt,
     string? ContactNotes,
-    DateTime CreatedAt);
+    DateTime CreatedAt );
 
 public record SignupAttemptListResponse(
     List<SignupAttemptDto> Items,
     int Total,
     int Page,
-    int PageSize);
+    int PageSize );
 
-public record SignupAttemptContactRequest(bool Contacted = true, [MaxLength(1000)] string? Notes = null);
+public record SignupAttemptContactRequest( bool Contacted = true, [MaxLength(1000)] string? Notes = null );
 
 // ===== Activity tracking & analytics =====
 
@@ -137,12 +137,12 @@ public record ActivityEventInput(
     [MaxLength(500)] string? Referrer = null,
     [MaxLength(50)] string? EntityType = null,
     Guid? EntityId = null,
-    [MaxLength(2000)] string? Metadata = null);
+    [MaxLength(2000)] string? Metadata = null );
 
 public record ActivityTrackRequest(
     [MaxLength(64)] string VisitorId,
     [MaxLength(64)] string SessionId,
-    List<ActivityEventInput> Events);
+    List<ActivityEventInput> Events );
 
 public record ActivityOverviewResponse(
     int UniqueVisitors,
@@ -153,11 +153,11 @@ public record ActivityOverviewResponse(
     int TotalEvents,
     int Signups,
     int Logins,
-    double ConversionRate);
+    double ConversionRate );
 
-public record ActivityTrendPoint(DateTime Date, int Visitors, int PageViews, int Events, int Signups);
+public record ActivityTrendPoint( DateTime Date, int Visitors, int PageViews, int Events, int Signups );
 
-public record ActivityCountItem(string Key, int Count, int Visitors);
+public record ActivityCountItem( string Key, int Count, int Visitors );
 
 public record ActivityEventDto(
     Guid Id,
@@ -173,9 +173,9 @@ public record ActivityEventDto(
     string? EntityType,
     Guid? EntityId,
     string? Metadata,
-    DateTime CreatedAt);
+    DateTime CreatedAt );
 
-public record ActivityEventListResponse(List<ActivityEventDto> Items, int Total, int Page, int PageSize);
+public record ActivityEventListResponse( List<ActivityEventDto> Items, int Total, int Page, int PageSize );
 
 public record VisitorListItem(
     string VisitorId,
@@ -186,35 +186,38 @@ public record VisitorListItem(
     DateTime LastSeenAt,
     string? FirstReferrer,
     string? LandingPage,
-    int EventCount);
+    int EventCount );
 
-public record VisitorListResponse(List<VisitorListItem> Items, int Total, int Page, int PageSize);
+public record VisitorListResponse( List<VisitorListItem> Items, int Total, int Page, int PageSize );
 
 public record VisitorJourneyResponse(
     VisitorListItem Visitor,
     List<ActivityEventDto> Events,
     int TotalEvents,
     int Page,
-    int PageSize);
+    int PageSize );
 
 // 2FA Setup DTOs
-public record TwoFactorSetupResponse(string Secret, string QrCodeDataUrl, string OtpauthUrl, List<string> BackupCodes);
-public record TwoFactorVerifySetupRequest([MaxLength(10)] string Code);
-public record TwoFactorVerifySetupResponse(string Message, int BackupCodesRemaining);
+public record TwoFactorSetupResponse( string Secret, string QrCodeDataUrl, string OtpauthUrl, List<string> BackupCodes );
+public record TwoFactorVerifySetupRequest( [MaxLength(10)] string Code );
+public record TwoFactorVerifySetupResponse( string Message, List<string> RecoveryCodes );
 
 // 2FA Login DTOs
-public record TwoFactorLoginRequest([MaxLength(500)] string PartialToken, [MaxLength(20)] string Code);
-public record TwoFactorLoginResponse(string AccessToken, string RefreshToken, string TokenType, int ExpiresIn, bool BackupCodeUsed);
+public record TwoFactorLoginRequest( [MaxLength(500)] string PartialToken, [MaxLength(20)] string Code );
+public record TwoFactorLoginResponse( string AccessToken, string RefreshToken, string TokenType, int ExpiresIn, bool BackupCodeUsed );
 
 // 2FA Disable DTOs
-public record TwoFactorDisableRequest([MaxLength(128)] string Password);
+public record TwoFactorDisableRequest(
+    [MaxLength(128)] string? Password,  // Required for password users, null for OAuth-only
+    [MaxLength(20)] string Code          // TOTP (6 digits) or backup code (8 chars) - always required
+);
 
 // OAuth DTOs
-public record OAuthProviderInfo(string Name, string DisplayName, bool Enabled);
-public record OAuthProvidersResponse(List<OAuthProviderInfo> Providers);
-public record OAuthLoginUrlResponse(string LoginUrl, string State);
-public record OAuthCallbackRequest([MaxLength(2000)] string Code, [MaxLength(500)] string State, DeviceInfo? DeviceInfo = null);
-public record DisconnectOAuthRequest([MaxLength(50)] string Provider, [MaxLength(128)] string Password);
+public record OAuthProviderInfo( string Name, string DisplayName, bool Enabled );
+public record OAuthProvidersResponse( List<OAuthProviderInfo> Providers );
+public record OAuthLoginUrlResponse( string LoginUrl, string State );
+public record OAuthCallbackRequest( [MaxLength(2000)] string Code, [MaxLength(500)] string State, DeviceInfo? DeviceInfo = null );
+public record DisconnectOAuthRequest( [MaxLength(50)] string Provider, [MaxLength(128)] string Password );
 
 /// <summary>
 /// Information about a linked OAuth provider.
@@ -241,11 +244,11 @@ public record UserOAuthProvidersResponse(
 /// <summary>
 /// Legacy single-provider response for backward compatibility.
 /// </summary>
-public record UserOAuthInfoResponse(string? Provider, string? ProviderId, bool HasPassword);
+public record UserOAuthInfoResponse( string? Provider, string? ProviderId, bool HasPassword );
 
 // Session DTOs
-public record SessionDto(Guid Id, string? DeviceName, string Platform, string IpAddress, string? Location, DateTime LastActiveAt, DateTime CreatedAt, bool IsCurrent);
-public record SessionListResponse(Guid CurrentSessionId, List<SessionDto> Sessions);
+public record SessionDto( Guid Id, string? DeviceName, string Platform, string IpAddress, string? Location, DateTime LastActiveAt, DateTime CreatedAt, bool IsCurrent );
+public record SessionListResponse( Guid CurrentSessionId, List<SessionDto> Sessions );
 
 // Full User Profile (for /auth/me endpoint)
 public record UserProfileDto(
@@ -257,6 +260,7 @@ public record UserProfileDto(
     bool EmailVerified,
     bool MobileVerified,
     bool Is2faEnabled,
+    bool HasPassword,
     string Role,
     UserOrganizationDto? Organization,
     List<UserOrganizationDto> Organizations,
@@ -265,12 +269,12 @@ public record UserProfileDto(
     DateTime? LastLogin
 );
 
-public record UserOrganizationDto(Guid Id, string Name, string Role);
+public record UserOrganizationDto( Guid Id, string Name, string Role );
 
 // Legacy DTOs for backward compatibility
-public record LoginDto([MaxLength(255)] string Email, [MaxLength(128)] string Password);
-public record RegisterDto([MaxLength(255)] string Email, [MaxLength(128)] string Password, [MaxLength(100)] string Name, [MaxLength(20)] string? Mobile);
-public record AuthResponse(string AccessToken, string RefreshToken, UserDto User, DateTime ExpiresAt);
+public record LoginDto( [MaxLength(255)] string Email, [MaxLength(128)] string Password );
+public record RegisterDto( [MaxLength(255)] string Email, [MaxLength(128)] string Password, [MaxLength(100)] string Name, [MaxLength(20)] string? Mobile );
+public record AuthResponse( string AccessToken, string RefreshToken, UserDto User, DateTime ExpiresAt );
 
 // ============================================================================
 // User DTOs
@@ -287,7 +291,7 @@ public record UserDto(
     List<UserOrganizationDto> Organizations
 );
 
-public record UpdateUserDto([MaxLength(100)] string? Name, [MaxLength(20)] string? Mobile, [MaxLength(500)] string? AvatarUrl, Dictionary<string, object>? Preferences);
+public record UpdateUserDto( [MaxLength(100)] string? Name, [MaxLength(20)] string? Mobile, [MaxLength(500)] string? AvatarUrl, Dictionary<string, object>? Preferences );
 
 // ============================================================================
 // Organization DTOs
@@ -501,7 +505,7 @@ public record MemberListResponse(
     int TotalPages
 );
 
-public record ChangeMemberRoleRequest([MaxLength(50)] string Role);
+public record ChangeMemberRoleRequest( [MaxLength(50)] string Role );
 
 public record ChangeMemberRoleResponse(
     Guid MemberId,
@@ -557,7 +561,7 @@ public record InvitationDto(
     DateTime CreatedAt
 );
 
-public record InvitedByDto(Guid Id, string Name);
+public record InvitedByDto( Guid Id, string Name );
 
 public record InvitationListResponse(
     List<InvitationDto> Invitations,
@@ -602,7 +606,7 @@ public record TransferOwnershipResponse(
 // Organization Switch DTOs
 // ============================================================================
 
-public record SwitchOrganizationRequest(Guid OrganizationId);
+public record SwitchOrganizationRequest( Guid OrganizationId );
 
 public record SwitchOrganizationResponse(
     string AccessToken,
@@ -645,7 +649,7 @@ public record OrganizationDto(
     int MemberCount
 );
 
-public record AddMemberDto([MaxLength(255)] string Email, [MaxLength(50)] string Role);
+public record AddMemberDto( [MaxLength(255)] string Email, [MaxLength(50)] string Role );
 
 // ============================================================================
 // Notice DTOs
@@ -895,9 +899,9 @@ public record NoticeAiReportDto(
     DateTime CreatedAt
 );
 
-public record ActionItemDto(int Priority, string Action, string Description, int? DueInDays, string? AssigneeSuggestion);
-public record RequiredDocumentDto(string Document, bool Mandatory);
-public record LegalReferenceDto(string Section, string Description);
+public record ActionItemDto( int Priority, string Action, string Description, int? DueInDays, string? AssigneeSuggestion );
+public record RequiredDocumentDto( string Document, bool Mandatory );
+public record LegalReferenceDto( string Section, string Description );
 
 // ============================================================================
 // AI Service DTOs
@@ -937,7 +941,7 @@ public record NoticeMetadata(
     string? IssuingAuthority
 );
 
-public record SimilarNotice(Guid NoticeId, float SimilarityScore, string? NoticeType, string? Summary);
+public record SimilarNotice( Guid NoticeId, float SimilarityScore, string? NoticeType, string? Summary );
 
 // Similar Notice DTO with enriched notice details
 public record SimilarNoticeDto(
@@ -954,7 +958,7 @@ public record SimilarNoticeDto(
 // Comment DTOs
 // ============================================================================
 
-public record CreateCommentDto([MaxLength(10000)] string Content, Guid? ParentId, bool IsInternal, List<Guid>? Mentions);
+public record CreateCommentDto( [MaxLength(10000)] string Content, Guid? ParentId, bool IsInternal, List<Guid>? Mentions );
 public record CommentDto(
     Guid Id,
     Guid UserId,
@@ -978,8 +982,8 @@ public record CommentDto(
 // Response DTOs
 // ============================================================================
 
-public record CreateResponseDto([MaxLength(100000)] string? DraftContent);
-public record UpdateResponseDto([MaxLength(100000)] string? DraftContent, [MaxLength(100000)] string? FinalContent, [MaxLength(50)] string? Status);
+public record CreateResponseDto( [MaxLength(100000)] string? DraftContent );
+public record UpdateResponseDto( [MaxLength(100000)] string? DraftContent, [MaxLength(100000)] string? FinalContent, [MaxLength(50)] string? Status );
 public record ResponseDto(
     Guid Id,
     string? DraftContent,
@@ -1007,7 +1011,7 @@ public record AttachmentDto(
     int Version = 1,
     bool IsCurrentVersion = true,
     bool HasPreviousVersions = false,
-    DateTime? CreatedAt = null);
+    DateTime? CreatedAt = null );
 
 public record AttachmentVersionDto
 {
@@ -1043,13 +1047,13 @@ public class UploadNewVersionRequest
 // Common DTOs
 // ============================================================================
 
-public record PagedResult<T>(List<T> Items, int TotalCount, int Page, int PageSize, int TotalPages);
+public record PagedResult<T>( List<T> Items, int TotalCount, int Page, int PageSize, int TotalPages );
 
 // ============================================================================
 // API Response Wrappers
 // ============================================================================
 
-public record ApiResponse<T>(bool Success, T Data);
+public record ApiResponse<T>( bool Success, T Data );
 
 public record ApiErrorResponse(
     bool Success,
