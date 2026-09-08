@@ -115,6 +115,9 @@ public static class ServiceExtensions
         services.AddScoped<IPlanService, PlanService>();
         services.AddScoped<ISubscriptionService, SubscriptionService>();
         services.AddScoped<IUsageService, UsageService>();
+
+        // In-app support tickets
+        services.AddScoped<Services.Support.ISupportTicketService, Services.Support.SupportTicketService>();
         services.AddScoped<ICouponService, CouponService>();
         services.AddScoped<IRazorpayService, RazorpayService>();
         services.AddScoped<IInvoiceService, InvoiceService>();

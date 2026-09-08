@@ -165,6 +165,10 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
     public DbSet<MessageFeedback> MessageFeedbacks => Set<MessageFeedback>();
     public DbSet<AIAuditLog> AIAuditLogs => Set<AIAuditLog>();
 
+    // In-app support entities
+    public DbSet<SupportTicket> SupportTickets => Set<SupportTicket>();
+    public DbSet<SupportTicketMessage> SupportTicketMessages => Set<SupportTicketMessage>();
+
     // GST Sync Module entities (isolated from GSTN Integration)
     public DbSet<GstClient> GstClients => Set<GstClient>();
     public DbSet<GstSyncSession> GstSyncSessions => Set<GstSyncSession>();
@@ -2924,6 +2928,46 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
                 .WithMany()
                 .HasForeignKey(e => e.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // SupportTicket Configuration (in-app support)
+        modelBuilder.Entity<SupportTicket>(entity =>
+        {
+            // Tenant isolation + soft delete (defense-in-depth, same as Notice)
+            entity.HasQueryFilter(t =>
+                t.DeletedAt == null &&
+                (BypassTenantFilter || CurrentOrganizationId == null || t.OrganizationId == CurrentOrganizationId));
+
+            entity.HasIndex(e => new { e.OrganizationId, e.Status });
+            entity.HasIndex(e => e.LastMessageAt);
+
+            entity.HasOne(e => e.Organization)
+                .WithMany()
+                .HasForeignKey(e => e.OrganizationId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.CreatedBy)
+                .WithMany()
+                .HasForeignKey(e => e.CreatedByUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // SupportTicketMessage Configuration - scoped through SupportTicket navigation
+        modelBuilder.Entity<SupportTicketMessage>(entity =>
+        {
+            entity.HasQueryFilter(m => m.DeletedAt == null);
+
+            entity.HasIndex(e => e.TicketId);
+
+            entity.HasOne(e => e.Ticket)
+                .WithMany(t => t.Messages)
+                .HasForeignKey(e => e.TicketId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.SenderUser)
+                .WithMany()
+                .HasForeignKey(e => e.SenderUserId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         // Seed initial data
