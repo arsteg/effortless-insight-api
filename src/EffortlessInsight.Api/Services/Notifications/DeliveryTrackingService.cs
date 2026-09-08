@@ -398,7 +398,8 @@ public class NotificationTemplateService : INotificationTemplateService
             (NotificationType.DeadlineToday, "🚨 CRITICAL: Notice #{noticeNumber} due TODAY! Immediate action required. {actionUrl}"),
             (NotificationType.DeadlineMissed, "⛔ OVERDUE: Notice #{noticeNumber} deadline missed ({daysOverdue} days ago). Respond immediately. {actionUrl}"),
             (NotificationType.NoticeHighRisk, "🔴 HIGH RISK: Notice #{noticeNumber} detected. Demand: ₹{demandAmount}. Review now: {actionUrl}"),
-            (NotificationType.PasswordReset, "Your EffortlessInsight OTP is {otp}. Valid for 10 minutes. Do not share this code.")
+            // Duration must match Otp:ExpiryMinutes (5) — was wrongly "10 minutes"
+            (NotificationType.PasswordReset, "Your EffortlessInsight OTP is {otp}. Valid for 5 minutes. Do not share this code.")
         };
 
         foreach (var (type, body) in smsTemplates)
@@ -518,6 +519,23 @@ public class NotificationTemplateService : INotificationTemplateService
         if (seeded > 0)
         {
             await _dbContext.SaveChangesAsync(cancellationToken);
+        }
+
+        // One-time data fix: earlier seeds shipped the password-reset SMS with
+        // "Valid for 10 minutes" while Otp:ExpiryMinutes is 5. AddIfMissing
+        // never touches existing rows, so patch the stale copy in place
+        // (idempotent — matches only the wrong text).
+        var fixedCopies = await _dbContext.NotificationTemplates
+            .Where(t => t.Type == NotificationType.PasswordReset
+                        && t.Channel == NotificationChannel.Sms
+                        && t.Body.Contains("Valid for 10 minutes"))
+            .ExecuteUpdateAsync(s => s.SetProperty(
+                t => t.Body,
+                t => t.Body.Replace("Valid for 10 minutes", "Valid for 5 minutes")),
+                cancellationToken);
+        if (fixedCopies > 0)
+        {
+            _logger.LogInformation("Corrected OTP validity copy on {Count} password-reset SMS template(s)", fixedCopies);
         }
 
         _logger.LogInformation("Seeded {Count} notification templates", seeded);

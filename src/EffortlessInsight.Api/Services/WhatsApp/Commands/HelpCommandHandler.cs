@@ -33,7 +33,7 @@ public class HelpCommandHandler : ICommandHandler
 
                 Reply with your *registered email address* to get started.
 
-                Or visit effortlessinsight.com to create an account.
+                Or visit effortlessinsight.in to create an account.
                 """;
 
             return Task.FromResult(new CommandResult

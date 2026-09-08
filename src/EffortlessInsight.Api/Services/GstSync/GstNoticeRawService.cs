@@ -18,6 +18,7 @@ public class GstNoticeRawService : IGstNoticeRawService
     private readonly IGstSyncNotificationService _notificationService;
     private readonly IGstinLinkService _gstinLink;
     private readonly IBackgroundJobClient _backgroundJobs;
+    private readonly Billing.IUsageService _usageService;
     private readonly ILogger<GstNoticeRawService> _logger;
 
     public GstNoticeRawService(
@@ -26,6 +27,7 @@ public class GstNoticeRawService : IGstNoticeRawService
         IGstSyncNotificationService notificationService,
         IGstinLinkService gstinLink,
         IBackgroundJobClient backgroundJobs,
+        Billing.IUsageService usageService,
         ILogger<GstNoticeRawService> logger)
     {
         _context = context;
@@ -33,6 +35,7 @@ public class GstNoticeRawService : IGstNoticeRawService
         _notificationService = notificationService;
         _gstinLink = gstinLink;
         _backgroundJobs = backgroundJobs;
+        _usageService = usageService;
         _logger = logger;
     }
 
@@ -110,6 +113,18 @@ public class GstNoticeRawService : IGstNoticeRawService
                     continue;
                 }
 
+                // Authoritative per-plan notice quota — same gate as manual
+                // upload (NoticeService.UploadAsync). Checked per notice so a
+                // batch stops cleanly when the monthly allowance runs out.
+                var (canCreate, quotaReason) = await _usageService.CanCreateNoticeAsync(organizationId);
+                if (!canCreate)
+                {
+                    var remaining = request.NoticeIds.Count - imported.Count - alreadyImportedCount - failedCount;
+                    errors.Add($"NOTICE_LIMIT_EXCEEDED: {quotaReason} {imported.Count} of {request.NoticeIds.Count} notices imported; the remaining {remaining} were skipped.");
+                    failedCount += remaining;
+                    break;
+                }
+
                 // Resolve the org GSTIN registry entry for this client so the
                 // imported notice is linked (self-heals clients that predate
                 // the OrganizationGstinId column).
@@ -173,6 +188,11 @@ public class GstNoticeRawService : IGstNoticeRawService
                 };
 
                 _context.Notices.Add(notice);
+
+                // Advance the per-plan usage counter (also flushes the pending
+                // notice via its SaveChanges, keeping the quota check accurate
+                // for the rest of the batch).
+                await _usageService.IncrementNoticeCountAsync(organizationId);
 
                 // Update raw notice with import info
                 rawNotice.ImportedToNotices = true;

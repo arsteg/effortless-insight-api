@@ -108,7 +108,7 @@ public class WhatsAppVerificationService : IWhatsAppVerificationService
 
         if (user == null)
         {
-            return (false, "No account found with this email. Please register at effortlessinsight.com", null);
+            return (false, "No account found with this email. Please register at effortlessinsight.in", null);
         }
 
         // Check if phone is already linked to another user

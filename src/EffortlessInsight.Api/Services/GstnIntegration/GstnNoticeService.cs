@@ -20,6 +20,7 @@ public class GstnNoticeService : IGstnNoticeService
     private readonly IFileStorageService _fileStorage;
     private readonly INotificationEngineService _notificationService;
     private readonly IBackgroundJobClient _backgroundJobs;
+    private readonly Billing.IUsageService _usageService;
     private readonly GstnOptions _options;
     private readonly ILogger<GstnNoticeService> _logger;
 
@@ -30,6 +31,7 @@ public class GstnNoticeService : IGstnNoticeService
         IFileStorageService fileStorage,
         INotificationEngineService notificationService,
         IBackgroundJobClient backgroundJobs,
+        Billing.IUsageService usageService,
         IOptions<GstnOptions> options,
         ILogger<GstnNoticeService> logger)
     {
@@ -39,6 +41,7 @@ public class GstnNoticeService : IGstnNoticeService
         _fileStorage = fileStorage;
         _notificationService = notificationService;
         _backgroundJobs = backgroundJobs;
+        _usageService = usageService;
         _options = options.Value;
         _logger = logger;
     }
@@ -210,12 +213,32 @@ public class GstnNoticeService : IGstnNoticeService
                         continue;
                     }
 
+                    // Authoritative per-plan notice quota — same gate as the
+                    // manual-upload and GST-sync-import paths. When exhausted,
+                    // remaining notices stay on the portal side (they'll be
+                    // picked up by a later sync after an upgrade/renewal)
+                    // rather than failing the whole sync.
+                    var (canCreate, quotaReason) = await _usageService.CanCreateNoticeAsync(
+                        connection.OrganizationGstin.OrganizationId);
+                    if (!canCreate)
+                    {
+                        var remaining = totalToProcess - processed;
+                        skipped += remaining;
+                        _logger.LogWarning(
+                            "Notice quota reached for organization {OrganizationId} during GSTN sync ({Reason}); skipped {Remaining} remaining notices",
+                            connection.OrganizationGstin.OrganizationId, quotaReason, remaining);
+                        break;
+                    }
+
                     // Create notice
                     var notice = await CreateNoticeFromGspAsync(
                         connection,
                         gspNotice,
                         lastCorrelationId,
                         cancellationToken);
+
+                    await _usageService.IncrementNoticeCountAsync(
+                        connection.OrganizationGstin.OrganizationId);
 
                     importedIds.Add(notice.Id);
 
