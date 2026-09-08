@@ -9,11 +9,33 @@ public interface IOtpService
     Task<OtpResponse> RequestOtpAsync(string mobile, string purpose, string ipAddress);
     Task<bool> VerifyOtpAsync(string mobile, string otp, string purpose);
     Task InvalidateOtpAsync(string mobile, string purpose);
+
+    /// <summary>
+    /// Issues a short-lived, single-use verification token proving that
+    /// <paramref name="mobile"/> passed OTP verification for <paramref name="purpose"/>.
+    /// The caller (e.g. registration) presents it back via
+    /// <see cref="ValidateVerificationTokenAsync"/> / <see cref="ConsumeVerificationTokenAsync"/>.
+    /// </summary>
+    Task<string> IssueVerificationTokenAsync(string mobile, string purpose);
+
+    /// <summary>Checks a verification token without consuming it.</summary>
+    Task<bool> ValidateVerificationTokenAsync(string mobile, string purpose, string token);
+
+    /// <summary>Checks and invalidates a verification token (single use).</summary>
+    Task<bool> ConsumeVerificationTokenAsync(string mobile, string purpose, string token);
 }
 
 public interface ISmsService
 {
     Task SendSmsAsync(string mobile, string message);
+
+    /// <summary>
+    /// Sends an OTP. Providers with a dedicated OTP route (e.g. 2Factor.in,
+    /// which requires the OTP value rather than free text) override this;
+    /// generic providers fall back to a formatted SMS.
+    /// </summary>
+    Task SendOtpAsync(string mobile, string otp, int expiryMinutes)
+        => SendSmsAsync(mobile, $"Your EffortlessInsight verification code is: {otp}. Valid for {expiryMinutes} minutes.");
 }
 
 public class ConsoleSmsSer­vice : ISmsService
@@ -121,9 +143,9 @@ public class OtpService : IOtpService
         // Update rate limit
         await IncrementRateLimitAsync(rateLimitKey);
 
-        // Send SMS
-        var message = $"Your EffortlessInsight verification code is: {otp}. Valid for {_expiryMinutes} minutes.";
-        await _smsService.SendSmsAsync(normalizedMobile, message);
+        // Send via the configured SMS provider (OTP-aware providers like
+        // 2Factor.in take the OTP value; others get a formatted message)
+        await _smsService.SendOtpAsync(normalizedMobile, otp, _expiryMinutes);
 
         _logger.LogInformation("OTP sent to {Mobile} for {Purpose}", MaskMobile(normalizedMobile), purpose);
 
@@ -200,6 +222,57 @@ public class OtpService : IOtpService
         var otpKey = $"otp:{purpose}:{normalizedMobile}";
         await _cache.RemoveAsync(otpKey);
     }
+
+    // Verification tokens: 30-minute proof that a mobile passed OTP
+    // verification, bound to the normalized number so changing the number
+    // invalidates the proof. Single-use via ConsumeVerificationTokenAsync.
+    private const int VerificationTokenExpiryMinutes = 30;
+
+    public async Task<string> IssueVerificationTokenAsync(string mobile, string purpose)
+    {
+        var normalizedMobile = NormalizeMobile(mobile);
+        var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+        await _cache.SetStringAsync(
+            VerificationTokenKey(normalizedMobile, purpose),
+            token,
+            new DistributedCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(VerificationTokenExpiryMinutes)
+            });
+
+        _logger.LogInformation("Issued mobile verification token for {Mobile} ({Purpose})",
+            MaskMobile(normalizedMobile), purpose);
+        return token;
+    }
+
+    public async Task<bool> ValidateVerificationTokenAsync(string mobile, string purpose, string token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return false;
+        }
+
+        var normalizedMobile = NormalizeMobile(mobile);
+        var stored = await _cache.GetStringAsync(VerificationTokenKey(normalizedMobile, purpose));
+        return !string.IsNullOrEmpty(stored)
+               && CryptographicOperations.FixedTimeEquals(
+                   System.Text.Encoding.UTF8.GetBytes(stored),
+                   System.Text.Encoding.UTF8.GetBytes(token));
+    }
+
+    public async Task<bool> ConsumeVerificationTokenAsync(string mobile, string purpose, string token)
+    {
+        if (!await ValidateVerificationTokenAsync(mobile, purpose, token))
+        {
+            return false;
+        }
+
+        await _cache.RemoveAsync(VerificationTokenKey(NormalizeMobile(mobile), purpose));
+        return true;
+    }
+
+    private static string VerificationTokenKey(string normalizedMobile, string purpose) =>
+        $"otp_verified:{purpose}:{normalizedMobile}";
 
     private static string GenerateOtp(int length)
     {

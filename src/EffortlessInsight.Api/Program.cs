@@ -15,6 +15,36 @@ var builder = WebApplication.CreateBuilder(args);
 // Add Local configuration as optional overlay (for personal developer settings)
 builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
 
+// Fail fast in Production if any secret is missing or still a committed
+// placeholder — a misconfigured deploy must crash at startup, not run with
+// forgeable tokens. (Values come from server environment variables; the
+// checked-in appsettings.json only carries dev placeholders.)
+if (builder.Environment.IsProduction())
+{
+    var requiredSecrets = new Dictionary<string, string?>
+    {
+        ["Jwt:Secret"] = builder.Configuration["Jwt:Secret"],
+        ["AdminAuth:JwtSecret"] = builder.Configuration["AdminAuth:JwtSecret"],
+        ["TwoFactor:EncryptionKey"] = builder.Configuration["TwoFactor:EncryptionKey"],
+    };
+    var badSecrets = requiredSecrets
+        .Where(kv => string.IsNullOrWhiteSpace(kv.Value)
+                     || kv.Value.Contains("change-in-production")
+                     || kv.Value.StartsWith("your-"))
+        .Select(kv => kv.Key)
+        .ToList();
+    if (badSecrets.Count > 0)
+    {
+        throw new InvalidOperationException(
+            $"Production startup blocked: the following secrets are missing or still placeholders: {string.Join(", ", badSecrets)}. Set them via environment variables.");
+    }
+    if (!string.IsNullOrEmpty(builder.Configuration["AdminSeed:InitialPassword"]))
+    {
+        throw new InvalidOperationException(
+            "Production startup blocked: AdminSeed:InitialPassword must not be set in config — use the ADMIN_PASSWORD environment variable for one-time seeding, then remove it.");
+    }
+}
+
 // Configure Kestrel for TLS 1.3 enforcement in production
 if (!builder.Environment.IsDevelopment())
 {

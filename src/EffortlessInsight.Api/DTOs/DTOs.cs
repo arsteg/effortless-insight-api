@@ -12,8 +12,13 @@ public record RegisterRequest(
     [MaxLength(128)] string Password,
     [MaxLength(100)] string Name,
     [MaxLength(20)] string? Mobile,
-    bool AcceptTerms
+    bool AcceptTerms,
+    // Proof from POST auth/signup/otp/verify that Mobile passed OTP
+    // verification; required when MobileVerification:RequiredForSignup is on.
+    [MaxLength(128)] string? MobileVerificationToken = null
 );
+
+public record MobileVerificationResponse(string VerificationToken, int ExpiresIn);
 
 public record RegisterResponse(
     Guid UserId,

@@ -16,6 +16,7 @@ public class AuthController : ControllerBase
     private readonly IAuthService _authService;
     private readonly ISessionService _sessionService;
     private readonly IOrganizationManagementService _organizationService;
+    private readonly IOtpService _otpService;
     private readonly ApplicationDbContext _dbContext;
     private readonly ILogger<AuthController> _logger;
 
@@ -23,12 +24,14 @@ public class AuthController : ControllerBase
         IAuthService authService,
         ISessionService sessionService,
         IOrganizationManagementService organizationService,
+        IOtpService otpService,
         ApplicationDbContext dbContext,
         ILogger<AuthController> logger)
     {
         _authService = authService;
         _sessionService = sessionService;
         _organizationService = organizationService;
+        _otpService = otpService;
         _dbContext = dbContext;
         _logger = logger;
     }
@@ -59,6 +62,14 @@ public class AuthController : ControllerBase
         catch (InvalidOperationException ex) when (ex.Message == "MOBILE_EXISTS")
         {
             return Conflict(new ApiErrorResponse(false, "MOBILE_EXISTS", "Mobile number is already registered"));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "MOBILE_REQUIRED")
+        {
+            return BadRequest(new ApiErrorResponse(false, "MOBILE_REQUIRED", "A mobile number is required to create an account"));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "MOBILE_NOT_VERIFIED")
+        {
+            return BadRequest(new ApiErrorResponse(false, "MOBILE_NOT_VERIFIED", "Please verify your mobile number with the OTP before creating the account"));
         }
         catch (InvalidOperationException ex) when (ex.Message.StartsWith("REGISTRATION_FAILED"))
         {
@@ -541,6 +552,92 @@ public class AuthController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Switch organization failed");
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
+        }
+    }
+
+    /// <summary>
+    /// Request an OTP to verify a mobile number during signup.
+    /// Rejects numbers that are already registered.
+    /// </summary>
+    [HttpPost("signup/otp/request")]
+    [ProducesResponseType(typeof(ApiResponse<OtpResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status409Conflict)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status429TooManyRequests)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status503ServiceUnavailable)]
+    public async Task<IActionResult> RequestSignupOtp([FromBody] OtpRequestRequest request)
+    {
+        try
+        {
+            var normalized = new string(request.Mobile.Where(char.IsDigit).ToArray());
+            if (normalized.Length < 10)
+            {
+                return BadRequest(new ApiErrorResponse(false, "INVALID_MOBILE", "Please enter a valid 10-digit mobile number"));
+            }
+
+            // Same uniqueness rule as registration, checked up-front so we
+            // don't burn SMS credits on numbers that can't sign up anyway.
+            var last10 = normalized[^10..];
+            var mobileExists = await _dbContext.Users
+                .AnyAsync(u => u.MobileNormalized == last10 && u.DeletedAt == null);
+            if (mobileExists)
+            {
+                return Conflict(new ApiErrorResponse(false, "MOBILE_EXISTS", "Mobile number is already registered"));
+            }
+
+            var ipAddress = GetClientIpAddress();
+            var result = await _otpService.RequestOtpAsync(request.Mobile, "signup", ipAddress);
+            return Ok(new ApiResponse<OtpResponse>(true, result));
+        }
+        catch (InvalidOperationException ex) when (ex.Message.StartsWith("RATE_LIMIT_EXCEEDED"))
+        {
+            var retryAfter = ex.Message.Split(':').Length > 1 ? ex.Message.Split(':')[1] : "3600";
+            return StatusCode(StatusCodes.Status429TooManyRequests,
+                new ApiErrorResponse(false, "RATE_LIMIT_EXCEEDED", $"Too many OTP requests. Try again in {retryAfter} seconds."));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "SMS_SEND_FAILED")
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                new ApiErrorResponse(false, "SMS_SEND_FAILED", "We could not send the OTP right now. Please try again in a moment."));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Signup OTP request failed");
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
+        }
+    }
+
+    /// <summary>
+    /// Verify the signup OTP; returns a short-lived single-use token that
+    /// must accompany the register call for the same mobile number.
+    /// </summary>
+    [HttpPost("signup/otp/verify")]
+    [ProducesResponseType(typeof(ApiResponse<MobileVerificationResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> VerifySignupOtp([FromBody] OtpVerifyRequest request)
+    {
+        try
+        {
+            var valid = await _otpService.VerifyOtpAsync(request.Mobile, request.Otp, "signup");
+            if (!valid)
+            {
+                return Unauthorized(new ApiErrorResponse(false, "INVALID_OTP", "Invalid or expired OTP"));
+            }
+
+            var token = await _otpService.IssueVerificationTokenAsync(request.Mobile, "signup");
+            return Ok(new ApiResponse<MobileVerificationResponse>(true,
+                new MobileVerificationResponse(token, ExpiresIn: 30 * 60)));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "MAX_ATTEMPTS_EXCEEDED")
+        {
+            return BadRequest(new ApiErrorResponse(false, "MAX_ATTEMPTS_EXCEEDED", "Too many invalid OTP attempts. Please request a new OTP."));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Signup OTP verification failed");
             return StatusCode(StatusCodes.Status500InternalServerError,
                 new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
         }

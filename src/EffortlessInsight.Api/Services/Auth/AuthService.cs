@@ -74,6 +74,27 @@ public class AuthService : IAuthService
             }
         }
 
+        // Backend enforcement of mobile OTP verification: signup requires a
+        // verified mobile number. The token is bound to the normalized number,
+        // so changing the number after verification invalidates the proof.
+        // Validated (not consumed) here so a later failure (e.g. weak
+        // password) doesn't force the user to re-verify; consumed at the end.
+        var requireMobileVerification = _configuration.GetValue("MobileVerification:RequiredForSignup", true);
+        if (requireMobileVerification)
+        {
+            if (string.IsNullOrWhiteSpace(request.Mobile))
+            {
+                throw new InvalidOperationException("MOBILE_REQUIRED");
+            }
+
+            var mobileVerified = await _otpService.ValidateVerificationTokenAsync(
+                request.Mobile, "signup", request.MobileVerificationToken ?? string.Empty);
+            if (!mobileVerified)
+            {
+                throw new InvalidOperationException("MOBILE_NOT_VERIFIED");
+            }
+        }
+
         // Create user
         var user = new ApplicationUser
         {
@@ -82,6 +103,8 @@ public class AuthService : IAuthService
             Name = request.Name,
             Mobile = request.Mobile,
             MobileNormalized = NormalizeMobile(request.Mobile),
+            IsMobileVerified = requireMobileVerification,
+            MobileVerifiedAt = requireMobileVerification ? DateTime.UtcNow : null,
             Role = "owner", // First user becomes owner
             TermsAccepted = request.AcceptTerms,
             TermsAcceptedAt = DateTime.UtcNow,
@@ -132,6 +155,14 @@ public class AuthService : IAuthService
         {
             // Log the error but don't fail registration - user can request a new verification email later
             _logger.LogWarning(ex, "Verification email to {Email} could not be sent, but registration will proceed", user.Email);
+        }
+
+        // Registration succeeded — consume the single-use mobile verification
+        // token so it cannot be replayed for another account.
+        if (requireMobileVerification)
+        {
+            await _otpService.ConsumeVerificationTokenAsync(
+                request.Mobile!, "signup", request.MobileVerificationToken ?? string.Empty);
         }
 
         // Log audit

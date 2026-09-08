@@ -40,7 +40,19 @@ public static class ServiceExtensions
         // Register auth services
         services.AddScoped<IJwtService, JwtService>();
         services.AddScoped<ITwoFactorService, TwoFactorService>();
-        services.AddScoped<ISmsService, ConsoleSmsSer­vice>();
+        // SMS provider selection (Sms:Provider): "2factor" for 2Factor.in OTP
+        // delivery, anything else falls back to the console/dev provider.
+        if (string.Equals(configuration["Sms:Provider"], "2factor", StringComparison.OrdinalIgnoreCase))
+        {
+            services.AddHttpClient<ISmsService, TwoFactorSmsService>(client =>
+            {
+                client.Timeout = TimeSpan.FromSeconds(15);
+            });
+        }
+        else
+        {
+            services.AddScoped<ISmsService, ConsoleSmsSer­vice>();
+        }
         services.AddScoped<IOtpService, OtpService>();
         services.AddScoped<ISessionService, SessionService>();
         services.AddScoped<IAuthService, AuthService>();
