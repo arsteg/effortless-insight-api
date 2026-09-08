@@ -11,9 +11,11 @@ namespace EffortlessInsight.Api.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.DropIndex(
-                name: "IX_OrganizationGstins_Gstin",
-                table: "OrganizationGstins");
+            // The index was already dropped by 20260803094915_LinkGstClientsToOrganizationGstins;
+            // dotnet ef re-emitted the drop because the model snapshot had regained the index
+            // (snapshot merge drift). Use IF EXISTS so this is a no-op on databases where it
+            // is already gone and still cleans up databases where it lingers.
+            migrationBuilder.Sql("DROP INDEX IF EXISTS \"IX_OrganizationGstins_Gstin\";");
 
             migrationBuilder.AddColumn<DateTime>(
                 name: "MandateExpiresAt",
@@ -103,11 +105,9 @@ namespace EffortlessInsight.Api.Migrations
                 oldMaxLength: 50,
                 oldNullable: true);
 
-            migrationBuilder.CreateIndex(
-                name: "IX_OrganizationGstins_Gstin",
-                table: "OrganizationGstins",
-                column: "Gstin",
-                unique: true);
+            // Intentionally NOT recreating IX_OrganizationGstins_Gstin: the database state
+            // before this migration (after 20260803094915_LinkGstClientsToOrganizationGstins)
+            // does not have the index, so rolling back must not reintroduce it.
         }
     }
 }
