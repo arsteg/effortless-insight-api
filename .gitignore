@@ -491,3 +491,7 @@ src/EffortlessInsight.Api/appsettings.Production.json
 /src/EffortlessInsight.Api/appsettings.json
 /src/EffortlessInsight.Api/appsettings.json
 /src/EffortlessInsight.Api/appsettings.Production.json
+
+# Firebase service-account key (server secret)
+fcm-service-account.json
+*-service-account.json

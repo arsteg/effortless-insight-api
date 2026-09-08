@@ -77,6 +77,16 @@ public record ChangePasswordRequest(
     [MaxLength(128)] string ConfirmPassword
 );
 
+/// <summary>
+/// Partial update of the signed-in user's own profile. Every field is optional
+/// — an omitted field is left alone, rather than cleared.
+/// </summary>
+public record UpdateProfileRequest(
+    [MaxLength(200)] string? Name = null,
+    [MaxLength(20)] string? Mobile = null,
+    [MaxLength(500)] string? AvatarUrl = null
+);
+
 public record LogoutRequest(bool AllDevices = false);
 
 // OTP DTOs

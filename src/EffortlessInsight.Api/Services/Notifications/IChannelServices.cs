@@ -323,12 +323,25 @@ public class FirebaseOptions
     }
 
     /// <summary>
-    /// Check if Firebase is properly configured
+    /// Check if Firebase is properly configured.
+    ///
+    /// A credentials file on its own is enough: the service account JSON already
+    /// carries the project id, private key and client email. Requiring the three
+    /// individual fields as well made the CredentialsPath branch of
+    /// InitializeFirebase unreachable, so setting only CredentialsPath silently
+    /// disabled push.
     /// </summary>
     public bool IsConfigured =>
-        !string.IsNullOrEmpty(ProjectId) &&
-        !string.IsNullOrEmpty(PrivateKey) &&
-        !string.IsNullOrEmpty(ClientEmail);
+        HasCredentialsFile
+        || (!string.IsNullOrEmpty(ProjectId)
+            && !string.IsNullOrEmpty(PrivateKey)
+            && !string.IsNullOrEmpty(ClientEmail));
+
+    /// <summary>
+    /// True when CredentialsPath points at a service account JSON that exists.
+    /// </summary>
+    public bool HasCredentialsFile =>
+        !string.IsNullOrEmpty(CredentialsPath) && System.IO.File.Exists(CredentialsPath);
 }
 
 /// <summary>

@@ -399,11 +399,13 @@ public class FirebasePushService : IPushChannelService
             if (FirebaseApp.DefaultInstance == null)
             {
                 GoogleCredential credential;
+                var projectId = _options.ProjectId;
 
                 // Try to load from credentials file path first
-                if (!string.IsNullOrEmpty(_options.CredentialsPath) && System.IO.File.Exists(_options.CredentialsPath))
+                if (_options.HasCredentialsFile)
                 {
                     credential = GoogleCredential.FromFile(_options.CredentialsPath);
+                    projectId = ReadProjectIdFromCredentialsFile(_options.CredentialsPath!) ?? projectId;
                     _logger.LogInformation("Firebase initialized from credentials file: {Path}", _options.CredentialsPath);
                 }
                 else
@@ -420,7 +422,14 @@ public class FirebasePushService : IPushChannelService
                     _logger.LogInformation("Firebase initialized from individual credential fields for project: {ProjectId}", _options.ProjectId);
                 }
 
-                FirebaseApp.Create(new AppOptions { Credential = credential, ProjectId = _options.ProjectId });
+                // Pass null rather than "" so the Admin SDK falls back to the project
+                // carried by the credential itself; an empty string is treated as an
+                // explicit (invalid) project and makes every send fail.
+                FirebaseApp.Create(new AppOptions
+                {
+                    Credential = credential,
+                    ProjectId = string.IsNullOrEmpty(projectId) ? null : projectId,
+                });
             }
             _initialized = true;
             _logger.LogInformation("Firebase Admin SDK initialized successfully");
@@ -428,6 +437,26 @@ public class FirebasePushService : IPushChannelService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to initialize Firebase Admin SDK");
+        }
+    }
+
+    /// <summary>
+    /// Pull project_id out of a service account JSON so Firebase:ProjectId does
+    /// not have to be duplicated in config when CredentialsPath is used alone.
+    /// </summary>
+    private string? ReadProjectIdFromCredentialsFile(string path)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(System.IO.File.ReadAllText(path));
+            return document.RootElement.TryGetProperty("project_id", out var value)
+                ? value.GetString()
+                : null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not read project_id from {Path}", path);
+            return null;
         }
     }
 
@@ -446,7 +475,9 @@ public class FirebasePushService : IPushChannelService
         }
         catch (FirebaseMessagingException ex) when (ex.MessagingErrorCode == MessagingErrorCode.Unregistered)
         {
-            _logger.LogWarning("Push token is unregistered: {Token}", token[..20]);
+            // Math.Min, because a short token would throw out of this catch block
+            // and skip the invalid-token cleanup it exists to trigger.
+            _logger.LogWarning("Push token is unregistered: {Token}", token[..Math.Min(20, token.Length)]);
             return new ChannelSendResult(false, null, "UNREGISTERED", "Token is no longer valid");
         }
         catch (Exception ex)
@@ -508,6 +539,23 @@ public class FirebasePushService : IPushChannelService
         try
         {
             InitializeFirebase();
+
+            // Without credentials, InitializeFirebase only logs and returns, and
+            // the send below then fails on a null DefaultInstance with an opaque
+            // message. Fail explicitly instead, so delivery tracking records a
+            // reason an operator can act on rather than a stack trace.
+            if (!_options.IsConfigured || FirebaseApp.DefaultInstance == null)
+            {
+                _logger.LogError(
+                    "Push dropped for {Count} token(s): Firebase credentials are not configured. " +
+                    "Set Firebase:CredentialsPath, or ProjectId/ClientEmail/PrivateKey.",
+                    tokens.Count);
+                return tokens
+                    .Select(_ => new ChannelSendResult(
+                        false, null, "FIREBASE_NOT_CONFIGURED",
+                        "Firebase credentials are not configured on the server"))
+                    .ToList();
+            }
 
             var multicastMessage = new MulticastMessage
             {

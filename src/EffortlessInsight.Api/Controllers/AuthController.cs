@@ -336,6 +336,93 @@ public class AuthController : ControllerBase
     }
 
     /// <summary>
+    /// Update the signed-in user's own profile.
+    /// </summary>
+    /// <remarks>
+    /// The mobile client has always PATCHed this route; it simply did not
+    /// exist, so every save came back 405 and surfaced as "Failed to update
+    /// profile" (TC-MOB-063).
+    /// </remarks>
+    [Authorize]
+    [HttpPatch("me")]
+    [ProducesResponseType(typeof(ApiResponse<UserProfileDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> UpdateCurrentUser([FromBody] UpdateProfileRequest request)
+    {
+        var userId = GetCurrentUserId();
+
+        var user = await _dbContext.Users.FirstOrDefaultAsync(u => u.Id == userId && u.DeletedAt == null);
+        if (user == null)
+        {
+            return NotFound(new ApiErrorResponse(false, "USER_NOT_FOUND", "User not found"));
+        }
+
+        if (request.Name != null)
+        {
+            var name = request.Name.Trim();
+            if (name.Length < 2)
+            {
+                return BadRequest(new ApiErrorResponse(
+                    false, "INVALID_NAME", "Name must be at least 2 characters"));
+            }
+            user.Name = name;
+        }
+
+        if (request.Mobile != null)
+        {
+            var digits = new string(request.Mobile.Where(char.IsDigit).ToArray());
+
+            if (digits.Length == 0)
+            {
+                user.Mobile = null;
+                user.MobileNormalized = null;
+                user.IsMobileVerified = false;
+            }
+            else
+            {
+                var normalized = digits.Length >= 10 ? digits[^10..] : digits;
+                if (normalized.Length != 10)
+                {
+                    return BadRequest(new ApiErrorResponse(
+                        false, "INVALID_MOBILE", "Enter a valid 10-digit mobile number"));
+                }
+
+                // The number is how account recovery and OTP login find a user,
+                // so it has to stay unique across accounts.
+                var taken = await _dbContext.Users.AnyAsync(u =>
+                    u.MobileNormalized == normalized && u.Id != userId && u.DeletedAt == null);
+                if (taken)
+                {
+                    return Conflict(new ApiErrorResponse(
+                        false, "MOBILE_IN_USE", "That mobile number is already registered"));
+                }
+
+                // Changing the number invalidates the previous verification.
+                if (user.MobileNormalized != normalized)
+                {
+                    user.IsMobileVerified = false;
+                    user.MobileVerifiedAt = null;
+                }
+
+                user.Mobile = request.Mobile.Trim();
+                user.MobileNormalized = normalized;
+            }
+        }
+
+        if (request.AvatarUrl != null)
+        {
+            user.AvatarUrl = string.IsNullOrWhiteSpace(request.AvatarUrl) ? null : request.AvatarUrl.Trim();
+        }
+
+        user.UpdatedAt = DateTime.UtcNow;
+        await _dbContext.SaveChangesAsync();
+
+        // Return the same shape as GET so the client can reuse its mapping.
+        return await GetCurrentUser();
+    }
+
+    /// <summary>
     /// Get current user profile
     /// </summary>
     [Authorize]

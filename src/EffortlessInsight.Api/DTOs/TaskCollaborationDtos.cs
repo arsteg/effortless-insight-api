@@ -32,7 +32,15 @@ public record UpdateTaskDto(
     decimal? ActualHours,
     List<string>? Labels,
     [MaxLength(50)] string? Status,
-    [MaxLength(2000)] string? CompletionNote
+    [MaxLength(2000)] string? CompletionNote,
+    /// <summary>
+    /// The UpdatedAt the client last saw. When supplied and the stored task has
+    /// moved on, the update is rejected with 409 instead of silently
+    /// overwriting whatever changed in the meantime — the case an offline
+    /// queue makes routine, since a queued edit can be minutes or hours stale
+    /// (TC-MOB-059).
+    /// </summary>
+    DateTime? ExpectedUpdatedAt = null
 );
 
 public record TaskDto(

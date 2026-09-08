@@ -147,6 +147,13 @@ public class TasksController : ControllerBase
         {
             return NotFound(new { error = ex.Message });
         }
+        catch (ConcurrencyConflictException ex)
+        {
+            // 409, not 400: the request was well formed and retrying it
+            // unchanged would fail the same way. The caller needs the current
+            // state to decide what to do (TC-MOB-059).
+            return Conflict(new { error = ex.Message, code = "CONFLICT" });
+        }
         catch (InvalidOperationException ex)
         {
             return BadRequest(new { error = ex.Message });

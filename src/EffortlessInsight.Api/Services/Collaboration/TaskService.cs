@@ -295,6 +295,23 @@ public class TaskService : ITaskService
             .FirstOrDefaultAsync(t => t.Id == taskId)
             ?? throw new KeyNotFoundException("Task not found");
 
+        // Optimistic concurrency. A client that tells us which version it was
+        // working from gets a conflict rather than a silent overwrite; one that
+        // omits it keeps the previous last-write-wins behaviour, so existing
+        // callers are unaffected (TC-MOB-059).
+        if (dto.ExpectedUpdatedAt.HasValue)
+        {
+            var current = task.UpdatedAt ?? task.CreatedAt;
+            // Second precision: timestamps round-trip through JSON and the
+            // database at different resolutions, and a sub-second difference
+            // is not a real edit by someone else.
+            if (Math.Abs((current - dto.ExpectedUpdatedAt.Value).TotalSeconds) > 1)
+            {
+                throw new ConcurrencyConflictException(
+                    "This task was changed by someone else while your change was queued.");
+            }
+        }
+
         var oldStatus = task.Status;
         var changes = new Dictionary<string, object>();
 
