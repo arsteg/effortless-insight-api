@@ -1,74 +1,52 @@
+using System.Security.Claims;
 using EffortlessInsight.Api.DTOs;
-using EffortlessInsight.Api.Services.Collaboration;
-using EffortlessInsight.Api.Services.Organizations;
+using EffortlessInsight.Api.Services.Analytics;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using System.Security.Claims;
 
 namespace EffortlessInsight.Api.Controllers;
 
-[Authorize]
+/// <summary>
+/// Public activity ingestion. Anonymous visitors and authenticated users
+/// post batched events here; when a valid bearer token is present the
+/// events (and the visitor profile) are linked to the account. Always
+/// returns 202 — tracking must never surface errors to the client.
+/// </summary>
 [ApiController]
-[Route("api/v1")]
+[Route("api/v1/activity")]
 public class ActivityController : ControllerBase
 {
-    private readonly IActivityService _activityService;
-    private readonly ICurrentOrganizationService _orgService;
-    private readonly ILogger<ActivityController> _logger;
+    private readonly IActivityTrackingService _activityService;
+    private readonly IConfiguration _configuration;
 
     public ActivityController(
-        IActivityService activityService,
-        ICurrentOrganizationService orgService,
-        ILogger<ActivityController> logger)
+        IActivityTrackingService activityService,
+        IConfiguration configuration)
     {
         _activityService = activityService;
-        _orgService = orgService;
-        _logger = logger;
+        _configuration = configuration;
     }
 
-    private Guid GetUserId() =>
-        Guid.Parse(User.FindFirstValue("sub")!);
-
-    /// <summary>
-    /// Get activity feed for a notice
-    /// </summary>
-    [HttpGet("notices/{noticeId:guid}/activity")]
-    [ProducesResponseType(typeof(ActivityFeedResponseDto), StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetActivityFeedForNotice(
-        Guid noticeId,
-        [FromQuery] string? types = null,
-        [FromQuery] DateTime? since = null,
-        [FromQuery] int limit = 50)
+    [HttpPost("track")]
+    [AllowAnonymous]
+    [ProducesResponseType(StatusCodes.Status202Accepted)]
+    public async Task<IActionResult> Track([FromBody] ActivityTrackRequest request)
     {
-        var typeList = string.IsNullOrEmpty(types)
-            ? null
-            : types.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList();
+        if (!_configuration.GetValue("Analytics:Enabled", true))
+        {
+            return Accepted();
+        }
 
-        var result = await _activityService.GetActivityFeedForNoticeAsync(
-            noticeId, GetUserId(), typeList, since, limit);
+        Guid? userId = null;
+        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (Guid.TryParse(userIdClaim, out var parsed))
+        {
+            userId = parsed;
+        }
 
-        return Ok(result);
-    }
+        var userAgent = Request.Headers.UserAgent.ToString();
+        await _activityService.TrackBatchAsync(request, userId, userAgent);
 
-    /// <summary>
-    /// Get activity feed for the organization
-    /// </summary>
-    [HttpGet("activity")]
-    [ProducesResponseType(typeof(ActivityFeedResponseDto), StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetActivityFeedForOrganization(
-        [FromQuery] string? types = null,
-        [FromQuery] DateTime? since = null,
-        [FromQuery] int limit = 50)
-    {
-        var orgId = _orgService.OrganizationId ?? throw new InvalidOperationException("No organization context");
-
-        var typeList = string.IsNullOrEmpty(types)
-            ? null
-            : types.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList();
-
-        var result = await _activityService.GetActivityFeedForOrganizationAsync(
-            orgId, GetUserId(), typeList, since, limit);
-
-        return Ok(result);
+        return Accepted();
     }
 }

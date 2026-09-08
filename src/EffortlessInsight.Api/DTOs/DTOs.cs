@@ -128,6 +128,75 @@ public record SignupAttemptListResponse(
 
 public record SignupAttemptContactRequest(bool Contacted = true, [MaxLength(1000)] string? Notes = null);
 
+// ===== Activity tracking & analytics =====
+
+public record ActivityEventInput(
+    [MaxLength(50)] string Type,
+    [MaxLength(150)] string? Name = null,
+    [MaxLength(300)] string? Page = null,
+    [MaxLength(500)] string? Referrer = null,
+    [MaxLength(50)] string? EntityType = null,
+    Guid? EntityId = null,
+    [MaxLength(2000)] string? Metadata = null);
+
+public record ActivityTrackRequest(
+    [MaxLength(64)] string VisitorId,
+    [MaxLength(64)] string SessionId,
+    List<ActivityEventInput> Events);
+
+public record ActivityOverviewResponse(
+    int UniqueVisitors,
+    int AnonymousVisitors,
+    int AuthenticatedVisitors,
+    int Sessions,
+    int PageViews,
+    int TotalEvents,
+    int Signups,
+    int Logins,
+    double ConversionRate);
+
+public record ActivityTrendPoint(DateTime Date, int Visitors, int PageViews, int Events, int Signups);
+
+public record ActivityCountItem(string Key, int Count, int Visitors);
+
+public record ActivityEventDto(
+    Guid Id,
+    string VisitorId,
+    Guid? UserId,
+    string? UserName,
+    string? UserEmail,
+    string SessionId,
+    string EventType,
+    string? EventName,
+    string? Page,
+    string? Referrer,
+    string? EntityType,
+    Guid? EntityId,
+    string? Metadata,
+    DateTime CreatedAt);
+
+public record ActivityEventListResponse(List<ActivityEventDto> Items, int Total, int Page, int PageSize);
+
+public record VisitorListItem(
+    string VisitorId,
+    Guid? UserId,
+    string? UserName,
+    string? UserEmail,
+    DateTime FirstSeenAt,
+    DateTime LastSeenAt,
+    string? FirstReferrer,
+    string? LandingPage,
+    int EventCount);
+
+public record VisitorListResponse(List<VisitorListItem> Items, int Total, int Page, int PageSize);
+
+public record VisitorJourneyResponse(
+    VisitorListItem Visitor,
+    List<ActivityEventDto> Events,
+    int TotalEvents,
+    int Page,
+    int PageSize);
+
 // 2FA Setup DTOs
 public record TwoFactorSetupResponse(string Secret, string QrCodeDataUrl, string OtpauthUrl, List<string> BackupCodes);
 public record TwoFactorVerifySetupRequest([MaxLength(10)] string Code);

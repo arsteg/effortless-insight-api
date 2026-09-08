@@ -130,6 +130,9 @@ public static class ServiceExtensions
 
         // In-app support tickets
         services.AddScoped<Services.Support.ISupportTicketService, Services.Support.SupportTicketService>();
+
+        // Visitor & user activity analytics
+        services.AddScoped<Services.Analytics.IActivityTrackingService, Services.Analytics.ActivityTrackingService>();
         services.AddScoped<ICouponService, CouponService>();
         services.AddScoped<IRazorpayService, RazorpayService>();
         services.AddScoped<IInvoiceService, InvoiceService>();

@@ -172,6 +172,10 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
     // Pre-signup leads (verified mobile, registration not completed)
     public DbSet<SignupAttempt> SignupAttempts => Set<SignupAttempt>();
 
+    // Visitor & user activity analytics (first-party, privacy-conscious)
+    public DbSet<Visitor> Visitors => Set<Visitor>();
+    public DbSet<ActivityEvent> ActivityEvents => Set<ActivityEvent>();
+
     // GST Sync Module entities (isolated from GSTN Integration)
     public DbSet<GstClient> GstClients => Set<GstClient>();
     public DbSet<GstSyncSession> GstSyncSessions => Set<GstSyncSession>();
@@ -2980,6 +2984,30 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
 
             entity.HasIndex(e => e.MobileNormalized).IsUnique();
             entity.HasIndex(e => e.MobileVerifiedAt);
+        });
+
+        // Visitor Configuration (activity analytics; no tenant scope —
+        // visitors exist before any organization does)
+        modelBuilder.Entity<Visitor>(entity =>
+        {
+            entity.HasQueryFilter(v => v.DeletedAt == null);
+
+            entity.HasIndex(e => e.VisitorId).IsUnique();
+            entity.HasIndex(e => e.UserId);
+            entity.HasIndex(e => e.LastSeenAt);
+        });
+
+        // ActivityEvent Configuration — append-only, high-volume; every
+        // analytics query is CreatedAt-bounded, so indexes lead with the
+        // dimension and end with CreatedAt.
+        modelBuilder.Entity<ActivityEvent>(entity =>
+        {
+            entity.HasQueryFilter(e => e.DeletedAt == null);
+
+            entity.HasIndex(e => e.CreatedAt);
+            entity.HasIndex(e => new { e.VisitorId, e.CreatedAt });
+            entity.HasIndex(e => new { e.UserId, e.CreatedAt });
+            entity.HasIndex(e => new { e.EventType, e.CreatedAt });
         });
 
         // Seed initial data
