@@ -169,6 +169,9 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
     public DbSet<SupportTicket> SupportTickets => Set<SupportTicket>();
     public DbSet<SupportTicketMessage> SupportTicketMessages => Set<SupportTicketMessage>();
 
+    // Pre-signup leads (verified mobile, registration not completed)
+    public DbSet<SignupAttempt> SignupAttempts => Set<SignupAttempt>();
+
     // GST Sync Module entities (isolated from GSTN Integration)
     public DbSet<GstClient> GstClients => Set<GstClient>();
     public DbSet<GstSyncSession> GstSyncSessions => Set<GstSyncSession>();
@@ -2968,6 +2971,15 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
                 .WithMany()
                 .HasForeignKey(e => e.SenderUserId)
                 .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // SignupAttempt Configuration (pre-signup leads; no tenant scope)
+        modelBuilder.Entity<SignupAttempt>(entity =>
+        {
+            entity.HasQueryFilter(a => a.DeletedAt == null);
+
+            entity.HasIndex(e => e.MobileNormalized).IsUnique();
+            entity.HasIndex(e => e.MobileVerifiedAt);
         });
 
         // Seed initial data

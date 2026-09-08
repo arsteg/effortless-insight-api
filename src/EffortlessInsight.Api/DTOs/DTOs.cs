@@ -99,6 +99,35 @@ public record OtpRequestRequest([MaxLength(20)] string Mobile, [MaxLength(20)] s
 public record OtpResponse(string Message, string MaskedMobile, int ExpiresIn, int RetryAfter);
 public record OtpVerifyRequest([MaxLength(20)] string Mobile, [MaxLength(10)] string Otp);
 
+// Signup OTP verify carries whatever contact details the form already has, so
+// abandoned signups can be followed up from the admin portal (SignupAttempt).
+public record SignupOtpVerifyRequest(
+    [MaxLength(20)] string Mobile,
+    [MaxLength(10)] string Otp,
+    [MaxLength(100)] string? Name = null,
+    [MaxLength(256)] string? Email = null,
+    [MaxLength(20)] string? Source = null);
+
+// Admin: incomplete-signup lead list
+public record SignupAttemptDto(
+    Guid Id,
+    string Mobile,
+    string? Name,
+    string? Email,
+    string Source,
+    DateTime MobileVerifiedAt,
+    DateTime? ContactedAt,
+    string? ContactNotes,
+    DateTime CreatedAt);
+
+public record SignupAttemptListResponse(
+    List<SignupAttemptDto> Items,
+    int Total,
+    int Page,
+    int PageSize);
+
+public record SignupAttemptContactRequest(bool Contacted = true, [MaxLength(1000)] string? Notes = null);
+
 // 2FA Setup DTOs
 public record TwoFactorSetupResponse(string Secret, string QrCodeDataUrl, string OtpauthUrl, List<string> BackupCodes);
 public record TwoFactorVerifySetupRequest([MaxLength(10)] string Code);

@@ -165,6 +165,21 @@ public class AuthService : IAuthService
                 request.Mobile!, "signup", request.MobileVerificationToken ?? string.Empty);
         }
 
+        // The signup completed, so this number is no longer an abandoned lead.
+        if (!string.IsNullOrEmpty(user.MobileNormalized))
+        {
+            try
+            {
+                await _dbContext.SignupAttempts
+                    .Where(a => a.MobileNormalized == user.MobileNormalized)
+                    .ExecuteDeleteAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not remove signup attempt after successful registration");
+            }
+        }
+
         // Log audit
         await LogLoginAuditAsync(user.Id, user.Email, true, null, ipAddress, userAgent, "register");
 

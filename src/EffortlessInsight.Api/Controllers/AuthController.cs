@@ -617,7 +617,7 @@ public class AuthController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<MobileVerificationResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status401Unauthorized)]
-    public async Task<IActionResult> VerifySignupOtp([FromBody] OtpVerifyRequest request)
+    public async Task<IActionResult> VerifySignupOtp([FromBody] SignupOtpVerifyRequest request)
     {
         try
         {
@@ -628,6 +628,19 @@ public class AuthController : ControllerBase
             }
 
             var token = await _otpService.IssueVerificationTokenAsync(request.Mobile, "signup");
+
+            // Record the verified-but-not-registered lead. Registration deletes
+            // it on success; whatever remains is the admin follow-up call list.
+            // Never let lead bookkeeping break the user's verification.
+            try
+            {
+                await UpsertSignupAttemptAsync(request);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to record signup attempt for verified mobile");
+            }
+
             return Ok(new ApiResponse<MobileVerificationResponse>(true,
                 new MobileVerificationResponse(token, ExpiresIn: 30 * 60)));
         }
@@ -641,6 +654,48 @@ public class AuthController : ControllerBase
             return StatusCode(StatusCodes.Status500InternalServerError,
                 new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
         }
+    }
+
+    private async Task UpsertSignupAttemptAsync(SignupOtpVerifyRequest request)
+    {
+        var digits = new string(request.Mobile.Where(char.IsDigit).ToArray());
+        if (digits.Length < 10)
+        {
+            return;
+        }
+
+        var normalized = digits[^10..];
+        var source = request.Source?.ToLowerInvariant() == "mobile" ? "mobile" : "web";
+
+        var attempt = await _dbContext.SignupAttempts
+            .FirstOrDefaultAsync(a => a.MobileNormalized == normalized);
+
+        if (attempt == null)
+        {
+            attempt = new Data.Entities.SignupAttempt
+            {
+                Mobile = request.Mobile,
+                MobileNormalized = normalized
+            };
+            _dbContext.SignupAttempts.Add(attempt);
+        }
+        else
+        {
+            attempt.UpdatedAt = DateTime.UtcNow;
+        }
+
+        attempt.MobileVerifiedAt = DateTime.UtcNow;
+        attempt.Source = source;
+        if (!string.IsNullOrWhiteSpace(request.Name))
+        {
+            attempt.Name = request.Name.Trim();
+        }
+        if (!string.IsNullOrWhiteSpace(request.Email))
+        {
+            attempt.Email = request.Email.Trim();
+        }
+
+        await _dbContext.SaveChangesAsync();
     }
 
     /// <summary>
