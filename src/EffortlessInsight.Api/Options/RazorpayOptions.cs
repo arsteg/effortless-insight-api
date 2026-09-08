@@ -38,7 +38,13 @@ public class BillingOptions
     /// <summary>
     /// Company name for invoices.
     /// </summary>
-    public string CompanyName { get; set; } = "EffortlessInsight Technologies Pvt Ltd";
+    public string CompanyName { get; set; } = "ARSTEG SOLUTIONS PRIVATE LIMITED";
+
+    /// <summary>
+    /// Corporate Identity Number (CIN) for invoices — required on official
+    /// company documents under the Companies Act, 2013 §12(3).
+    /// </summary>
+    public string CompanyCin { get; set; } = string.Empty;
 
     /// <summary>
     /// Company GSTIN for invoices.

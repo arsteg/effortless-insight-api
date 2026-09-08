@@ -2038,7 +2038,7 @@ public class NoticesController : ControllerBase
             }
 
             // Get similar notices from AI service
-            var similarNotices = await _aiServiceClient.FindSimilarNoticesAsync(noticeId, limit);
+            var similarNotices = await _aiServiceClient.FindSimilarNoticesAsync(noticeId, orgId, limit);
 
             // Enrich with notice details from database
             var enrichedNotices = new List<SimilarNoticeDto>();

@@ -602,6 +602,17 @@ public class NoticeServiceImpl : INoticeServiceExtended
                 storageReason ?? "Storage limit reached. Please upgrade your plan or delete some files.");
         }
 
+        // Check the monthly notice quota BEFORE creating the notice or dispatching
+        // AI processing — this is the primary per-plan usage gate that protects
+        // AI spend for organizations over their plan limit.
+        var (canCreate, quotaReason) = await _usageService.CanCreateNoticeAsync(organizationId);
+        if (!canCreate)
+        {
+            return NoticeUploadResult.Failed(
+                "NOTICE_LIMIT_EXCEEDED",
+                quotaReason ?? "Monthly notice limit reached. Please upgrade your plan to process more notices.");
+        }
+
         // Reset stream position for upload
         if (fileStream.CanSeek)
         {
@@ -667,6 +678,10 @@ public class NoticeServiceImpl : INoticeServiceExtended
         // Save notice to database
         _db.Notices.Add(notice);
         await _db.SaveChangesAsync(cancellationToken);
+
+        // Count this notice toward the organization's monthly quota (the gate
+        // above reads this counter, so it must be advanced on each creation).
+        await _usageService.IncrementNoticeCountAsync(organizationId);
 
         // Queue AI processing
         var jobId = _backgroundJobs.Enqueue<INoticeProcessingJob>(

@@ -342,6 +342,10 @@ public class InvoiceService : IInvoiceService
             {
                 col.Item().Text(_billingOptions.CompanyName).Bold().FontSize(16);
                 col.Item().Text(_billingOptions.CompanyAddress);
+                if (!string.IsNullOrWhiteSpace(_billingOptions.CompanyCin))
+                {
+                    col.Item().Text($"CIN: {_billingOptions.CompanyCin}");
+                }
                 col.Item().Text($"GSTIN: {_billingOptions.CompanyGstin}");
             });
 

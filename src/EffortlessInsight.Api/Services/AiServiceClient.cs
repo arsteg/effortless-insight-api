@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using EffortlessInsight.Api.DTOs;
 using EffortlessInsight.Api.Options;
+using EffortlessInsight.Api.Services.Billing;
 using Microsoft.Extensions.Options;
 
 namespace EffortlessInsight.Api.Services;
@@ -15,6 +16,7 @@ namespace EffortlessInsight.Api.Services;
 public class AiServiceClientImpl : IAiServiceClient
 {
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ISubscriptionService _subscriptionService;
     private readonly ILogger<AiServiceClientImpl> _logger;
     private readonly AiServiceOptions _options;
 
@@ -28,10 +30,12 @@ public class AiServiceClientImpl : IAiServiceClient
 
     public AiServiceClientImpl(
         IHttpClientFactory httpClientFactory,
+        ISubscriptionService subscriptionService,
         IOptions<AiServiceOptions> options,
         ILogger<AiServiceClientImpl> logger)
     {
         _httpClientFactory = httpClientFactory;
+        _subscriptionService = subscriptionService;
         _options = options.Value;
         _logger = logger;
     }
@@ -41,8 +45,9 @@ public class AiServiceClientImpl : IAiServiceClient
     /// </summary>
     /// <param name="noticeId">The notice ID to process.</param>
     /// <param name="fileUrl">Presigned S3 URL for the notice file (30-min validity).</param>
+    /// <param name="organizationId">Owning organization — sent to the AI service for rate limiting / usage caps.</param>
     /// <returns>AI processing result with report data.</returns>
-    public async Task<AiProcessingResult> ProcessNoticeAsync(Guid noticeId, string fileUrl)
+    public async Task<AiProcessingResult> ProcessNoticeAsync(Guid noticeId, string fileUrl, Guid organizationId)
     {
         _logger.LogInformation("Sending notice {NoticeId} to AI service for processing", noticeId);
 
@@ -50,6 +55,7 @@ public class AiServiceClientImpl : IAiServiceClient
         {
             NoticeId = noticeId,
             FileUrl = fileUrl,
+            OrganizationId = organizationId,
             Priority = "normal"
         };
 
@@ -58,7 +64,8 @@ public class AiServiceClientImpl : IAiServiceClient
             var response = await ExecuteWithRetryAsync<ProcessNoticeRequest, AiProcessingResponse>(
                 HttpMethod.Post,
                 "/api/v1/process/notice",
-                request);
+                request,
+                organizationId);
 
             if (response == null)
             {
@@ -103,10 +110,11 @@ public class AiServiceClientImpl : IAiServiceClient
     /// Generate a draft response for a notice (simple version).
     /// </summary>
     /// <param name="noticeId">The notice ID to generate a response for.</param>
+    /// <param name="organizationId">Owning organization — sent to the AI service for rate limiting / usage caps.</param>
     /// <returns>Generated draft response text.</returns>
-    public async Task<string> GenerateResponseDraftAsync(Guid noticeId)
+    public async Task<string> GenerateResponseDraftAsync(Guid noticeId, Guid organizationId)
     {
-        var result = await GenerateResponseDraftAsync(noticeId, new GenerateResponseOptions());
+        var result = await GenerateResponseDraftAsync(noticeId, organizationId, new GenerateResponseOptions());
         if (!result.Success)
         {
             throw new InvalidOperationException($"Failed to generate response: {result.Error}");
@@ -118,9 +126,10 @@ public class AiServiceClientImpl : IAiServiceClient
     /// Generate a draft response for a notice with options.
     /// </summary>
     /// <param name="noticeId">The notice ID to generate a response for.</param>
+    /// <param name="organizationId">Owning organization — sent to the AI service for rate limiting / usage caps.</param>
     /// <param name="options">Options for response generation.</param>
     /// <returns>Generated draft response with metadata.</returns>
-    public async Task<GenerateResponseResult> GenerateResponseDraftAsync(Guid noticeId, GenerateResponseOptions options)
+    public async Task<GenerateResponseResult> GenerateResponseDraftAsync(Guid noticeId, Guid organizationId, GenerateResponseOptions options)
     {
         _logger.LogInformation(
             "Requesting response draft for notice {NoticeId}. Tone: {Tone}, Language: {Language}",
@@ -142,7 +151,8 @@ public class AiServiceClientImpl : IAiServiceClient
             var response = await ExecuteWithRetryAsync<GenerateResponseRequest, GenerateResponseResponse>(
                 HttpMethod.Post,
                 "/api/v1/process/generate-response",
-                request);
+                request,
+                organizationId);
 
             if (response == null)
             {
@@ -198,15 +208,17 @@ public class AiServiceClientImpl : IAiServiceClient
     /// Find similar notices using vector similarity search.
     /// </summary>
     /// <param name="noticeId">The notice ID to find similar notices for.</param>
+    /// <param name="organizationId">Owning organization — sent to the AI service for rate limiting / usage caps.</param>
     /// <param name="limit">Maximum number of similar notices to return.</param>
     /// <returns>List of similar notices with similarity scores.</returns>
-    public async Task<List<SimilarNotice>> FindSimilarNoticesAsync(Guid noticeId, int limit = 5)
+    public async Task<List<SimilarNotice>> FindSimilarNoticesAsync(Guid noticeId, Guid organizationId, int limit = 5)
     {
         _logger.LogInformation("Finding similar notices for {NoticeId} (limit: {Limit})", noticeId, limit);
 
         var request = new SimilarNoticesRequest
         {
             NoticeId = noticeId,
+            OrganizationId = organizationId,
             Limit = Math.Clamp(limit, 1, 20)
         };
 
@@ -215,7 +227,8 @@ public class AiServiceClientImpl : IAiServiceClient
             var response = await ExecuteWithRetryAsync<SimilarNoticesRequest, SimilarNoticesResponse>(
                 HttpMethod.Post,
                 "/api/v1/process/similar",
-                request);
+                request,
+                organizationId);
 
             if (response == null || !response.Success)
             {
@@ -247,10 +260,17 @@ public class AiServiceClientImpl : IAiServiceClient
     private async Task<TResponse?> ExecuteWithRetryAsync<TRequest, TResponse>(
         HttpMethod method,
         string endpoint,
-        TRequest request)
+        TRequest request,
+        Guid organizationId)
         where TResponse : class
     {
         var client = _httpClientFactory.CreateClient("AiService");
+
+        // Resolve the caller's plan once (not per retry) so the AI service can
+        // apply per-plan usage caps. Best-effort: a lookup failure just omits
+        // the header and the AI service falls back to its default cap.
+        var planCode = await ResolvePlanCodeAsync(organizationId);
+
         var attempts = 0;
         Exception? lastException = null;
 
@@ -267,6 +287,17 @@ public class AiServiceClientImpl : IAiServiceClient
                 if (!string.IsNullOrEmpty(_options.ApiKey))
                 {
                     httpRequest.Headers.Add("X-API-Key", _options.ApiKey);
+                }
+
+                // Identify the caller so the AI service can rate-limit and apply
+                // per-plan monthly usage caps (see RateLimitMiddleware).
+                if (organizationId != Guid.Empty)
+                {
+                    httpRequest.Headers.Add("X-Organization-Id", organizationId.ToString());
+                }
+                if (!string.IsNullOrEmpty(planCode))
+                {
+                    httpRequest.Headers.Add("X-Plan", planCode);
                 }
 
                 using var response = await client.SendAsync(httpRequest);
@@ -372,6 +403,33 @@ public class AiServiceClientImpl : IAiServiceClient
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Resolves the organization's current plan code (e.g. "free", "starter")
+    /// for the X-Plan header. Returns null if the org has no subscription or the
+    /// lookup fails — the AI service then applies its default cap.
+    /// </summary>
+    private async Task<string?> ResolvePlanCodeAsync(Guid organizationId)
+    {
+        if (organizationId == Guid.Empty)
+        {
+            return null;
+        }
+
+        try
+        {
+            var subscription = await _subscriptionService.GetSubscriptionEntityAsync(organizationId);
+            return subscription?.PlanCode;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Could not resolve plan for organization {OrganizationId}; AI service will use its default cap",
+                organizationId);
+            return null;
+        }
     }
 
     private static bool IsTransientError(HttpStatusCode statusCode)

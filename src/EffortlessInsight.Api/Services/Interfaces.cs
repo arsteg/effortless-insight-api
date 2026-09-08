@@ -43,10 +43,10 @@ public interface IUserService
 
 public interface IAiServiceClient
 {
-    Task<AiProcessingResult> ProcessNoticeAsync(Guid noticeId, string fileUrl);
-    Task<string> GenerateResponseDraftAsync(Guid noticeId);
-    Task<GenerateResponseResult> GenerateResponseDraftAsync(Guid noticeId, GenerateResponseOptions options);
-    Task<List<SimilarNotice>> FindSimilarNoticesAsync(Guid noticeId, int limit = 5);
+    Task<AiProcessingResult> ProcessNoticeAsync(Guid noticeId, string fileUrl, Guid organizationId);
+    Task<string> GenerateResponseDraftAsync(Guid noticeId, Guid organizationId);
+    Task<GenerateResponseResult> GenerateResponseDraftAsync(Guid noticeId, Guid organizationId, GenerateResponseOptions options);
+    Task<List<SimilarNotice>> FindSimilarNoticesAsync(Guid noticeId, Guid organizationId, int limit = 5);
 }
 
 /// <summary>

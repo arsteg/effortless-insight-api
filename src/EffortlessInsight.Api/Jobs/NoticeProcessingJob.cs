@@ -112,7 +112,7 @@ public class NoticeProcessingJob : INoticeProcessingJob
             await UpdateProcessingStatusAsync(notice, NoticeProcessingStatus.Classifying, cancellationToken);
 
             // Call AI service (this does the actual processing)
-            var result = await _aiService.ProcessNoticeAsync(noticeId, downloadResult.Url);
+            var result = await _aiService.ProcessNoticeAsync(noticeId, downloadResult.Url, notice.OrganizationId);
 
             stopwatch.Stop();
 

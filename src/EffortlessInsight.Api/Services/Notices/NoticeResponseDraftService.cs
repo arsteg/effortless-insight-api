@@ -90,7 +90,7 @@ public class NoticeResponseDraftService : INoticeResponseDraftService
                 AdditionalInstructions = options.AdditionalInstructions
             };
 
-            var result = await _aiServiceClient.GenerateResponseDraftAsync(noticeId, aiOptions);
+            var result = await _aiServiceClient.GenerateResponseDraftAsync(noticeId, organizationId, aiOptions);
             stopwatch.Stop();
 
             if (!result.Success)
