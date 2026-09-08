@@ -261,13 +261,18 @@ var app = builder.Build();
 var encryptionService = app.Services.GetRequiredService<EffortlessInsight.Api.Services.Encryption.IFieldEncryptionService>();
 EffortlessInsight.Api.Services.Encryption.FieldEncryptionServiceAccessor.SetInstance(encryptionService);
 
-// Configure the HTTP request pipeline
-//if (app.Environment.IsDevelopment())
-//{
-app.UseDeveloperExceptionPage(); // Show detailed errors
-app.UseSwagger();
-app.UseSwaggerUI();
-//}
+// Configure the HTTP request pipeline.
+// Dev-only tooling: the original guard was IsDevelopment() alone, which hid
+// Swagger under the local F5 profile (ASPNETCORE_ENVIRONMENT=Local) — so it
+// got commented out, exposing Swagger + stack traces in ALL environments.
+// Use the same Development-or-Local check as the Hangfire dashboard and
+// DevController. Production error responses come from ExceptionHandlingMiddleware.
+if (app.Environment.IsDevelopment() || app.Environment.EnvironmentName == "Local")
+{
+    app.UseDeveloperExceptionPage(); // Show detailed errors
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
 
 // CORS must be early in pipeline so all responses (including errors) have CORS headers
 app.UseCors("AllowedOrigins");
