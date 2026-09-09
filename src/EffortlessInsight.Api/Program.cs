@@ -43,6 +43,20 @@ if (builder.Environment.IsProduction())
         throw new InvalidOperationException(
             "Production startup blocked: AdminSeed:InitialPassword must not be set in config — use the ADMIN_PASSWORD environment variable for one-time seeding, then remove it.");
     }
+
+    // The console SMS provider writes OTPs to the log in plaintext and never
+    // delivers them. It must never run in Production — require a real provider
+    // and its credentials, or crash loudly instead of silently logging OTPs.
+    if (!string.Equals(builder.Configuration["Sms:Provider"], "2factor", StringComparison.OrdinalIgnoreCase))
+    {
+        throw new InvalidOperationException(
+            "Production startup blocked: Sms:Provider must be '2factor' (set Sms__Provider=2factor). The console SMS provider logs OTPs in plaintext and must not run in Production.");
+    }
+    if (string.IsNullOrWhiteSpace(builder.Configuration["Sms:TwoFactor:ApiKey"]))
+    {
+        throw new InvalidOperationException(
+            "Production startup blocked: Sms:TwoFactor:ApiKey is not configured. Set Sms__TwoFactor__ApiKey via environment variable.");
+    }
 }
 
 // Configure Kestrel for TLS 1.3 enforcement in production
