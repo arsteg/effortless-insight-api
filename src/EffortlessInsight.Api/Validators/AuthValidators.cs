@@ -261,7 +261,10 @@ public class TwoFactorDisableValidator : AbstractValidator<TwoFactorDisableReque
 {
     public TwoFactorDisableValidator()
     {
-        RuleFor(x => x.Password)
-            .NotEmpty().WithMessage("Password is required");
+        RuleFor(x => x.Code)
+            .NotEmpty().WithMessage("Verification code is required")
+            .Matches(@"^\d{6}$|^[A-Za-z0-9]{8}$")
+            .WithMessage("Code must be 6 digits (TOTP) or 8 characters (backup code)");
+        // Password validation is done at service level based on user's auth method
     }
 }

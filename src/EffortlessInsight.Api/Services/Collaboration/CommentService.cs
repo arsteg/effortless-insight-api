@@ -479,18 +479,25 @@ public partial class CommentService : ICommentService
     {
         var mentions = new List<MentionDto>();
 
-        // Extract @mentions using regex
+        // Extract @mentions using regex - format: @[Display Name](user-id-guid)
         var mentionPattern = MentionRegex();
         var processedContent = content;
 
         var matches = mentionPattern.Matches(content);
         foreach (Match match in matches)
         {
-            var username = match.Groups[1].Value;
+            var displayName = match.Groups[1].Value;
+            var userIdString = match.Groups[2].Value;
 
-            // Look up user by username
+            if (!Guid.TryParse(userIdString, out var userId))
+            {
+                _logger.LogWarning("Invalid user ID format in mention: {UserIdString}", userIdString);
+                continue;
+            }
+
+            // Look up user by ID
             var user = await _context.Users
-                .Where(u => u.UserName != null && u.UserName.ToLower() == username.ToLower())
+                .Where(u => u.Id == userId)
                 .FirstOrDefaultAsync();
 
             if (user != null)
@@ -503,13 +510,13 @@ public partial class CommentService : ICommentService
                 {
                     mentions.Add(new MentionDto(
                         UserId: user.Id,
-                        Username: user.UserName ?? username,
+                        Username: user.UserName ?? displayName.ToLowerInvariant().Replace(" ", ""),
                         Name: user.Name
                     ));
 
-                    // Replace @username with mention span
+                    // Replace @[Name](UserId) with mention span
                     processedContent = processedContent.Replace(
-                        $"@{username}",
+                        match.Value,
                         $"<span class=\"mention\" data-user-id=\"{user.Id}\">@{user.Name}</span>"
                     );
                 }
@@ -698,6 +705,6 @@ public partial class CommentService : ICommentService
         return content[..(maxLength - 3)] + "...";
     }
 
-    [GeneratedRegex(@"@(\w+(?:\.\w+)*)")]
+    [GeneratedRegex(@"@\[([^\]]+)\]\(([a-fA-F0-9\-]{36})\)")]
     private static partial Regex MentionRegex();
 }
