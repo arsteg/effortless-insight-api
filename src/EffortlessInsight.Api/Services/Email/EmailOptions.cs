@@ -57,4 +57,17 @@ public sealed class EmailOptions
     /// When set, inbound webhook calls from any other topic are rejected.
     /// </summary>
     public string? EventTopicArn { get; set; }
+
+    /// <summary>
+    /// Optional email address to receive notifications when new users sign up.
+    /// Leave empty to disable signup notifications.
+    /// </summary>
+    [EmailAddress]
+    public string? SignupNotificationEmail
+    {
+        get => _signupNotificationEmail;
+        set => _signupNotificationEmail = string.IsNullOrWhiteSpace(value) ? null : value;
+    }
+
+    private string? _signupNotificationEmail;
 }

@@ -189,6 +189,46 @@ public sealed class EmailTemplateRenderer : IEmailTemplateRenderer
                 </html>
                 """
             ),
+            "admin_signup_notification" => new EmailTemplateContent(
+                "New User Signup - EffortlessInsight",
+                $"""
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta charset="utf-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                </head>
+                <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+                    <div style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); padding: 30px; border-radius: 10px 10px 0 0;">
+                        <h1 style="color: white; margin: 0; font-size: 24px;">EffortlessInsight Admin</h1>
+                    </div>
+                    <div style="background: #ffffff; padding: 30px; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 10px 10px;">
+                        <h2 style="color: #333; margin-top: 0;">New User Signup</h2>
+                        <p>A new user has registered on EffortlessInsight:</p>
+                        <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+                            <tr>
+                                <td style="padding: 12px; background: #f8f9fa; border: 1px solid #e0e0e0; font-weight: bold; width: 120px;">Name</td>
+                                <td style="padding: 12px; border: 1px solid #e0e0e0;">{data.GetValueOrDefault("user_name", "-")}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 12px; background: #f8f9fa; border: 1px solid #e0e0e0; font-weight: bold;">Email</td>
+                                <td style="padding: 12px; border: 1px solid #e0e0e0;">{data.GetValueOrDefault("user_email", "-")}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 12px; background: #f8f9fa; border: 1px solid #e0e0e0; font-weight: bold;">Mobile</td>
+                                <td style="padding: 12px; border: 1px solid #e0e0e0;">{data.GetValueOrDefault("user_mobile", "-")}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 12px; background: #f8f9fa; border: 1px solid #e0e0e0; font-weight: bold;">Registered At</td>
+                                <td style="padding: 12px; border: 1px solid #e0e0e0;">{data.GetValueOrDefault("registered_at", "-")}</td>
+                            </tr>
+                        </table>
+                        <p style="color: #666; font-size: 14px; margin-top: 20px;">This is an automated notification.</p>
+                    </div>
+                </body>
+                </html>
+                """
+            ),
             _ => new EmailTemplateContent(
                 "Notification from EffortlessInsight",
                 $"""

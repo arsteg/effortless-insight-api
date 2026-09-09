@@ -157,6 +157,31 @@ public class AuthService : IAuthService
             _logger.LogWarning(ex, "Verification email to {Email} could not be sent, but registration will proceed", user.Email);
         }
 
+        // Send admin signup notification email
+        try
+        {
+            var adminNotificationEmail = _configuration["Email:SignupNotificationEmail"];
+            if (!string.IsNullOrEmpty(adminNotificationEmail))
+            {
+                await _emailService.SendTemplateAsync(
+                    adminNotificationEmail,
+                    "admin_signup_notification",
+                    new Dictionary<string, object>
+                    {
+                        { "user_name", user.Name },
+                        { "user_email", user.Email! },
+                        { "user_mobile", user.Mobile ?? "-" },
+                        { "registered_at", user.CreatedAt.ToString("MMM dd, yyyy HH:mm") + " UTC" }
+                    });
+                _logger.LogInformation("Admin signup notification sent for new user: {Email}", user.Email);
+            }
+        }
+        catch (Exception ex)
+        {
+            // Log the error but don't fail registration
+            _logger.LogWarning(ex, "Admin signup notification email could not be sent for user: {Email}", user.Email);
+        }
+
         // Registration succeeded — consume the single-use mobile verification
         // token so it cannot be replayed for another account.
         if (requireMobileVerification)
@@ -1275,6 +1300,30 @@ public class AuthService : IAuthService
             _dbContext.UserOAuthProviders.Add(oauthLink);
 
             _logger.LogInformation("Created new user via OAuth: {Email} ({Provider})", userInfo.Email, provider);
+
+            // Send admin signup notification email for new OAuth user
+            try
+            {
+                var adminNotificationEmail = _configuration["Email:SignupNotificationEmail"];
+                if (!string.IsNullOrEmpty(adminNotificationEmail))
+                {
+                    await _emailService.SendTemplateAsync(
+                        adminNotificationEmail,
+                        "admin_signup_notification",
+                        new Dictionary<string, object>
+                        {
+                            { "user_name", user.Name },
+                            { "user_email", user.Email! },
+                            { "user_mobile", "-" },
+                            { "registered_at", user.CreatedAt.ToString("MMM dd, yyyy HH:mm") + " UTC" }
+                        });
+                    _logger.LogInformation("Admin signup notification sent for new OAuth user: {Email}", user.Email);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Admin signup notification email could not be sent for OAuth user: {Email}", user.Email);
+            }
         }
         else if (oauthLink == null)
         {
