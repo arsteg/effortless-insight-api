@@ -49,12 +49,49 @@ public class ConsoleSmsSer­vice : ISmsService
 
     public Task SendSmsAsync(string mobile, string message)
     {
-        // Console/log-only SMS provider for development
-        _logger.LogInformation("=================================================");
-        _logger.LogInformation("SMS to {Mobile}: {Message}", mobile, message);
-        _logger.LogInformation("=================================================");
+        // Log-only provider for local development. Message bodies can contain
+        // OTPs, so they are only ever emitted in Development. If this provider
+        // is somehow active in any other environment (e.g. a misconfigured
+        // Production that fell back to console), the contents are NOT logged.
+        if (IsDevelopment)
+        {
+            _logger.LogInformation("[DEV-SMS] to {Mobile}: {Message}", MaskMobile(mobile), message);
+        }
+        else
+        {
+            _logger.LogWarning(
+                "Console SMS provider is active outside Development: message to {Mobile} was NOT delivered and its contents were NOT logged. Set Sms:Provider=2factor.",
+                MaskMobile(mobile));
+        }
         return Task.CompletedTask;
     }
+
+    // OTP-aware path (the one OtpService actually calls). Overriding it means
+    // the OTP value never flows through SendSmsAsync's message string. The
+    // code is shown ONLY in Development so devs can test without a gateway;
+    // in every other environment it is never written to the logs.
+    public Task SendOtpAsync(string mobile, string otp, int expiryMinutes)
+    {
+        if (IsDevelopment)
+        {
+            _logger.LogInformation("[DEV-OTP] code {Otp} for {Mobile} (valid {Expiry} min)",
+                otp, MaskMobile(mobile), expiryMinutes);
+        }
+        else
+        {
+            _logger.LogWarning(
+                "Console SMS provider is active outside Development: OTP for {Mobile} was NOT delivered (and not logged). Set Sms:Provider=2factor.",
+                MaskMobile(mobile));
+        }
+        return Task.CompletedTask;
+    }
+
+    private static bool IsDevelopment =>
+        string.Equals(Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"),
+            "Development", StringComparison.OrdinalIgnoreCase);
+
+    private static string MaskMobile(string mobile) =>
+        mobile.Length < 4 ? "****" : $"******{mobile[^4..]}";
 }
 
 public class OtpService : IOtpService
@@ -144,10 +181,26 @@ public class OtpService : IOtpService
         await IncrementRateLimitAsync(rateLimitKey);
 
         // Send via the configured SMS provider (OTP-aware providers like
-        // 2Factor.in take the OTP value; others get a formatted message)
-        await _smsService.SendOtpAsync(normalizedMobile, otp, _expiryMinutes);
+        // 2Factor.in take the OTP value; others get a formatted message).
+        // The concrete provider type is logged so a wrong provider for the
+        // environment (e.g. ConsoleSmsService in Production) is obvious from
+        // the signup logs instead of failing silently.
+        var smsProvider = _smsService.GetType().Name;
+        _logger.LogInformation("Dispatching {Purpose} OTP to {Mobile} via {SmsProvider}",
+            purpose, MaskMobile(normalizedMobile), smsProvider);
+        try
+        {
+            await _smsService.SendOtpAsync(normalizedMobile, otp, _expiryMinutes);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to dispatch {Purpose} OTP to {Mobile} via {SmsProvider}",
+                purpose, MaskMobile(normalizedMobile), smsProvider);
+            throw;
+        }
 
-        _logger.LogInformation("OTP sent to {Mobile} for {Purpose}", MaskMobile(normalizedMobile), purpose);
+        _logger.LogInformation("{Purpose} OTP dispatched to {Mobile} via {SmsProvider}",
+            purpose, MaskMobile(normalizedMobile), smsProvider);
 
         return new OtpResponse(
             Message: "OTP sent successfully",

@@ -301,6 +301,22 @@ builder.Services.AddHealthChecks()
 
 var app = builder.Build();
 
+// Surface the active SMS/OTP provider on every startup so a wrong provider
+// for the environment is caught immediately from the boot logs.
+{
+    var smsProvider = app.Configuration["Sms:Provider"];
+    if (string.Equals(smsProvider, "2factor", StringComparison.OrdinalIgnoreCase))
+    {
+        app.Logger.LogInformation("SMS/OTP provider: 2factor (real delivery enabled)");
+    }
+    else
+    {
+        app.Logger.LogWarning(
+            "SMS/OTP provider is '{Provider}' (not '2factor') — OTPs use the console/log provider and will NOT be delivered. Set Sms:Provider=2factor.",
+            string.IsNullOrWhiteSpace(smsProvider) ? "(unset)" : smsProvider);
+    }
+}
+
 // Initialize field encryption service accessor for EF Core value converters
 var encryptionService = app.Services.GetRequiredService<EffortlessInsight.Api.Services.Encryption.IFieldEncryptionService>();
 EffortlessInsight.Api.Services.Encryption.FieldEncryptionServiceAccessor.SetInstance(encryptionService);
