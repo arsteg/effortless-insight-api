@@ -888,8 +888,14 @@ public class FirebasePushService : IPushChannelService
     }
 
     // Shared platform-config builders so single-token and multicast sends stay
-    // consistent and carry click action, TTL, collapse key, badge and web link
+    // consistent and carry TTL, collapse key, badge and web link
     // (audit BE-16 / BE-17 / BE-18 / BE-19).
+    //
+    // No ClickAction is set (fixed 2026-09): "OPEN_NOTIFICATION" has no matching
+    // <intent-filter> in the Android app's manifest, so a tap on a background
+    // notification resolved to nothing and the notification just dismissed
+    // (confirmed on-device). Leaving ClickAction unset makes the Firebase SDK
+    // fall back to the app's own launcher intent, which does open it.
     private static AndroidConfig BuildAndroidConfig(PushNotificationMessage message) => new()
     {
         Priority = message.Priority == "high" ? Priority.High : Priority.Normal,
@@ -898,10 +904,13 @@ public class FirebasePushService : IPushChannelService
         Notification = new AndroidNotification
         {
             ChannelId = message.ChannelId ?? "default",
-            Icon = "ic_notification",
+            // Must match the drawable the Android app actually ships
+            // (android/app/src/main/res/drawable-*/notification_icon.png) or
+            // FirebaseMessaging logs "Icon resource ic_notification not found"
+            // and silently falls back to the default icon.
+            Icon = "notification_icon",
             Color = "#1e40af",
-            Sound = message.Sound ?? "default",
-            ClickAction = "OPEN_NOTIFICATION"
+            Sound = message.Sound ?? "default"
         }
     };
 

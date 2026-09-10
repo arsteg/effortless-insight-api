@@ -635,7 +635,7 @@ public class NotificationEngineService : INotificationEngineService
                 else
                 {
                     delivery.RetryCount++;
-                    delivery.FailureReason = result.ErrorMessage;
+                    delivery.FailureReason = TruncateFailureReason(result.ErrorMessage);
                     await HandleRetryFailureAsync(delivery, cancellationToken);
                 }
             }
@@ -843,7 +843,7 @@ public class NotificationEngineService : INotificationEngineService
             delivery.Status = result.Success ? DeliveryStatus.Sent : DeliveryStatus.Failed;
             delivery.ProviderMessageId = result.MessageId;
             delivery.SentAt = result.Success ? DateTime.UtcNow : null;
-            delivery.FailureReason = result.ErrorMessage;
+            delivery.FailureReason = TruncateFailureReason(result.ErrorMessage);
             delivery.NextRetryAt = result.Success ? null : CalculateNextRetry(0, NotificationChannel.Email);
 
             await _dbContext.SaveChangesAsync(cancellationToken);
@@ -854,7 +854,7 @@ public class NotificationEngineService : INotificationEngineService
         {
             _logger.LogError(ex, "Failed to send email for notification {NotificationId}", notification.Id);
             delivery.Status = DeliveryStatus.Failed;
-            delivery.FailureReason = ex.Message;
+            delivery.FailureReason = TruncateFailureReason(ex.Message);
             delivery.NextRetryAt = CalculateNextRetry(0, NotificationChannel.Email);
             await _dbContext.SaveChangesAsync(cancellationToken);
             return new DeliveryResultDto(NotificationChannel.Email, "failed", null);
@@ -898,7 +898,7 @@ public class NotificationEngineService : INotificationEngineService
             delivery.Status = result.Success ? DeliveryStatus.Sent : DeliveryStatus.Failed;
             delivery.ProviderMessageId = result.MessageId;
             delivery.SentAt = result.Success ? DateTime.UtcNow : null;
-            delivery.FailureReason = result.ErrorMessage;
+            delivery.FailureReason = TruncateFailureReason(result.ErrorMessage);
             if (!result.Success)
             {
                 delivery.FailedAt = DateTime.UtcNow;
@@ -913,7 +913,7 @@ public class NotificationEngineService : INotificationEngineService
         {
             _logger.LogError(ex, "Failed to send SMS for notification {NotificationId}", notification.Id);
             delivery.Status = DeliveryStatus.Failed;
-            delivery.FailureReason = ex.Message;
+            delivery.FailureReason = TruncateFailureReason(ex.Message);
             delivery.FailedAt = DateTime.UtcNow;
             delivery.NextRetryAt = CalculateNextRetry(0, NotificationChannel.Sms);
             await _dbContext.SaveChangesAsync(cancellationToken);
@@ -1035,7 +1035,8 @@ public class NotificationEngineService : INotificationEngineService
                 // Schedule a retry so the retry job actually picks this up; a
                 // NULL NextRetryAt previously stranded push failures (audit BE-03).
                 delivery.FailedAt = DateTime.UtcNow;
-                delivery.FailureReason = results.FirstOrDefault(r => !r.Success)?.ErrorMessage ?? "All push tokens failed";
+                delivery.FailureReason = TruncateFailureReason(
+                    results.FirstOrDefault(r => !r.Success)?.ErrorMessage ?? "All push tokens failed");
                 delivery.NextRetryAt = CalculateNextRetry(0, NotificationChannel.Push);
             }
 
@@ -1047,7 +1048,7 @@ public class NotificationEngineService : INotificationEngineService
         {
             _logger.LogError(ex, "Failed to send push for notification {NotificationId}", notification.Id);
             delivery.Status = DeliveryStatus.Failed;
-            delivery.FailureReason = ex.Message;
+            delivery.FailureReason = TruncateFailureReason(ex.Message);
             delivery.FailedAt = DateTime.UtcNow;
             delivery.NextRetryAt = CalculateNextRetry(0, NotificationChannel.Push);
             await _dbContext.SaveChangesAsync(cancellationToken);
@@ -1102,7 +1103,7 @@ public class NotificationEngineService : INotificationEngineService
             delivery.Status = result.Success ? DeliveryStatus.Sent : DeliveryStatus.Failed;
             delivery.ProviderMessageId = result.MessageId;
             delivery.SentAt = result.Success ? DateTime.UtcNow : null;
-            delivery.FailureReason = result.ErrorMessage;
+            delivery.FailureReason = TruncateFailureReason(result.ErrorMessage);
             if (!result.Success)
             {
                 delivery.FailedAt = DateTime.UtcNow;
@@ -1117,7 +1118,7 @@ public class NotificationEngineService : INotificationEngineService
         {
             _logger.LogError(ex, "Failed to send WhatsApp for notification {NotificationId}", notification.Id);
             delivery.Status = DeliveryStatus.Failed;
-            delivery.FailureReason = ex.Message;
+            delivery.FailureReason = TruncateFailureReason(ex.Message);
             delivery.FailedAt = DateTime.UtcNow;
             delivery.NextRetryAt = CalculateNextRetry(0, NotificationChannel.WhatsApp);
             await _dbContext.SaveChangesAsync(cancellationToken);
@@ -1277,6 +1278,23 @@ public class NotificationEngineService : INotificationEngineService
         NotificationChannel.WhatsApp => 1,
         _ => 1
     };
+
+    /// <summary>
+    /// NotificationDeliveries.FailureReason is capped at 1000 characters in the
+    /// database (see ApplicationDbContext.HasMaxLength(1000)). Some third-party
+    /// client libraries return a Message far longer than that on their own —
+    /// observed with Google.Apis.Auth.OAuth2's TokenResponseException — and
+    /// persisting the untruncated string throws Postgres 22001, which the
+    /// EF SaveChanges wraps as a generic DbUpdateException that masks the real
+    /// failure reason entirely (fixed 2026-09; found while diagnosing a dead
+    /// Firebase service-account key that otherwise looked like a DB error).
+    /// </summary>
+    private const int FailureReasonMaxLength = 995;
+
+    private static string? TruncateFailureReason(string? reason) =>
+        string.IsNullOrEmpty(reason) || reason.Length <= FailureReasonMaxLength
+            ? reason
+            : reason[..FailureReasonMaxLength] + "…";
 
     private static DateTime CalculateNextRetry(int retryCount, string channel)
     {
