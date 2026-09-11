@@ -255,6 +255,12 @@ public class SubscriptionsController : ControllerBase
             var result = await _subscriptionService.ChangePlanAsync(orgId.Value, userId, request);
             return Ok(new ApiResponse<ChangePlanResponse>(true, result));
         }
+        catch (InvalidOperationException ex) when (ex.Message.StartsWith("PAYMENT_REQUIRED"))
+        {
+            // Return 402 Payment Required - frontend redirects to checkout
+            return StatusCode(StatusCodes.Status402PaymentRequired,
+                new ApiErrorResponse(false, "PAYMENT_REQUIRED", ex.Message));
+        }
         catch (InvalidOperationException ex)
         {
             return BadRequest(new ApiErrorResponse(false, "CHANGE_FAILED", ex.Message));

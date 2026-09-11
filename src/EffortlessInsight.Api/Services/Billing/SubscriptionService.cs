@@ -358,7 +358,7 @@ public class SubscriptionService : ISubscriptionService
 
                 if (isUpgradePayment)
                 {
-                    // Handle upgrade payment - apply plan change without resetting period
+                    // Handle upgrade payment - apply plan change
                     var newPlanCode = orderDetails.Notes.GetValueOrDefault("plan_code", "");
                     var newBillingCycle = orderDetails.Notes.GetValueOrDefault("billing_cycle", subscription.BillingCycle);
                     var additionalSeatsStr = orderDetails.Notes.GetValueOrDefault("additional_seats", "0");
@@ -368,8 +368,34 @@ public class SubscriptionService : ISubscriptionService
                         ?? throw new InvalidOperationException($"Plan '{newPlanCode}' not found");
                     plan = newPlan;
 
-                    // For upgrades: keep the same period end date (customer paid prorated difference)
-                    var originalEndDate = subscription.CurrentPeriodEnd;
+                    // Check if upgrading from a free plan
+                    var oldPlan = await _planService.GetPlanByIdAsync(subscription.PlanId);
+                    var isFromFreePlan = oldPlan != null && IsFreePlan(oldPlan);
+
+                    // Determine period end date
+                    DateTime periodEndForInvoice;
+                    if (isFromFreePlan)
+                    {
+                        // Free→Paid: Start fresh billing period (full cycle from today)
+                        subscription.CurrentPeriodStart = now;
+                        subscription.CurrentPeriodEnd = newBillingCycle == BillingCycle.Annually
+                            ? now.AddYears(1)
+                            : now.AddMonths(1);
+                        periodEndForInvoice = subscription.CurrentPeriodEnd;
+
+                        _logger.LogInformation(
+                            "Free→Paid upgrade: Org {OrgId} - Changed to {PlanCode}, Fresh period {Start:yyyy-MM-dd} to {End:yyyy-MM-dd}",
+                            organizationId, newPlan.Code, subscription.CurrentPeriodStart, subscription.CurrentPeriodEnd);
+                    }
+                    else
+                    {
+                        // Paid→Paid: Keep existing period end (customer paid prorated difference)
+                        periodEndForInvoice = subscription.CurrentPeriodEnd;
+
+                        _logger.LogInformation(
+                            "Plan upgrade applied: Org {OrgId} - Changed to {PlanCode}, Period end remains {EndDate:yyyy-MM-dd}",
+                            organizationId, newPlan.Code, periodEndForInvoice);
+                    }
 
                     subscription.PlanCode = newPlan.Code;
                     subscription.PlanId = newPlan.Id;
@@ -382,6 +408,10 @@ public class SubscriptionService : ISubscriptionService
                     subscription.Metadata ??= new Dictionary<string, object>();
                     subscription.Metadata["lastUpgradedAt"] = now.ToString("O");
                     subscription.Metadata["upgradedBy"] = userId.ToString();
+                    if (isFromFreePlan)
+                    {
+                        subscription.Metadata["upgradedFromFreePlan"] = true;
+                    }
 
                     // Update pricing amounts for the new plan
                     var upgradePricing = _planService.CalculateSubscriptionPrice(newPlan, newBillingCycle, additionalSeats);
@@ -391,18 +421,16 @@ public class SubscriptionService : ISubscriptionService
                     subscription.TotalAmount = upgradePricing.Total / 100m;
                     subscription.Currency = upgradePricing.Currency;
 
-                    // Period end stays the same for upgrades
-                    _logger.LogInformation(
-                        "Plan upgrade applied: Org {OrgId} - Changed to {PlanCode}, Period end remains {EndDate}",
-                        organizationId, newPlan.Code, originalEndDate);
-
-                    // Generate proration invoice
-                    var description = $"Plan Upgrade to {newPlan.DisplayName} - Prorated Amount";
+                    // Generate upgrade invoice
+                    var invoiceType = isFromFreePlan ? "subscription" : "proration";
+                    var description = isFromFreePlan
+                        ? $"{newPlan.DisplayName} Subscription - {newBillingCycle}"
+                        : $"Plan Upgrade to {newPlan.DisplayName} - Prorated Amount";
                     var lineItems = new List<InvoiceLineItemRequest>
                     {
                         new()
                         {
-                            Type = "proration",
+                            Type = invoiceType,
                             Description = description,
                             Quantity = 1,
                             UnitPrice = payment.Amount,
@@ -410,7 +438,7 @@ public class SubscriptionService : ISubscriptionService
                             PlanCode = newPlan.Code,
                             BillingCycle = newBillingCycle,
                             PeriodStart = DateOnly.FromDateTime(now),
-                            PeriodEnd = DateOnly.FromDateTime(subscription.CurrentPeriodEnd)
+                            PeriodEnd = DateOnly.FromDateTime(periodEndForInvoice)
                         }
                     };
 
@@ -3047,74 +3075,117 @@ public class SubscriptionService : ISubscriptionService
         {
             var now = DateTime.UtcNow;
             var oldBillingCycle = subscription.BillingCycle;
-            var remainingDays = (subscription.CurrentPeriodEnd - now).TotalDays;
 
-            if (remainingDays > 0)
+            // Check if current plan is free (has 100-year period that shouldn't be used for proration)
+            var currentMonthlyPrice = currentPlan.PricingMonthly ?? 0;
+            var currentAnnualPrice = currentPlan.PricingAnnually ?? 0;
+            var isCurrentPlanFree = currentMonthlyPrice == 0 && currentAnnualPrice == 0;
+
+            if (isCurrentPlanFree)
             {
-                // Step 1: Calculate the DAILY RATE of current plan
-                // Note: Plan prices are stored in paisa (1/100 rupee), so divide by 100 for display
-                var currentPeriodDays = oldBillingCycle == BillingCycle.Annually ? 365.0 : 30.0;
-                var currentPeriodPricePaisa = oldBillingCycle == BillingCycle.Annually
-                    ? currentPlan.PricingAnnually ?? 0
-                    : currentPlan.PricingMonthly ?? 0;
+                // Free → Paid upgrade: Fresh billing period, no proration credit
+                var newPeriodDays = newBillingCycle == BillingCycle.Annually ? 365 : 30;
+                var newPeriodEnd = newBillingCycle == BillingCycle.Annually
+                    ? now.AddYears(1)
+                    : now.AddMonths(1);
 
-                // Add per-seat costs for current plan
-                currentPeriodPricePaisa += subscription.SeatsAdditional * (oldBillingCycle == BillingCycle.Annually
-                    ? currentPlan.PerSeatAnnually ?? 0
-                    : currentPlan.PerSeatMonthly ?? 0);
-
-                // Convert from paisa to rupees
-                var currentPeriodPrice = currentPeriodPricePaisa / 100m;
-                var currentDailyRate = currentPeriodPrice / (decimal)currentPeriodDays;
-
-                // Step 2: Calculate remaining value based on daily rate × remaining days
-                var remainingValue = currentDailyRate * (decimal)remainingDays;
-
-                // Step 3: Calculate the DAILY RATE of new plan
-                var newPeriodDays = newBillingCycle == BillingCycle.Annually ? 365.0 : 30.0;
+                // Calculate new plan daily rate
                 var newPeriodPricePaisa = newBillingCycle == BillingCycle.Annually
                     ? newPlan.PricingAnnually ?? 0
                     : newPlan.PricingMonthly ?? 0;
-
-                // Add per-seat costs for new plan
                 newPeriodPricePaisa += additionalSeats * (newBillingCycle == BillingCycle.Annually
                     ? newPlan.PerSeatAnnually ?? 0
                     : newPlan.PerSeatMonthly ?? 0);
-
-                // Convert from paisa to rupees
                 var newPeriodPrice = newPeriodPricePaisa / 100m;
-                var newDailyRate = newPeriodPrice / (decimal)newPeriodDays;
-
-                // Step 4: Calculate new period end date
-                DateTime newPeriodEnd;
-                int newPeriodDaysInt;
-                if (newDailyRate > 0)
-                {
-                    var newRemainingDays = remainingValue / newDailyRate;
-                    newPeriodEnd = now.AddDays(Math.Max(1, (double)newRemainingDays));
-                    newPeriodDaysInt = (int)Math.Ceiling(Math.Max(1, (double)newRemainingDays));
-                }
-                else
-                {
-                    // Free plan - set full period
-                    newPeriodEnd = now.AddDays(newPeriodDays);
-                    newPeriodDaysInt = (int)newPeriodDays;
-                }
+                var newDailyRate = newPeriodPrice / newPeriodDays;
 
                 prorationPreview = new ProrationPreview(
-                    IsUpgrade: newDailyRate > currentDailyRate,
-                    CurrentDailyRate: Math.Round(currentDailyRate, 2),
+                    IsUpgrade: true, // Free → Paid is always an upgrade
+                    CurrentDailyRate: 0, // Free plan has no cost
                     NewDailyRate: Math.Round(newDailyRate, 2),
-                    RemainingDays: (int)Math.Ceiling(remainingDays),
-                    RemainingValue: Math.Round(remainingValue, 2),
-                    CurrentPeriodEnd: subscription.CurrentPeriodEnd,
+                    RemainingDays: 0, // No remaining value from free plan
+                    RemainingValue: 0, // Free plan has no remaining value
+                    CurrentPeriodEnd: now, // Treat as if current period ends now
                     NewPeriodEnd: newPeriodEnd,
-                    NewPeriodDays: newPeriodDaysInt,
+                    NewPeriodDays: newPeriodDays,
                     CurrentPlanName: currentPlan.DisplayName,
                     NewPlanName: newPlan.DisplayName,
                     CurrentBillingCycle: oldBillingCycle,
                     NewBillingCycle: newBillingCycle
                 );
+            }
+            else
+            {
+                // Paid → Paid change: Use normal proration logic
+                var remainingDays = (subscription.CurrentPeriodEnd - now).TotalDays;
+
+                if (remainingDays > 0)
+                {
+                    // Step 1: Calculate the DAILY RATE of current plan
+                    // Note: Plan prices are stored in paisa (1/100 rupee), so divide by 100 for display
+                    var currentPeriodDays = oldBillingCycle == BillingCycle.Annually ? 365.0 : 30.0;
+                    var currentPeriodPricePaisa = oldBillingCycle == BillingCycle.Annually
+                        ? currentPlan.PricingAnnually ?? 0
+                        : currentPlan.PricingMonthly ?? 0;
+
+                    // Add per-seat costs for current plan
+                    currentPeriodPricePaisa += subscription.SeatsAdditional * (oldBillingCycle == BillingCycle.Annually
+                        ? currentPlan.PerSeatAnnually ?? 0
+                        : currentPlan.PerSeatMonthly ?? 0);
+
+                    // Convert from paisa to rupees
+                    var currentPeriodPrice = currentPeriodPricePaisa / 100m;
+                    var currentDailyRate = currentPeriodPrice / (decimal)currentPeriodDays;
+
+                    // Step 2: Calculate remaining value based on daily rate × remaining days
+                    var remainingValue = currentDailyRate * (decimal)remainingDays;
+
+                    // Step 3: Calculate the DAILY RATE of new plan
+                    var newPeriodDays = newBillingCycle == BillingCycle.Annually ? 365.0 : 30.0;
+                    var newPeriodPricePaisa = newBillingCycle == BillingCycle.Annually
+                        ? newPlan.PricingAnnually ?? 0
+                        : newPlan.PricingMonthly ?? 0;
+
+                    // Add per-seat costs for new plan
+                    newPeriodPricePaisa += additionalSeats * (newBillingCycle == BillingCycle.Annually
+                        ? newPlan.PerSeatAnnually ?? 0
+                        : newPlan.PerSeatMonthly ?? 0);
+
+                    // Convert from paisa to rupees
+                    var newPeriodPrice = newPeriodPricePaisa / 100m;
+                    var newDailyRate = newPeriodPrice / (decimal)newPeriodDays;
+
+                    // Step 4: Calculate new period end date
+                    DateTime newPeriodEnd;
+                    int newPeriodDaysInt;
+                    if (newDailyRate > 0)
+                    {
+                        var newRemainingDays = remainingValue / newDailyRate;
+                        newPeriodEnd = now.AddDays(Math.Max(1, (double)newRemainingDays));
+                        newPeriodDaysInt = (int)Math.Ceiling(Math.Max(1, (double)newRemainingDays));
+                    }
+                    else
+                    {
+                        // Downgrading to free plan - set full period
+                        newPeriodEnd = now.AddDays(newPeriodDays);
+                        newPeriodDaysInt = (int)newPeriodDays;
+                    }
+
+                    prorationPreview = new ProrationPreview(
+                        IsUpgrade: newDailyRate > currentDailyRate,
+                        CurrentDailyRate: Math.Round(currentDailyRate, 2),
+                        NewDailyRate: Math.Round(newDailyRate, 2),
+                        RemainingDays: (int)Math.Ceiling(remainingDays),
+                        RemainingValue: Math.Round(remainingValue, 2),
+                        CurrentPeriodEnd: subscription.CurrentPeriodEnd,
+                        NewPeriodEnd: newPeriodEnd,
+                        NewPeriodDays: newPeriodDaysInt,
+                        CurrentPlanName: currentPlan.DisplayName,
+                        NewPlanName: newPlan.DisplayName,
+                        CurrentBillingCycle: oldBillingCycle,
+                        NewBillingCycle: newBillingCycle
+                    );
+                }
             }
         }
 

@@ -78,13 +78,8 @@ public class PlanService : IPlanService
         int additionalSeats,
         int? discountAmount = null)
     {
-        var baseAmount = billingCycle == BillingCycle.Annually
-            ? plan.PricingAnnually ?? 0
-            : plan.PricingMonthly ?? 0;
-
-        var perSeatPrice = billingCycle == BillingCycle.Annually
-            ? plan.PerSeatAnnually ?? 0
-            : plan.PerSeatMonthly ?? 0;
+        var baseAmount = GetPriceForCycle(plan, billingCycle) ?? 0;
+        var perSeatPrice = GetPerSeatPriceForCycle(plan, billingCycle) ?? 0;
 
         var additionalSeatsAmount = additionalSeats * perSeatPrice;
         var subtotal = baseAmount + additionalSeatsAmount - (discountAmount ?? 0);
@@ -115,6 +110,20 @@ public class PlanService : IPlanService
         DateTime periodStart,
         DateTime periodEnd)
     {
+        // Free plan upgrades: no proration credit, charge full new plan price
+        // for the new billing cycle starting from today.
+        // Free plans have a 100-year period which would produce incorrect proration.
+        var currentMonthlyPrice = currentPlan.PricingMonthly ?? 0;
+        var currentAnnualPrice = currentPlan.PricingAnnually ?? 0;
+        var isCurrentPlanFree = currentMonthlyPrice == 0 && currentAnnualPrice == 0;
+
+        if (isCurrentPlanFree)
+        {
+            // Return full new plan price with GST for free→paid upgrades
+            var fullPlanPricing = CalculateSubscriptionPrice(newPlan, newCycle, newSeats);
+            return fullPlanPricing.Total;
+        }
+
         var totalDays = (periodEnd - periodStart).TotalDays;
         var remainingDays = (periodEnd - DateTime.UtcNow).TotalDays;
 
@@ -146,21 +155,28 @@ public class PlanService : IPlanService
         string currentCycle,
         string newCycle)
     {
-        var currentPrice = currentCycle == BillingCycle.Annually
-            ? currentPlan.PricingAnnually ?? 0
-            : currentPlan.PricingMonthly ?? 0;
-
-        var newPrice = newCycle == BillingCycle.Annually
-            ? newPlan.PricingAnnually ?? 0
-            : newPlan.PricingMonthly ?? 0;
+        var currentPrice = GetPriceForCycle(currentPlan, currentCycle) ?? 0;
+        var newPrice = GetPriceForCycle(newPlan, newCycle) ?? 0;
 
         // Normalize to monthly for comparison
-        if (currentCycle == BillingCycle.Annually)
-            currentPrice /= 12;
-        if (newCycle == BillingCycle.Annually)
-            newPrice /= 12;
+        currentPrice = NormalizeToMonthly(currentPrice, currentCycle);
+        newPrice = NormalizeToMonthly(newPrice, newCycle);
 
         return newPrice > currentPrice ? "upgrade" : "downgrade";
+    }
+
+    /// <summary>
+    /// Normalizes a price to monthly equivalent for comparison.
+    /// </summary>
+    private static int NormalizeToMonthly(int price, string billingCycle)
+    {
+        return billingCycle switch
+        {
+            BillingCycle.Weekly => price * 4, // Approximate 4 weeks per month
+            BillingCycle.Monthly => price,
+            BillingCycle.Annually => price / 12,
+            _ => price
+        };
     }
 
     /// <summary>
@@ -206,8 +222,9 @@ public class PlanService : IPlanService
             AnnualDiscount: annualDiscount,
             AnnualSavings: annualSavings > 0 ? annualSavings : null,
             EffectiveMonthlyRate: effectiveMonthlyRate > 0 ? effectiveMonthlyRate : null,
-            PerSeat: plan.PerSeatMonthly.HasValue || plan.PerSeatAnnually.HasValue
+            PerSeat: plan.PerSeatWeekly.HasValue || plan.PerSeatMonthly.HasValue || plan.PerSeatAnnually.HasValue
                 ? new PerSeatPricingDto(
+                    plan.PerSeatWeekly,
                     plan.PerSeatMonthly,
                     plan.PerSeatAnnually ?? (plan.PerSeatMonthly.HasValue ? plan.PerSeatMonthly.Value * 10 : null))
                 : null
@@ -279,12 +296,13 @@ public class PlanService : IPlanService
             DisplayName: plan.DisplayName,
             Description: plan.Description,
             Pricing: new PlanPricingDto(
+                Weekly: plan.PricingWeekly,
                 Monthly: plan.PricingMonthly,
                 Annually: plan.PricingAnnually,
                 Currency: plan.Currency,
                 AnnualDiscount: annualDiscount,
-                PerSeat: plan.PerSeatMonthly.HasValue || plan.PerSeatAnnually.HasValue
-                    ? new PerSeatPricingDto(plan.PerSeatMonthly, plan.PerSeatAnnually)
+                PerSeat: plan.PerSeatWeekly.HasValue || plan.PerSeatMonthly.HasValue || plan.PerSeatAnnually.HasValue
+                    ? new PerSeatPricingDto(plan.PerSeatWeekly, plan.PerSeatMonthly, plan.PerSeatAnnually)
                     : null
             ),
             Limits: new PlanLimitsDto(
@@ -293,12 +311,15 @@ public class PlanService : IPlanService
                 StorageGb: plan.Limits.StorageGb,
                 OrganizationsCount: plan.Limits.OrganizationsCount,
                 AdditionalUsersAllowed: plan.Limits.AdditionalUsersAllowed,
-                ApiCalls: plan.Limits.ApiCalls
+                ApiCalls: plan.Limits.ApiCalls,
+                GstinsAllowed: plan.Limits.GstinsAllowed
             ),
             Features: plan.Features,
             IsPopular: plan.IsPopular,
             TrialDays: plan.TrialDays,
-            ContactSales: plan.ContactSales
+            ContactSales: plan.ContactSales,
+            AllowedBillingCycles: plan.AllowedBillingCycles,
+            DefaultBillingCycle: plan.DefaultBillingCycle
         );
     }
 
@@ -408,8 +429,10 @@ public class PlanService : IPlanService
             Name: plan.Name,
             DisplayName: plan.DisplayName,
             Description: plan.Description,
+            PricingWeekly: plan.PricingWeekly,
             PricingMonthly: plan.PricingMonthly,
             PricingAnnually: plan.PricingAnnually,
+            PerSeatWeekly: plan.PerSeatWeekly,
             PerSeatMonthly: plan.PerSeatMonthly,
             PerSeatAnnually: plan.PerSeatAnnually,
             Currency: plan.Currency,
@@ -419,7 +442,8 @@ public class PlanService : IPlanService
                 StorageGb: plan.Limits.StorageGb,
                 OrganizationsCount: plan.Limits.OrganizationsCount,
                 AdditionalUsersAllowed: plan.Limits.AdditionalUsersAllowed,
-                ApiCalls: plan.Limits.ApiCalls
+                ApiCalls: plan.Limits.ApiCalls,
+                GstinsAllowed: plan.Limits.GstinsAllowed
             ),
             Features: plan.Features,
             IsActive: plan.IsActive,
@@ -428,8 +452,12 @@ public class PlanService : IPlanService
             SortOrder: plan.SortOrder,
             ContactSales: plan.ContactSales,
             StartingAt: plan.StartingAt,
+            RazorpayPlanIdWeekly: plan.RazorpayPlanIdWeekly,
             RazorpayPlanIdMonthly: plan.RazorpayPlanIdMonthly,
             RazorpayPlanIdAnnually: plan.RazorpayPlanIdAnnually,
+            AllowedBillingCycles: plan.AllowedBillingCycles,
+            DefaultBillingCycle: plan.DefaultBillingCycle,
+            IsCaOperatorPlan: plan.IsCaOperatorPlan,
             SubscriberCount: subscriberCount,
             CreatedAt: plan.CreatedAt,
             UpdatedAt: plan.UpdatedAt,
@@ -455,8 +483,10 @@ public class PlanService : IPlanService
             Name = request.Name,
             DisplayName = request.DisplayName,
             Description = request.Description,
+            PricingWeekly = request.PricingWeekly,
             PricingMonthly = request.PricingMonthly,
             PricingAnnually = request.PricingAnnually,
+            PerSeatWeekly = request.PerSeatWeekly,
             PerSeatMonthly = request.PerSeatMonthly,
             PerSeatAnnually = request.PerSeatAnnually,
             Currency = request.Currency,
@@ -467,7 +497,8 @@ public class PlanService : IPlanService
                 StorageGb = request.Limits.StorageGb,
                 OrganizationsCount = request.Limits.OrganizationsCount,
                 AdditionalUsersAllowed = request.Limits.AdditionalUsersAllowed,
-                ApiCalls = request.Limits.ApiCalls
+                ApiCalls = request.Limits.ApiCalls,
+                GstinsAllowed = request.Limits.GstinsAllowed
             },
             Features = request.Features,
             IsActive = request.IsActive,
@@ -476,8 +507,12 @@ public class PlanService : IPlanService
             SortOrder = request.SortOrder,
             ContactSales = request.ContactSales,
             StartingAt = request.StartingAt,
+            RazorpayPlanIdWeekly = request.RazorpayPlanIdWeekly,
             RazorpayPlanIdMonthly = request.RazorpayPlanIdMonthly,
             RazorpayPlanIdAnnually = request.RazorpayPlanIdAnnually,
+            AllowedBillingCycles = request.AllowedBillingCycles,
+            DefaultBillingCycle = request.DefaultBillingCycle,
+            IsCaOperatorPlan = request.IsCaOperatorPlan,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -505,8 +540,10 @@ public class PlanService : IPlanService
         if (request.Name != null) plan.Name = request.Name;
         if (request.DisplayName != null) plan.DisplayName = request.DisplayName;
         if (request.Description != null) plan.Description = request.Description;
+        if (request.PricingWeekly.HasValue) plan.PricingWeekly = request.PricingWeekly;
         if (request.PricingMonthly.HasValue) plan.PricingMonthly = request.PricingMonthly;
         if (request.PricingAnnually.HasValue) plan.PricingAnnually = request.PricingAnnually;
+        if (request.PerSeatWeekly.HasValue) plan.PerSeatWeekly = request.PerSeatWeekly;
         if (request.PerSeatMonthly.HasValue) plan.PerSeatMonthly = request.PerSeatMonthly;
         if (request.PerSeatAnnually.HasValue) plan.PerSeatAnnually = request.PerSeatAnnually;
         if (request.Currency != null) plan.Currency = request.Currency;
@@ -520,7 +557,8 @@ public class PlanService : IPlanService
                 StorageGb = request.Limits.StorageGb,
                 OrganizationsCount = request.Limits.OrganizationsCount,
                 AdditionalUsersAllowed = request.Limits.AdditionalUsersAllowed,
-                ApiCalls = request.Limits.ApiCalls
+                ApiCalls = request.Limits.ApiCalls,
+                GstinsAllowed = request.Limits.GstinsAllowed
             };
         }
 
@@ -531,8 +569,12 @@ public class PlanService : IPlanService
         if (request.SortOrder.HasValue) plan.SortOrder = request.SortOrder.Value;
         if (request.ContactSales.HasValue) plan.ContactSales = request.ContactSales.Value;
         if (request.StartingAt.HasValue) plan.StartingAt = request.StartingAt;
+        if (request.RazorpayPlanIdWeekly != null) plan.RazorpayPlanIdWeekly = request.RazorpayPlanIdWeekly;
         if (request.RazorpayPlanIdMonthly != null) plan.RazorpayPlanIdMonthly = request.RazorpayPlanIdMonthly;
         if (request.RazorpayPlanIdAnnually != null) plan.RazorpayPlanIdAnnually = request.RazorpayPlanIdAnnually;
+        if (request.AllowedBillingCycles != null) plan.AllowedBillingCycles = request.AllowedBillingCycles;
+        if (request.DefaultBillingCycle != null) plan.DefaultBillingCycle = request.DefaultBillingCycle;
+        if (request.IsCaOperatorPlan.HasValue) plan.IsCaOperatorPlan = request.IsCaOperatorPlan.Value;
 
         plan.UpdatedAt = DateTime.UtcNow;
 
@@ -617,5 +659,91 @@ public class PlanService : IPlanService
         {
             _logger.LogWarning(ex, "Failed to invalidate plans cache");
         }
+    }
+
+    // ============================================================================
+    // Billing Cycle Helper Methods
+    // ============================================================================
+
+    /// <summary>
+    /// Gets the price for a specific billing cycle.
+    /// </summary>
+    /// <param name="plan">The subscription plan.</param>
+    /// <param name="billingCycle">The billing cycle (weekly, monthly, annually).</param>
+    /// <returns>The price in paise, or null if not available for this cycle.</returns>
+    public static int? GetPriceForCycle(SubscriptionPlan plan, string billingCycle)
+    {
+        return billingCycle switch
+        {
+            BillingCycle.Weekly => plan.PricingWeekly,
+            BillingCycle.Monthly => plan.PricingMonthly,
+            BillingCycle.Annually => plan.PricingAnnually,
+            _ => throw new ArgumentException($"Invalid billing cycle: {billingCycle}", nameof(billingCycle))
+        };
+    }
+
+    /// <summary>
+    /// Gets the per-seat price for a specific billing cycle.
+    /// </summary>
+    /// <param name="plan">The subscription plan.</param>
+    /// <param name="billingCycle">The billing cycle (weekly, monthly, annually).</param>
+    /// <returns>The per-seat price in paise, or null if not available for this cycle.</returns>
+    public static int? GetPerSeatPriceForCycle(SubscriptionPlan plan, string billingCycle)
+    {
+        return billingCycle switch
+        {
+            BillingCycle.Weekly => plan.PerSeatWeekly,
+            BillingCycle.Monthly => plan.PerSeatMonthly,
+            BillingCycle.Annually => plan.PerSeatAnnually,
+            _ => throw new ArgumentException($"Invalid billing cycle: {billingCycle}", nameof(billingCycle))
+        };
+    }
+
+    /// <summary>
+    /// Validates if a billing cycle is allowed for a plan and returns the effective cycle.
+    /// </summary>
+    /// <param name="plan">The subscription plan.</param>
+    /// <param name="requestedCycle">The requested billing cycle, or null for default.</param>
+    /// <returns>The validated billing cycle to use.</returns>
+    /// <exception cref="InvalidOperationException">If the requested cycle is not allowed for this plan.</exception>
+    public static string ValidateBillingCycle(SubscriptionPlan plan, string? requestedCycle)
+    {
+        // Use default if not specified
+        var effectiveCycle = requestedCycle ?? plan.DefaultBillingCycle;
+
+        // Validate against allowed cycles
+        if (!plan.AllowedBillingCycles.Contains(effectiveCycle))
+        {
+            throw new InvalidOperationException(
+                $"Billing cycle '{effectiveCycle}' is not available for this plan. " +
+                $"Available cycles: {string.Join(", ", plan.AllowedBillingCycles)}");
+        }
+
+        // Ensure pricing exists for this cycle
+        var price = GetPriceForCycle(plan, effectiveCycle);
+        if (price == null && !plan.ContactSales)
+        {
+            throw new InvalidOperationException(
+                $"Pricing for billing cycle '{effectiveCycle}' is not configured for this plan.");
+        }
+
+        return effectiveCycle;
+    }
+
+    /// <summary>
+    /// Gets the Razorpay plan ID for a specific billing cycle.
+    /// </summary>
+    /// <param name="plan">The subscription plan.</param>
+    /// <param name="billingCycle">The billing cycle (weekly, monthly, annually).</param>
+    /// <returns>The Razorpay plan ID, or null if not configured.</returns>
+    public static string? GetRazorpayPlanId(SubscriptionPlan plan, string billingCycle)
+    {
+        return billingCycle switch
+        {
+            BillingCycle.Weekly => plan.RazorpayPlanIdWeekly,
+            BillingCycle.Monthly => plan.RazorpayPlanIdMonthly,
+            BillingCycle.Annually => plan.RazorpayPlanIdAnnually,
+            _ => null
+        };
     }
 }

@@ -76,4 +76,27 @@ public interface IUsageService
     /// Recalculates all usage metrics for an organization.
     /// </summary>
     Task RecalculateUsageAsync(Guid organizationId);
+
+    /// <summary>
+    /// Checks if an organization can add a new GSTIN based on plan limits.
+    /// </summary>
+    /// <param name="organizationId">The organization ID</param>
+    /// <returns>Tuple indicating whether the GSTIN can be added and an optional reason if not</returns>
+    Task<(bool CanAdd, string? Reason)> CanAddGstinAsync(Guid organizationId);
+
+    /// <summary>
+    /// Gets the current GSTIN count for an organization.
+    /// </summary>
+    /// <param name="organizationId">The organization ID</param>
+    /// <returns>Number of active GSTINs</returns>
+    Task<int> GetGstinCountAsync(Guid organizationId);
+
+    /// <summary>
+    /// Validates if a plan change is allowed based on GSTIN limits.
+    /// </summary>
+    /// <param name="organizationId">The organization ID</param>
+    /// <param name="newPlanCode">The new plan code to validate against</param>
+    /// <returns>Tuple with validation result, reason, current count, and new limit</returns>
+    Task<(bool CanDowngrade, string? Reason, int CurrentCount, int NewLimit)> ValidateGstinLimitForPlanChangeAsync(
+        Guid organizationId, string newPlanCode);
 }

@@ -1,6 +1,7 @@
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.DTOs;
+using EffortlessInsight.Api.Services.Billing;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 
@@ -13,16 +14,19 @@ public class NotificationPreferencesService : INotificationPreferencesService
 {
     private readonly ApplicationDbContext _dbContext;
     private readonly IChannelUnsubscribeService _channelUnsubscribe;
+    private readonly IFeatureAccessService _featureAccessService;
     private readonly ILogger<NotificationPreferencesService> _logger;
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
     public NotificationPreferencesService(
         ApplicationDbContext dbContext,
         IChannelUnsubscribeService channelUnsubscribe,
+        IFeatureAccessService featureAccessService,
         ILogger<NotificationPreferencesService> logger)
     {
         _dbContext = dbContext;
         _channelUnsubscribe = channelUnsubscribe;
+        _featureAccessService = featureAccessService;
         _logger = logger;
     }
 
@@ -242,6 +246,33 @@ public class NotificationPreferencesService : INotificationPreferencesService
             shouldPush = false;
         if (shouldWhatsApp && await _channelUnsubscribe.IsUnsubscribedAsync(userId, NotificationChannel.WhatsApp, category, notificationType, cancellationToken))
             shouldWhatsApp = false;
+
+        // Check WhatsApp subscription tier - only paid plans have WhatsApp access
+        if (shouldWhatsApp)
+        {
+            var orgMembership = await _dbContext.OrganizationMembers
+                .AsNoTracking()
+                .Where(m => m.UserId == userId && m.Status == "active")
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (orgMembership != null)
+            {
+                var hasWhatsAppAccess = await _featureAccessService.HasFeatureAccessAsync(
+                    orgMembership.OrganizationId, FeatureCodes.WhatsAppAssistant, cancellationToken);
+                if (!hasWhatsAppAccess)
+                {
+                    _logger.LogDebug(
+                        "WhatsApp disabled for user {UserId} - organization {OrgId} does not have whatsapp_assistant feature",
+                        userId, orgMembership.OrganizationId);
+                    shouldWhatsApp = false;
+                }
+            }
+            else
+            {
+                // User has no active org membership - disable WhatsApp
+                shouldWhatsApp = false;
+            }
+        }
 
         return new ChannelDecision(
             shouldEmail,

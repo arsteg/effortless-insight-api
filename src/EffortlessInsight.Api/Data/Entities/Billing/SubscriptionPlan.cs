@@ -24,6 +24,11 @@ public class SubscriptionPlan : BaseEntity
     public string? Description { get; set; }
 
     /// <summary>
+    /// Weekly price in paise (INR smallest unit). Null if weekly billing not available.
+    /// </summary>
+    public int? PricingWeekly { get; set; }
+
+    /// <summary>
     /// Monthly price in paise (INR smallest unit). Null for enterprise/custom pricing.
     /// </summary>
     public int? PricingMonthly { get; set; }
@@ -32,6 +37,11 @@ public class SubscriptionPlan : BaseEntity
     /// Annual price in paise (INR smallest unit). Null for enterprise/custom pricing.
     /// </summary>
     public int? PricingAnnually { get; set; }
+
+    /// <summary>
+    /// Per-seat weekly price in paise for additional users.
+    /// </summary>
+    public int? PerSeatWeekly { get; set; }
 
     /// <summary>
     /// Per-seat monthly price in paise for additional users.
@@ -85,6 +95,12 @@ public class SubscriptionPlan : BaseEntity
     public int? StartingAt { get; set; }
 
     /// <summary>
+    /// Razorpay plan ID for weekly billing.
+    /// </summary>
+    [MaxLength(50)]
+    public string? RazorpayPlanIdWeekly { get; set; }
+
+    /// <summary>
     /// Razorpay plan ID for monthly billing.
     /// </summary>
     [MaxLength(50)]
@@ -95,6 +111,24 @@ public class SubscriptionPlan : BaseEntity
     /// </summary>
     [MaxLength(50)]
     public string? RazorpayPlanIdAnnually { get; set; }
+
+    /// <summary>
+    /// Allowed billing cycles for this plan. Admin-configurable.
+    /// Values: "weekly", "monthly", "annually"
+    /// </summary>
+    public List<string> AllowedBillingCycles { get; set; } = new() { "annually" };
+
+    /// <summary>
+    /// Default billing cycle when user doesn't specify.
+    /// </summary>
+    [MaxLength(20)]
+    public string DefaultBillingCycle { get; set; } = "annually";
+
+    /// <summary>
+    /// Whether this plan is designated for CA operator accounts (always free).
+    /// CA operators are manually assigned this plan by admin after verification.
+    /// </summary>
+    public bool IsCaOperatorPlan { get; set; }
 
     /// <summary>
     /// Additional metadata for the plan.
@@ -136,4 +170,9 @@ public class PlanLimits
     /// Maximum API calls per month. -1 for unlimited.
     /// </summary>
     public int ApiCalls { get; set; } = 10000;
+
+    /// <summary>
+    /// Maximum GSTINs allowed. -1 for unlimited.
+    /// </summary>
+    public int GstinsAllowed { get; set; } = 1;
 }

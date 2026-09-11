@@ -231,6 +231,18 @@ public static class SubscriptionStatus
 /// </summary>
 public static class BillingCycle
 {
+    public const string Weekly = "weekly";
     public const string Monthly = "monthly";
     public const string Annually = "annually";
+
+    /// <summary>
+    /// All valid billing cycles.
+    /// </summary>
+    public static readonly string[] All = { Weekly, Monthly, Annually };
+
+    /// <summary>
+    /// Checks if a billing cycle is valid.
+    /// </summary>
+    public static bool IsValid(string cycle) =>
+        cycle == Weekly || cycle == Monthly || cycle == Annually;
 }

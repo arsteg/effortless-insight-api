@@ -31,6 +31,20 @@ public class FeatureAccessService : IFeatureAccessService
         string featureCode,
         CancellationToken cancellationToken = default)
     {
+        // Check if organization has CA operator plan - they get full access to all features
+        var subscription = await _dbContext.BillingSubscriptions
+            .Include(s => s.Plan)
+            .Where(s => s.OrganizationId == organizationId && s.DeletedAt == null)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (subscription?.Plan?.IsCaOperatorPlan == true)
+        {
+            _logger.LogDebug(
+                "Organization {OrganizationId} has CA operator plan - granting access to feature {FeatureCode}",
+                organizationId, featureCode);
+            return true;
+        }
+
         var features = await GetAvailableFeaturesAsync(organizationId, cancellationToken);
         return features.Contains(featureCode, StringComparer.OrdinalIgnoreCase);
     }

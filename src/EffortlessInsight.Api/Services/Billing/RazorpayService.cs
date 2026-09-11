@@ -14,13 +14,16 @@ public class RazorpayService : IRazorpayService
 {
     private readonly RazorpayClient _client;
     private readonly RazorpayOptions _options;
+    private readonly BillingOptions _billingOptions;
     private readonly ILogger<RazorpayService> _logger;
 
     public RazorpayService(
         IOptions<RazorpayOptions> options,
+        IOptions<BillingOptions> billingOptions,
         ILogger<RazorpayService> logger)
     {
         _options = options.Value;
+        _billingOptions = billingOptions.Value;
         _logger = logger;
         _client = new RazorpayClient(_options.KeyId, _options.KeySecret);
     }
@@ -190,6 +193,9 @@ public class RazorpayService : IRazorpayService
     {
         try
         {
+            // Calculate mandate expiry timestamp for autopay authorization
+            var expireBy = DateTimeOffset.UtcNow.AddYears(_billingOptions.MandateExpiryYears).ToUnixTimeSeconds();
+
             var subscriptionOptions = new Dictionary<string, object>
             {
                 { "plan_id", request.RazorpayPlanId },
@@ -197,6 +203,7 @@ public class RazorpayService : IRazorpayService
                 { "total_count", request.BillingCycle == "monthly" ? 120 : 10 },
                 { "quantity", request.Quantity },
                 { "customer_notify", 1 },
+                { "expire_by", expireBy },
                 {
                     "notes", new Dictionary<string, string>
                     {
@@ -455,13 +462,17 @@ public class RazorpayService : IRazorpayService
     {
         try
         {
+            // Calculate mandate expiry timestamp for autopay authorization
+            var expireBy = DateTimeOffset.UtcNow.AddYears(_billingOptions.MandateExpiryYears).ToUnixTimeSeconds();
+
             var subscriptionOptions = new Dictionary<string, object>
             {
                 { "plan_id", request.RazorpayPlanId },
                 { "customer_id", request.RazorpayCustomerId },
                 { "total_count", request.BillingCycle == "monthly" ? 120 : 10 }, // Max billing cycles
                 { "quantity", request.Quantity },
-                { "customer_notify", request.NotifyCustomer ? 1 : 0 }
+                { "customer_notify", request.NotifyCustomer ? 1 : 0 },
+                { "expire_by", expireBy }
             };
 
             // If trial days > 0, set start_at to delay first charge

@@ -100,4 +100,10 @@ public class BillingOptions
     /// Days until subscription can be reactivated after cancellation.
     /// </summary>
     public int ReactivationWindowDays { get; set; } = 30;
+
+    /// <summary>
+    /// Number of years for mandate/autopay authorization expiry.
+    /// Default is 10 years (maximum allowed by most banks).
+    /// </summary>
+    public int MandateExpiryYears { get; set; } = 10;
 }

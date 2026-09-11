@@ -102,12 +102,13 @@ public class PlansController : ControllerBase
             DisplayName: plan.DisplayName,
             Description: plan.Description,
             Pricing: new PlanPricingDto(
+                Weekly: plan.PricingWeekly,
                 Monthly: plan.PricingMonthly,
                 Annually: plan.PricingAnnually,
                 Currency: plan.Currency,
                 AnnualDiscount: annualDiscount,
-                PerSeat: plan.PerSeatMonthly.HasValue || plan.PerSeatAnnually.HasValue
-                    ? new PerSeatPricingDto(plan.PerSeatMonthly, plan.PerSeatAnnually)
+                PerSeat: plan.PerSeatWeekly.HasValue || plan.PerSeatMonthly.HasValue || plan.PerSeatAnnually.HasValue
+                    ? new PerSeatPricingDto(plan.PerSeatWeekly, plan.PerSeatMonthly, plan.PerSeatAnnually)
                     : null
             ),
             Limits: new PlanLimitsDto(
@@ -116,12 +117,15 @@ public class PlansController : ControllerBase
                 StorageGb: plan.Limits.StorageGb,
                 OrganizationsCount: plan.Limits.OrganizationsCount,
                 AdditionalUsersAllowed: plan.Limits.AdditionalUsersAllowed,
-                ApiCalls: plan.Limits.ApiCalls
+                ApiCalls: plan.Limits.ApiCalls,
+                GstinsAllowed: plan.Limits.GstinsAllowed
             ),
             Features: plan.Features,
             IsPopular: plan.IsPopular,
             TrialDays: plan.TrialDays,
-            ContactSales: plan.ContactSales
+            ContactSales: plan.ContactSales,
+            AllowedBillingCycles: plan.AllowedBillingCycles,
+            DefaultBillingCycle: plan.DefaultBillingCycle
         );
     }
 }

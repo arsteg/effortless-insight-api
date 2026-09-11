@@ -337,4 +337,58 @@ public class UsageService : IUsageService
             // Ignore cache errors
         }
     }
+
+    public async Task<(bool CanAdd, string? Reason)> CanAddGstinAsync(Guid organizationId)
+    {
+        var limits = await GetPlanLimitsAsync(organizationId);
+        if (limits == null)
+            return (false, "No active subscription");
+
+        // -1 means unlimited
+        if (limits.GstinsAllowed == -1)
+            return (true, null);
+
+        var currentCount = await GetGstinCountAsync(organizationId);
+        if (currentCount >= limits.GstinsAllowed)
+        {
+            return (false, $"GSTIN limit of {limits.GstinsAllowed} reached. Upgrade your plan to add more GSTINs.");
+        }
+
+        return (true, null);
+    }
+
+    public async Task<int> GetGstinCountAsync(Guid organizationId)
+    {
+        return await _dbContext.OrganizationGstins
+            .CountAsync(g => g.OrganizationId == organizationId && g.Status == "active");
+    }
+
+    public async Task<(bool CanDowngrade, string? Reason, int CurrentCount, int NewLimit)>
+        ValidateGstinLimitForPlanChangeAsync(Guid organizationId, string newPlanCode)
+    {
+        // Get the new plan
+        var newPlan = await _dbContext.SubscriptionPlans
+            .FirstOrDefaultAsync(p => p.Code == newPlanCode && p.DeletedAt == null);
+
+        if (newPlan == null)
+            return (false, $"Plan '{newPlanCode}' not found", 0, 0);
+
+        var newLimit = newPlan.Limits.GstinsAllowed;
+
+        // -1 means unlimited, so any count is fine
+        if (newLimit == -1)
+            return (true, null, 0, -1);
+
+        var currentCount = await GetGstinCountAsync(organizationId);
+
+        if (currentCount > newLimit)
+        {
+            return (false,
+                $"Cannot change to {newPlan.Name}: you have {currentCount} GSTIN(s) but this plan allows only {newLimit}. " +
+                $"Please remove {currentCount - newLimit} GSTIN(s) first.",
+                currentCount, newLimit);
+        }
+
+        return (true, null, currentCount, newLimit);
+    }
 }

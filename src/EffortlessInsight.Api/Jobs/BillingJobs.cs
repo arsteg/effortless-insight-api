@@ -693,8 +693,8 @@ public class BillingJobs
                 AmountInPaise = subscriptionEntity.Amount ?? paymentEntity?.Amount,
                 Currency = subscriptionEntity.Currency ?? paymentEntity?.Currency ?? "INR",
                 ChargeAt = subscriptionEntity.ChargeAt ?? paymentEntity?.CreatedAt,
-                CurrentPeriodStart = subscriptionEntity.StartAt,
-                CurrentPeriodEnd = subscriptionEntity.EndAt
+                CurrentPeriodStart = subscriptionEntity.CurrentStart ?? subscriptionEntity.StartAt,
+                CurrentPeriodEnd = subscriptionEntity.CurrentEnd ?? subscriptionEntity.EndAt
             };
 
             await _subscriptionService.ProcessRenewalAsync(subscription.Id, webhookData);

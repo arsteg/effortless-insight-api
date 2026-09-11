@@ -2,6 +2,7 @@ using System.Security.Claims;
 using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.DTOs;
 using EffortlessInsight.Api.Services;
+using EffortlessInsight.Api.Services.Billing;
 using EffortlessInsight.Api.Services.Notices;
 using EffortlessInsight.Api.Services.Organizations;
 using Microsoft.AspNetCore.Authorization;
@@ -19,6 +20,7 @@ public class NoticesController : ControllerBase
     private readonly INoticeWorkflowService _workflowService;
     private readonly INoticeResponseDraftService _responseDraftService;
     private readonly IAiServiceClient _aiServiceClient;
+    private readonly IFeatureAccessService _featureAccessService;
     private readonly ICurrentOrganizationService _currentOrg;
     private readonly ILogger<NoticesController> _logger;
 
@@ -28,6 +30,7 @@ public class NoticesController : ControllerBase
         INoticeWorkflowService workflowService,
         INoticeResponseDraftService responseDraftService,
         IAiServiceClient aiServiceClient,
+        IFeatureAccessService featureAccessService,
         ICurrentOrganizationService currentOrg,
         ILogger<NoticesController> logger)
     {
@@ -36,6 +39,7 @@ public class NoticesController : ControllerBase
         _workflowService = workflowService;
         _responseDraftService = responseDraftService;
         _aiServiceClient = aiServiceClient;
+        _featureAccessService = featureAccessService;
         _currentOrg = currentOrg;
         _logger = logger;
     }
@@ -1082,16 +1086,27 @@ public class NoticesController : ControllerBase
     #region AI Processing
 
     /// <summary>
-    /// Get AI report for a notice
+    /// Get AI report for a notice.
+    /// Requires ai_explanation feature (paid plans only).
     /// </summary>
     [HttpGet("{noticeId:guid}/report")]
     [ProducesResponseType(typeof(ApiResponse<NoticeAiReportDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status403Forbidden)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetReport(Guid noticeId, CancellationToken cancellationToken)
     {
         try
         {
             var orgId = GetCurrentOrganizationId();
+
+            // Check feature access - AI explanation requires paid plan
+            if (!await _featureAccessService.HasFeatureAccessAsync(orgId, FeatureCodes.AiExplanation, cancellationToken))
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new ApiErrorResponse(
+                    false,
+                    "FEATURE_NOT_AVAILABLE",
+                    "AI explanation feature is not available in your current plan. Upgrade to access AI-powered notice analysis."));
+            }
 
             // First verify the notice belongs to this org
             var notice = await _noticeService.GetByIdAsync(noticeId, orgId, cancellationToken);
@@ -1118,17 +1133,29 @@ public class NoticesController : ControllerBase
     }
 
     /// <summary>
-    /// Retry AI processing for a failed notice
+    /// Retry AI processing for a failed notice.
+    /// Requires ai_explanation feature (paid plans only).
     /// </summary>
     [HttpPost("{noticeId:guid}/report/retry")]
     [ProducesResponseType(typeof(ApiResponse<ProcessingRetryResponse>), StatusCodes.Status202Accepted)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status403Forbidden)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
     public async Task<IActionResult> RetryProcessing(Guid noticeId, CancellationToken cancellationToken)
     {
         try
         {
             var orgId = GetCurrentOrganizationId();
+
+            // Check feature access - AI explanation requires paid plan
+            if (!await _featureAccessService.HasFeatureAccessAsync(orgId, FeatureCodes.AiExplanation, cancellationToken))
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new ApiErrorResponse(
+                    false,
+                    "FEATURE_NOT_AVAILABLE",
+                    "AI processing feature is not available in your current plan. Upgrade to access AI-powered notice analysis."));
+            }
+
             var jobId = await _noticeService.RetryProcessingAsync(noticeId, orgId, cancellationToken);
 
             return StatusCode(StatusCodes.Status202Accepted,
@@ -1270,6 +1297,7 @@ public class NoticesController : ControllerBase
     /// <summary>
     /// Generate an AI-powered auto-draft response for a notice.
     /// Uses the notice content and AI analysis to generate a professional response draft.
+    /// Requires draft_reply feature (paid plans only).
     /// </summary>
     /// <remarks>
     /// Rate limited to 10 requests per minute per organization.
@@ -1295,6 +1323,15 @@ public class NoticesController : ControllerBase
         {
             var orgId = GetCurrentOrganizationId();
             var userId = GetCurrentUserId();
+
+            // Check feature access - draft reply requires paid plan
+            if (!await _featureAccessService.HasFeatureAccessAsync(orgId, FeatureCodes.DraftReply, cancellationToken))
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new ApiErrorResponse(
+                    false,
+                    "FEATURE_NOT_AVAILABLE",
+                    "AI draft reply feature is not available in your current plan. Upgrade to access AI-generated response drafts."));
+            }
 
             if (!_currentOrg.HasPermission("notices.edit"))
             {
@@ -2011,10 +2048,12 @@ public class NoticesController : ControllerBase
     #region Similar Notices
 
     /// <summary>
-    /// Get AI-detected similar notices from the same organization
+    /// Get AI-detected similar notices from the same organization.
+    /// Requires ai_explanation feature (paid plans only).
     /// </summary>
     [HttpGet("{noticeId:guid}/similar")]
     [ProducesResponseType(typeof(ApiResponse<SimilarNoticeDto[]>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status403Forbidden)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetSimilarNotices(
         Guid noticeId,
@@ -2029,6 +2068,15 @@ public class NoticesController : ControllerBase
             }
 
             var orgId = GetCurrentOrganizationId();
+
+            // Check feature access - AI explanation requires paid plan
+            if (!await _featureAccessService.HasFeatureAccessAsync(orgId, FeatureCodes.AiExplanation, cancellationToken))
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new ApiErrorResponse(
+                    false,
+                    "FEATURE_NOT_AVAILABLE",
+                    "Similar notices feature is not available in your current plan. Upgrade to access AI-powered notice analysis."));
+            }
 
             // Verify the notice exists and belongs to this organization
             var notice = await _noticeService.GetByIdAsync(noticeId, orgId, cancellationToken);

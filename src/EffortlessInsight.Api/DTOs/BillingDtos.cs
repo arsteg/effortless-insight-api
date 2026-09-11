@@ -28,10 +28,13 @@ public record PlanDto(
     List<string> Features,
     bool IsPopular,
     int TrialDays,
-    bool ContactSales
+    bool ContactSales,
+    List<string> AllowedBillingCycles,
+    string DefaultBillingCycle
 );
 
 public record PlanPricingDto(
+    int? Weekly,
     int? Monthly,
     int? Annually,
     string Currency,
@@ -40,6 +43,7 @@ public record PlanPricingDto(
 );
 
 public record PerSeatPricingDto(
+    int? Weekly,
     int? Monthly,
     int? Annually
 );
@@ -50,7 +54,8 @@ public record PlanLimitsDto(
     int StorageGb,
     int OrganizationsCount,
     bool AdditionalUsersAllowed,
-    int ApiCalls
+    int ApiCalls,
+    int GstinsAllowed = 1
 );
 
 public record PlansListResponse(
@@ -715,6 +720,8 @@ public record WebhookEntity
     public long? ChargeAt { get; init; }
     public long? StartAt { get; init; }
     public long? EndAt { get; init; }
+    public long? CurrentStart { get; init; }  // Maps to Razorpay's current_start (billing period start)
+    public long? CurrentEnd { get; init; }    // Maps to Razorpay's current_end (billing period end)
     public long? EndedAt { get; init; }
     public string? ShortUrl { get; init; }
 }
@@ -797,8 +804,10 @@ public record AdminPlanDetailDto(
     string Name,
     string DisplayName,
     string? Description,
+    int? PricingWeekly,
     int? PricingMonthly,
     int? PricingAnnually,
+    int? PerSeatWeekly,
     int? PerSeatMonthly,
     int? PerSeatAnnually,
     string Currency,
@@ -810,8 +819,12 @@ public record AdminPlanDetailDto(
     int SortOrder,
     bool ContactSales,
     int? StartingAt,
+    string? RazorpayPlanIdWeekly,
     string? RazorpayPlanIdMonthly,
     string? RazorpayPlanIdAnnually,
+    List<string> AllowedBillingCycles,
+    string DefaultBillingCycle,
+    bool IsCaOperatorPlan,
     int SubscriberCount,
     DateTime CreatedAt,
     DateTime? UpdatedAt,
@@ -826,8 +839,10 @@ public record CreatePlanRequest(
     string Name,
     string DisplayName,
     string? Description,
+    int? PricingWeekly,
     int? PricingMonthly,
     int? PricingAnnually,
+    int? PerSeatWeekly,
     int? PerSeatMonthly,
     int? PerSeatAnnually,
     string Currency,
@@ -839,8 +854,12 @@ public record CreatePlanRequest(
     int SortOrder,
     bool ContactSales,
     int? StartingAt,
+    string? RazorpayPlanIdWeekly,
     string? RazorpayPlanIdMonthly,
-    string? RazorpayPlanIdAnnually
+    string? RazorpayPlanIdAnnually,
+    List<string> AllowedBillingCycles,
+    string DefaultBillingCycle = "annually",
+    bool IsCaOperatorPlan = false
 );
 
 /// <summary>
@@ -850,8 +869,10 @@ public record UpdatePlanRequest(
     string? Name,
     string? DisplayName,
     string? Description,
+    int? PricingWeekly,
     int? PricingMonthly,
     int? PricingAnnually,
+    int? PerSeatWeekly,
     int? PerSeatMonthly,
     int? PerSeatAnnually,
     string? Currency,
@@ -863,8 +884,12 @@ public record UpdatePlanRequest(
     int? SortOrder,
     bool? ContactSales,
     int? StartingAt,
+    string? RazorpayPlanIdWeekly,
     string? RazorpayPlanIdMonthly,
-    string? RazorpayPlanIdAnnually
+    string? RazorpayPlanIdAnnually,
+    List<string>? AllowedBillingCycles,
+    string? DefaultBillingCycle,
+    bool? IsCaOperatorPlan
 );
 
 /// <summary>
@@ -876,7 +901,8 @@ public record CreatePlanLimitsRequest(
     int StorageGb,
     int OrganizationsCount,
     bool AdditionalUsersAllowed,
-    int ApiCalls
+    int ApiCalls,
+    int GstinsAllowed = 1
 );
 
 /// <summary>
