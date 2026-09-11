@@ -317,6 +317,45 @@ var app = builder.Build();
     }
 }
 
+// Surface Firebase/push configuration on every startup, for the same reason as
+// the SMS provider above. Without credentials FirebasePushService drops every
+// push and the only trace is one warning the first time it is used — so a
+// production deploy that forgot them looks exactly like one where nobody has
+// been sent a notification yet (TC-MOB-049).
+{
+    var projectId = app.Configuration["Firebase:ProjectId"];
+    var clientEmail = app.Configuration["Firebase:ClientEmail"];
+    var privateKey = app.Configuration["Firebase:PrivateKey"];
+    var credentialsPath = app.Configuration["Firebase:CredentialsPath"];
+
+    var hasFile = !string.IsNullOrWhiteSpace(credentialsPath) && File.Exists(credentialsPath);
+    var hasFields = !string.IsNullOrWhiteSpace(projectId)
+        && !string.IsNullOrWhiteSpace(clientEmail)
+        && !string.IsNullOrWhiteSpace(privateKey);
+
+    if (hasFile)
+    {
+        app.Logger.LogInformation(
+            "Push notifications: Firebase credentials file {Path}", credentialsPath);
+    }
+    else if (hasFields)
+    {
+        app.Logger.LogInformation(
+            "Push notifications: Firebase configured for project {ProjectId}", projectId);
+    }
+    else if (!string.IsNullOrWhiteSpace(credentialsPath))
+    {
+        app.Logger.LogError(
+            "Push notifications DISABLED: Firebase:CredentialsPath is set to '{Path}' but no file exists there. Push will be dropped.",
+            credentialsPath);
+    }
+    else
+    {
+        app.Logger.LogError(
+            "Push notifications DISABLED: no Firebase credentials. Set Firebase__CredentialsPath, or Firebase__ProjectId + Firebase__ClientEmail + Firebase__PrivateKey. Push will be dropped.");
+    }
+}
+
 // Initialize field encryption service accessor for EF Core value converters
 var encryptionService = app.Services.GetRequiredService<EffortlessInsight.Api.Services.Encryption.IFieldEncryptionService>();
 EffortlessInsight.Api.Services.Encryption.FieldEncryptionServiceAccessor.SetInstance(encryptionService);
