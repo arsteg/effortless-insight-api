@@ -319,13 +319,26 @@ public class WebhooksController : ControllerBase
 
         var razorpaySubId = subscriptionEntity.Id;
 
-        _logger.LogInformation("Subscription activated: {SubscriptionId}", razorpaySubId);
+        _logger.LogInformation("Razorpay subscription activated: {SubscriptionId}", razorpaySubId);
 
         var subscription = await _subscriptionService.GetByRazorpayIdAsync(razorpaySubId!);
         if (subscription != null)
         {
-            subscription.Status = SubscriptionStatus.Active;
+            // SECURITY FIX: DO NOT set to Active here - wait for subscription.charged event
+            // The subscription.activated webhook fires when the subscription object is created
+            // in Razorpay, NOT when payment is made. Setting to Active here allows users to
+            // get paid features without completing payment (e.g., by canceling checkout).
+            // Only subscription.charged (which triggers ProcessRenewalAsync) should activate.
+            subscription.Metadata ??= new Dictionary<string, object>();
+            subscription.Metadata["razorpayActivatedAt"] = DateTime.UtcNow.ToString("O");
+            subscription.Metadata["razorpayStatus"] = "activated";
+
+            // Keep current status (likely Trialing) - only subscription.charged should activate
             await _dbContext.SaveChangesAsync();
+
+            _logger.LogInformation(
+                "Subscription {SubscriptionId} Razorpay status updated to activated, local status remains: {Status}",
+                subscription.Id, subscription.Status);
         }
     }
 

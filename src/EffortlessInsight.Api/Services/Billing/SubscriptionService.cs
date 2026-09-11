@@ -646,30 +646,51 @@ public class SubscriptionService : ISubscriptionService
                 // "active" = subscription is active and has been charged at least once
                 if (razorpayStatus.Status == "active")
                 {
-                    // Subscription is actually active (billing started)
-                    subscription.Status = SubscriptionStatus.Active;
-                    subscription.Metadata ??= new Dictionary<string, object>();
-                    subscription.Metadata["razorpayActivatedAt"] = now.ToString("O");
-                    subscription.Metadata["razorpayStatus"] = razorpayStatus.Status;
-                    subscription.Metadata["activatedBy"] = userId.ToString();
-
-                    // Set period from Razorpay data if available
-                    if (razorpayStatus.CurrentStart.HasValue && razorpayStatus.CurrentEnd.HasValue)
+                    // SECURITY FIX: Verify at least one payment has been made before activating
+                    // Razorpay status can be "active" even without payment in some edge cases.
+                    // paid_count >= 1 confirms actual payment was processed.
+                    if (razorpayStatus.PaidCount == null || razorpayStatus.PaidCount < 1)
                     {
-                        subscription.CurrentPeriodStart = DateTimeOffset.FromUnixTimeSeconds(razorpayStatus.CurrentStart.Value).UtcDateTime;
-                        subscription.CurrentPeriodEnd = DateTimeOffset.FromUnixTimeSeconds(razorpayStatus.CurrentEnd.Value).UtcDateTime;
+                        // No payment yet - keep as trialing, don't activate
+                        _logger.LogWarning(
+                            "Subscription {SubscriptionId} has Razorpay status 'active' but paid_count={PaidCount}. " +
+                            "Not activating - waiting for subscription.charged webhook to confirm payment.",
+                            subscription.Id, razorpayStatus.PaidCount);
+
+                        subscription.Metadata ??= new Dictionary<string, object>();
+                        subscription.Metadata["razorpayStatus"] = razorpayStatus.Status;
+                        subscription.Metadata["paidCount"] = razorpayStatus.PaidCount ?? 0;
+                        subscription.Metadata["awaitingPaymentConfirmation"] = true;
+                        // Don't change status - wait for actual payment via subscription.charged
                     }
                     else
                     {
-                        // Set period based on billing cycle
-                        subscription.CurrentPeriodStart = now;
-                        subscription.CurrentPeriodEnd = subscription.BillingCycle == BillingCycle.Annually
-                            ? now.AddYears(1)
-                            : now.AddMonths(1);
-                    }
+                        // Payment confirmed (paid_count >= 1) - activate subscription
+                        subscription.Status = SubscriptionStatus.Active;
+                        subscription.Metadata ??= new Dictionary<string, object>();
+                        subscription.Metadata["razorpayActivatedAt"] = now.ToString("O");
+                        subscription.Metadata["razorpayStatus"] = razorpayStatus.Status;
+                        subscription.Metadata["activatedBy"] = userId.ToString();
+                        subscription.Metadata["paidCount"] = razorpayStatus.PaidCount;
 
-                    subscription.TrialEnd = null; // Clear trial as subscription is now active
-                    subscription.FailedPaymentAttempts = 0;
+                        // Set period from Razorpay data if available
+                        if (razorpayStatus.CurrentStart.HasValue && razorpayStatus.CurrentEnd.HasValue)
+                        {
+                            subscription.CurrentPeriodStart = DateTimeOffset.FromUnixTimeSeconds(razorpayStatus.CurrentStart.Value).UtcDateTime;
+                            subscription.CurrentPeriodEnd = DateTimeOffset.FromUnixTimeSeconds(razorpayStatus.CurrentEnd.Value).UtcDateTime;
+                        }
+                        else
+                        {
+                            // Set period based on billing cycle
+                            subscription.CurrentPeriodStart = now;
+                            subscription.CurrentPeriodEnd = subscription.BillingCycle == BillingCycle.Annually
+                                ? now.AddYears(1)
+                                : now.AddMonths(1);
+                        }
+
+                        subscription.TrialEnd = null; // Clear trial as subscription is now active
+                        subscription.FailedPaymentAttempts = 0;
+                    }
                 }
                 else if (razorpayStatus.Status == "authenticated")
                 {
