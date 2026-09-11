@@ -116,7 +116,12 @@ public record SubscriptionDto(
     PaymentMethodSummaryDto? PaymentMethod,
     string? RazorpaySubscriptionId,
     ScheduledChangeDto? ScheduledChange,
-    bool HasUsedTrial
+    bool HasUsedTrial,
+    /// <summary>
+    /// Whether the subscription grants access to the application.
+    /// False when: cancelled, expired, or trialing without valid trial period/dates.
+    /// </summary>
+    bool HasAccess
 );
 
 public record SeatsDto(

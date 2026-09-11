@@ -3437,6 +3437,22 @@ public class SubscriptionService : ISubscriptionService
             ? (int)Math.Ceiling((subscription.TrialEnd.Value - DateTime.UtcNow).TotalDays)
             : (int?)null;
 
+        // Calculate access eligibility - mirrors FeatureAccessService logic
+        // Denied when: cancelled, expired, or trialing without valid trial
+        var hasAccess = subscription.Status switch
+        {
+            SubscriptionStatus.Active => true,
+            SubscriptionStatus.PastDue => true, // Grace period - still has access
+            SubscriptionStatus.Paused => false,
+            SubscriptionStatus.Cancelled => false,
+            SubscriptionStatus.Expired => false,
+            SubscriptionStatus.Completed => false,
+            SubscriptionStatus.Trialing =>
+                // For trialing: must have a valid trial period configured AND not expired
+                plan.TrialDays > 0 && subscription.TrialEnd.HasValue && subscription.TrialEnd.Value > DateTime.UtcNow,
+            _ => false
+        };
+
         return new SubscriptionDto(
             Id: subscription.Id,
             PlanCode: subscription.PlanCode,
@@ -3463,7 +3479,8 @@ public class SubscriptionService : ISubscriptionService
                 BillingCycle: subscription.ScheduledBillingCycle,
                 EffectiveDate: subscription.ScheduledChangeDate ?? subscription.CurrentPeriodEnd
             ),
-            HasUsedTrial: hasUsedTrial
+            HasUsedTrial: hasUsedTrial,
+            HasAccess: hasAccess
         );
     }
 
