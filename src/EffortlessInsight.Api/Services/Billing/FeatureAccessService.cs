@@ -91,6 +91,40 @@ public class FeatureAccessService : IFeatureAccessService
             return [];
         }
 
+        // SECURITY FIX: For "trialing" status, verify the plan actually has a trial period
+        // and that the trial hasn't expired. This prevents access when:
+        // - User selected a paid plan but cancelled/abandoned payment (subscription stuck in "trialing")
+        // - Plan has no trial period (TrialDays == 0)
+        if (subscription.Status == SubscriptionStatus.Trialing)
+        {
+            var plan = subscription.Plan;
+
+            // If plan has no trial period, subscription should not be in trialing state with features
+            // This happens when user cancels payment before completing checkout
+            if (plan.TrialDays <= 0)
+            {
+                _logger.LogWarning(
+                    "Organization {OrganizationId} has trialing subscription but plan {PlanCode} has no trial period (TrialDays={TrialDays}). " +
+                    "Denying feature access - payment was likely never completed.",
+                    organizationId, plan.Code, plan.TrialDays);
+                return [];
+            }
+
+            // If plan has trial but TrialEnd is not set or has passed, deny access
+            if (!subscription.TrialEnd.HasValue || subscription.TrialEnd.Value < DateTime.UtcNow)
+            {
+                _logger.LogInformation(
+                    "Organization {OrganizationId} trial has expired or is not set (TrialEnd={TrialEnd}). No features available.",
+                    organizationId, subscription.TrialEnd);
+                return [];
+            }
+
+            // Valid trial - TrialEnd is in the future, allow access
+            _logger.LogDebug(
+                "Organization {OrganizationId} is in valid trial period until {TrialEnd}",
+                organizationId, subscription.TrialEnd.Value);
+        }
+
         var features = subscription.Plan.Features ?? [];
 
         // Cache the features
