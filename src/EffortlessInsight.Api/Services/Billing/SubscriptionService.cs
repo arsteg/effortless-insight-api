@@ -157,6 +157,10 @@ public class SubscriptionService : ISubscriptionService
         }
         else
         {
+            // Check if this is a free→paid upgrade (existing subscription is on a free plan)
+            var existingPlan = await _planService.GetPlanByIdAsync(subscription.PlanId);
+            var isUpgradingFromFreePlan = existingPlan != null && IsFreePlan(existingPlan);
+
             subscription.PlanCode = plan.Code;
             subscription.PlanId = plan.Id;
             subscription.BillingCycle = request.BillingCycle;
@@ -167,6 +171,20 @@ public class SubscriptionService : ISubscriptionService
             subscription.TaxAmount = pricing.GstAmount / 100m;
             subscription.TotalAmount = pricing.Total / 100m;
             subscription.Currency = pricing.Currency;
+
+            // Reset period dates when upgrading from free plan
+            // Free plans have 100-year periods; these must be reset to the new billing cycle
+            // Final dates will be set in CreateSubscriptionWithRazorpayApiAsync after Razorpay subscription creation
+            if (isUpgradingFromFreePlan)
+            {
+                var now = DateTime.UtcNow;
+                subscription.CurrentPeriodStart = now;
+                subscription.CurrentPeriodEnd = request.BillingCycle == BillingCycle.Annually
+                    ? now.AddYears(1)
+                    : now.AddMonths(1);
+                subscription.Metadata ??= new Dictionary<string, object>();
+                subscription.Metadata["upgradingFromFreePlan"] = true;
+            }
         }
 
         await _dbContext.SaveChangesAsync();
@@ -249,14 +267,24 @@ public class SubscriptionService : ISubscriptionService
             subscription.RazorpaySubscriptionId = razorpaySub.SubscriptionId;
 
             // Set trial end date and period dates if applicable
+            var now = DateTime.UtcNow;
             if (trialDays > 0)
             {
-                var trialEndDate = DateTime.UtcNow.AddDays(trialDays);
+                var trialEndDate = now.AddDays(trialDays);
                 subscription.TrialEnd = trialEndDate;
                 subscription.Status = SubscriptionStatus.Trialing;
                 // Initialize period dates for trial - period reflects trial period until billing starts
-                subscription.CurrentPeriodStart = DateTime.UtcNow;
+                subscription.CurrentPeriodStart = now;
                 subscription.CurrentPeriodEnd = trialEndDate;
+            }
+            else
+            {
+                // No trial - set period dates based on billing cycle
+                // Ensures dates are correct for free→paid upgrades (replaces 100-year free plan dates)
+                subscription.CurrentPeriodStart = now;
+                subscription.CurrentPeriodEnd = subscription.BillingCycle == BillingCycle.Annually
+                    ? now.AddYears(1)
+                    : now.AddMonths(1);
             }
 
             subscription.Metadata ??= new Dictionary<string, object>();
@@ -690,6 +718,36 @@ public class SubscriptionService : ISubscriptionService
 
                         subscription.TrialEnd = null; // Clear trial as subscription is now active
                         subscription.FailedPaymentAttempts = 0;
+
+                        // Generate invoice for subscription payment
+                        var description = $"{plan.DisplayName} Subscription - {subscription.BillingCycle}";
+                        var lineItems = new List<InvoiceLineItemRequest>
+                        {
+                            new()
+                            {
+                                Type = "subscription",
+                                Description = description,
+                                Quantity = 1,
+                                UnitPrice = (int)(subscription.TotalAmount * 100),
+                                Amount = (int)(subscription.TotalAmount * 100),
+                                PlanCode = plan.Code,
+                                BillingCycle = subscription.BillingCycle,
+                                PeriodStart = DateOnly.FromDateTime(subscription.CurrentPeriodStart),
+                                PeriodEnd = DateOnly.FromDateTime(subscription.CurrentPeriodEnd)
+                            }
+                        };
+
+                        var invoice = await _invoiceService.GenerateInvoiceAsync(
+                            organizationId,
+                            subscription.Id,
+                            (int)(subscription.TotalAmount * 100),
+                            description,
+                            lineItems);
+
+                        await _invoiceService.MarkAsPaidAsync(invoice.Id, request.RazorpayPaymentId);
+
+                        subscription.Metadata["invoiceId"] = invoice.Id.ToString();
+                        subscription.Metadata["invoiceNumber"] = invoice.InvoiceNumber;
                     }
                 }
                 else if (razorpayStatus.Status == "authenticated")
@@ -775,13 +833,27 @@ public class SubscriptionService : ISubscriptionService
                         organizationId);
                 }
 
+                // Build invoice summary if invoice was generated
+                InvoiceSummaryDto? invoiceSummary = null;
+                if (subscription.Metadata != null &&
+                    subscription.Metadata.TryGetValue("invoiceId", out var invoiceIdObj) &&
+                    subscription.Metadata.TryGetValue("invoiceNumber", out var invoiceNumberObj) &&
+                    Guid.TryParse(invoiceIdObj?.ToString(), out var invoiceId))
+                {
+                    invoiceSummary = new InvoiceSummaryDto(
+                        Id: invoiceId,
+                        Number: invoiceNumberObj?.ToString() ?? "",
+                        DownloadUrl: $"/api/v1/invoices/{invoiceId}/pdf"
+                    );
+                }
+
                 // Send notification (fire-and-forget)
                 _ = SendSubscriptionPaymentNotificationAsync(
                     organizationId,
                     plan.DisplayName,
                     subscription.TotalAmount,
                     subscription.BillingCycle,
-                    "",
+                    invoiceSummary?.Number ?? "",
                     false);
 
                 return new VerifyPaymentResponse(
@@ -792,7 +864,7 @@ public class SubscriptionService : ISubscriptionService
                         PlanCode: subscription.PlanCode,
                         ActivatedAt: now
                     ),
-                    Invoice: null // Invoice is generated by Razorpay for subscription
+                    Invoice: invoiceSummary
                 );
             }
             catch (Exception ex)
@@ -3471,7 +3543,7 @@ public class SubscriptionService : ISubscriptionService
                 Used: 0 // Will be populated from usage
             ),
             Pricing: pricing,
-            NextBillingDate: DateOnly.FromDateTime(subscription.CurrentPeriodEnd),
+            NextBillingDate: DateOnly.FromDateTime(subscription.CurrentPeriodEnd.AddDays(1)),
             PaymentMethod: null, // Will be populated separately
             RazorpaySubscriptionId: subscription.RazorpaySubscriptionId,
             ScheduledChange: string.IsNullOrEmpty(subscription.ScheduledPlanCode) ? null : new ScheduledChangeDto(
