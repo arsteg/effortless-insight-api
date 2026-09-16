@@ -3511,7 +3511,12 @@ public class SubscriptionService : ISubscriptionService
 
         // Calculate access eligibility - mirrors FeatureAccessService logic
         // Denied when: cancelled, expired, or trialing without valid trial
-        var hasAccess = subscription.Status switch
+        //
+        // CA operator plans always have access regardless of status, matching the
+        // short-circuit in FeatureAccessService.HasFeatureAccessAsync. Without this the
+        // feature layer and this DTO disagree, and the web SubscriptionGuard - which reads
+        // HasAccess - would block a CA that FeatureAccessService considers fully entitled.
+        var hasAccess = plan.IsCaOperatorPlan || (subscription.Status switch
         {
             SubscriptionStatus.Active => true,
             SubscriptionStatus.PastDue => true, // Grace period - still has access
@@ -3523,7 +3528,7 @@ public class SubscriptionService : ISubscriptionService
                 // For trialing: must have a valid trial period configured AND not expired
                 plan.TrialDays > 0 && subscription.TrialEnd.HasValue && subscription.TrialEnd.Value > DateTime.UtcNow,
             _ => false
-        };
+        });
 
         return new SubscriptionDto(
             Id: subscription.Id,

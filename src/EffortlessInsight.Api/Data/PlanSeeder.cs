@@ -33,16 +33,13 @@ public class PlanSeeder
             return;
         }
 
-        // Check if any plans already exist
-        var existingPlans = await _context.SubscriptionPlans
+        // Seed per-plan rather than all-or-nothing. This used to bail out as soon as any
+        // plan row existed, which meant plans introduced later (notably "ca_operator",
+        // which CA onboarding depends on) never reached an already-seeded database.
+        var existingCodes = await _context.SubscriptionPlans
             .IgnoreQueryFilters()
-            .AnyAsync(cancellationToken);
-
-        if (existingPlans)
-        {
-            _logger.LogInformation("Subscription plans already exist, skipping seed");
-            return;
-        }
+            .Select(p => p.Code)
+            .ToListAsync(cancellationToken);
 
         _logger.LogInformation("Seeding default subscription plans...");
 
@@ -321,12 +318,22 @@ public class PlanSeeder
             }
         };
 
-        _context.SubscriptionPlans.AddRange(plans);
+        var missingPlans = plans
+            .Where(p => !existingCodes.Contains(p.Code))
+            .ToList();
+
+        if (missingPlans.Count == 0)
+        {
+            _logger.LogInformation("All default subscription plans already exist, nothing to seed");
+            return;
+        }
+
+        _context.SubscriptionPlans.AddRange(missingPlans);
         await _context.SaveChangesAsync(cancellationToken);
 
         _logger.LogInformation(
             "Successfully seeded {Count} subscription plans: {PlanCodes}",
-            plans.Count,
-            string.Join(", ", plans.Select(p => p.Code)));
+            missingPlans.Count,
+            string.Join(", ", missingPlans.Select(p => p.Code)));
     }
 }

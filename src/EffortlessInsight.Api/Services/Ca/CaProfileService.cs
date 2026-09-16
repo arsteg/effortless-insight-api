@@ -4,6 +4,7 @@ using EffortlessInsight.Api.Data.Entities.Ca;
 using EffortlessInsight.Api.DTOs;
 using EffortlessInsight.Api.DTOs.Ca;
 using EffortlessInsight.Api.Services.Auth;
+using EffortlessInsight.Api.Services.Billing;
 using EffortlessInsight.Api.Services.Organizations;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -18,10 +19,17 @@ namespace EffortlessInsight.Api.Services.Ca;
 /// </summary>
 public class CaProfileService : ICaProfileService
 {
+    /// <summary>
+    /// Plan code assigned to every CA organization. CAs use the platform free of charge,
+    /// so their organization is put on this zero-cost plan as soon as it is created.
+    /// </summary>
+    private const string CaOperatorPlanCode = "ca_operator";
+
     private readonly ApplicationDbContext _db;
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly IJwtService _jwtService;
     private readonly IGstinValidatorService _gstinValidator;
+    private readonly ISubscriptionService _subscriptionService;
     private readonly ILogger<CaProfileService> _logger;
 
     public CaProfileService(
@@ -29,12 +37,14 @@ public class CaProfileService : ICaProfileService
         UserManager<ApplicationUser> userManager,
         IJwtService jwtService,
         IGstinValidatorService gstinValidator,
+        ISubscriptionService subscriptionService,
         ILogger<CaProfileService> logger)
     {
         _db = db;
         _userManager = userManager;
         _jwtService = jwtService;
         _gstinValidator = gstinValidator;
+        _subscriptionService = subscriptionService;
         _logger = logger;
     }
 
@@ -240,7 +250,7 @@ public class CaProfileService : ICaProfileService
         // Use execution strategy for transaction support
         var strategy = _db.Database.CreateExecutionStrategy();
 
-        return await strategy.ExecuteAsync(async () =>
+        var response = await strategy.ExecuteAsync(async () =>
         {
             using var transaction = await _db.Database.BeginTransactionAsync(ct);
             try
@@ -264,6 +274,8 @@ public class CaProfileService : ICaProfileService
                     Industry = request.Industry,
                     State = request.State,
                     City = request.City,
+                    // Overwritten with "active" once the free CA operator plan is
+                    // activated below; stays "none" only if that activation fails.
                     SubscriptionStatus = "none",
                     TrialEndsAt = null,
                     Settings = new Dictionary<string, object>
@@ -343,6 +355,30 @@ public class CaProfileService : ICaProfileService
                 throw;
             }
         });
+
+        // CAs use the platform free of charge. Put the new organization on the zero-cost
+        // CA operator plan so the subscription gates let them straight through instead of
+        // pushing them to plan selection / checkout.
+        //
+        // Deliberately outside the execution strategy above: this does its own
+        // SaveChanges, and re-running it on a transient retry would be wasteful. It is
+        // idempotent, so a later retry of the whole request is still safe.
+        try
+        {
+            await _subscriptionService.ActivateFreePlanAsync(response.OrganizationId, CaOperatorPlanCode);
+        }
+        catch (Exception ex)
+        {
+            // Never fail organization creation over this - the org exists and the user is
+            // logged in. Surfaces as the subscription gate until it is put right.
+            _logger.LogError(
+                ex,
+                "Failed to activate '{PlanCode}' for CA organization {OrganizationId}; the CA will be treated as unsubscribed",
+                CaOperatorPlanCode,
+                response.OrganizationId);
+        }
+
+        return response;
     }
 
     private static string HashToken(string token)

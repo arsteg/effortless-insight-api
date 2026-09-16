@@ -109,6 +109,12 @@ public class JwtService : IJwtService
         // Add external collaborator claim
         claims.Add(new Claim("is_external", isExternal.ToString().ToLower()));
 
+        // Add CA claim. This must be carried separately from "role": creating an
+        // organization promotes a CA's role to "owner" for org-level permissions, which
+        // would otherwise erase every trace of their being a CA from the token.
+        // CaClientContextMiddleware already reads this claim.
+        claims.Add(new Claim("is_ca", user.IsCa.ToString().ToLower()));
+
         // Add email verified claim
         claims.Add(new Claim("email_verified", user.EmailConfirmed.ToString().ToLower()));
 

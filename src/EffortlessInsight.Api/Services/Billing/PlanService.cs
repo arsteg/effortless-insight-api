@@ -34,7 +34,14 @@ public class PlanService : IPlanService
     {
         var plans = await GetActivePlansAsync();
 
-        var planDtos = plans.Select(MapToPlanDto).ToList();
+        // The CA operator plan is free with unlimited limits and is assigned automatically
+        // during CA onboarding. It must never appear in the self-service plan list, or any
+        // business user could pick it from /pricing or /select-plan and get the product for
+        // nothing. It stays available to GetPlanByCodeAsync and to the admin plan APIs.
+        var planDtos = plans
+            .Where(p => !p.IsCaOperatorPlan)
+            .Select(MapToPlanDto)
+            .ToList();
 
         // Add-ons (could be stored in DB, but for now hardcoded as per spec)
         var addOns = new List<AddOnDto>

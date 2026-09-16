@@ -81,6 +81,16 @@ public class FeatureAccessService : IFeatureAccessService
             return [];
         }
 
+        // CA operator plans get every feature regardless of subscription status, matching
+        // the short-circuit in HasFeatureAccessAsync above. Without it the two methods
+        // disagree: a CA could pass a per-feature check yet get an empty feature list.
+        if (subscription.Plan.IsCaOperatorPlan)
+        {
+            var caFeatures = subscription.Plan.Features ?? [];
+            await CacheFeaturesAsync(cacheKey, caFeatures, cancellationToken);
+            return caFeatures;
+        }
+
         // Check if subscription is active (not cancelled or expired)
         if (subscription.Status == SubscriptionStatus.Cancelled || subscription.Status == SubscriptionStatus.Expired)
         {
@@ -127,7 +137,16 @@ public class FeatureAccessService : IFeatureAccessService
 
         var features = subscription.Plan.Features ?? [];
 
-        // Cache the features
+        await CacheFeaturesAsync(cacheKey, features, cancellationToken);
+
+        return features;
+    }
+
+    private async Task CacheFeaturesAsync(
+        string cacheKey,
+        List<string> features,
+        CancellationToken cancellationToken)
+    {
         try
         {
             await _cache.SetStringAsync(
@@ -141,10 +160,8 @@ public class FeatureAccessService : IFeatureAccessService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to cache features for organization {OrganizationId}", organizationId);
+            _logger.LogWarning(ex, "Failed to cache features for {CacheKey}", cacheKey);
         }
-
-        return features;
     }
 
     public async Task RequireFeatureAccessAsync(
