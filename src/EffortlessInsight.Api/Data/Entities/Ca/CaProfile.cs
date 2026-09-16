@@ -41,6 +41,24 @@ public class CaProfile : BaseEntity
     public DateTime? VerifiedAt { get; set; }
 
     /// <summary>
+    /// Whether an admin has granted this CA free access via the CA operator plan.
+    /// Granting creates a real active subscription - it is not a validation bypass.
+    /// </summary>
+    public bool AllowFreePlan { get; set; }
+
+    /// <summary>
+    /// When the free plan was granted.
+    /// </summary>
+    public DateTime? FreePlanGrantedAt { get; set; }
+
+    /// <summary>
+    /// When the free plan was last revoked. Distinguishes a CA no admin has reviewed yet
+    /// (both null - show "awaiting approval") from one whose access was explicitly taken
+    /// away (set - fall through to the normal choose-a-plan flow).
+    /// </summary>
+    public DateTime? FreePlanRevokedAt { get; set; }
+
+    /// <summary>
     /// CA profile status: active, suspended.
     /// </summary>
     [Required]

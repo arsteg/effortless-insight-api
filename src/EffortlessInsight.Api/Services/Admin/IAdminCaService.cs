@@ -32,6 +32,18 @@ public interface IAdminCaService
     Task RevokeCaVerificationAsync(Guid caProfileId, Guid adminUserId, string? reason);
 
     /// <summary>
+    /// Grant a CA free access by putting their organization on the CA operator plan.
+    /// Creates a real active subscription; if the CA has no organization yet, the grant is
+    /// recorded and applied when they create one.
+    /// </summary>
+    Task GrantFreePlanAsync(Guid caProfileId, Guid adminUserId, string? notes);
+
+    /// <summary>
+    /// Revoke a CA's free access by cancelling the CA operator subscription. Idempotent.
+    /// </summary>
+    Task RevokeFreePlanAsync(Guid caProfileId, Guid adminUserId, string? reason);
+
+    /// <summary>
     /// Suspend a CA.
     /// </summary>
     Task SuspendCaAsync(Guid caProfileId, Guid adminUserId, AdminSuspendCaRequest request);

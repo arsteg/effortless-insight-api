@@ -19,6 +19,7 @@ public record AdminCaProfileListItemDto(
     bool IsVerified,
     DateTime? VerifiedAt,
     string Status,
+    bool AllowFreePlan,
     int ActiveClientCount,
     int PendingInvitationCount,
     DateTime CreatedAt
@@ -43,6 +44,10 @@ public record AdminCaProfileDetailDto(
     DateTime? SuspendedAt,
     Guid? SuspendedByAdminId,
     string? SuspendedReason,
+    Guid? OrganizationId,
+    bool AllowFreePlan,
+    DateTime? FreePlanGrantedAt,
+    DateTime? FreePlanRevokedAt,
     int ActiveClientCount,
     int PendingInvitationCount,
     int TotalAuthorizedGstins,
@@ -279,6 +284,24 @@ public record AdminVerifyCaRequest
 /// Request to revoke CA verification.
 /// </summary>
 public record AdminRevokeCaVerificationRequest
+{
+    [MaxLength(500)]
+    public string? Reason { get; init; }
+}
+
+/// <summary>
+/// Request to grant a CA free access via the CA operator plan.
+/// </summary>
+public record AdminGrantCaFreePlanRequest
+{
+    [MaxLength(1000)]
+    public string? Notes { get; init; }
+}
+
+/// <summary>
+/// Request to revoke a CA's free access.
+/// </summary>
+public record AdminRevokeCaFreePlanRequest
 {
     [MaxLength(500)]
     public string? Reason { get; init; }

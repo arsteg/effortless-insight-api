@@ -1549,7 +1549,10 @@ public class SubscriptionService : ISubscriptionService
         return MapToSubscriptionDto(subscription, plan, true);
     }
 
-    public async Task<SubscriptionDto> ActivateFreePlanAsync(Guid organizationId, string planCode)
+    public async Task<SubscriptionDto> ActivateFreePlanAsync(
+        Guid organizationId,
+        string planCode,
+        bool allowCaOperatorPlan = false)
     {
         var plan = await _planService.GetPlanByCodeAsync(planCode)
             ?? throw new InvalidOperationException($"Plan '{planCode}' not found");
@@ -1558,6 +1561,17 @@ public class SubscriptionService : ISubscriptionService
         if (!IsFreePlan(plan))
         {
             throw new InvalidOperationException($"Plan '{planCode}' is not a free plan. Use CreateSubscriptionAsync for paid plans.");
+        }
+
+        // The CA operator plan is free AND unlimited, so it is only assignable from the
+        // trusted CA onboarding / admin-grant paths. The self-service billing endpoints
+        // reach this method with any plan code the caller supplies.
+        if (plan.IsCaOperatorPlan && !allowCaOperatorPlan)
+        {
+            _logger.LogWarning(
+                "Rejected attempt to self-assign CA operator plan '{PlanCode}' to organization {OrganizationId}",
+                planCode, organizationId);
+            throw new InvalidOperationException($"Plan '{planCode}' cannot be selected. It is assigned by an administrator.");
         }
 
         if (plan.ContactSales)
@@ -3512,11 +3526,10 @@ public class SubscriptionService : ISubscriptionService
         // Calculate access eligibility - mirrors FeatureAccessService logic
         // Denied when: cancelled, expired, or trialing without valid trial
         //
-        // CA operator plans always have access regardless of status, matching the
-        // short-circuit in FeatureAccessService.HasFeatureAccessAsync. Without this the
-        // feature layer and this DTO disagree, and the web SubscriptionGuard - which reads
-        // HasAccess - would block a CA that FeatureAccessService considers fully entitled.
-        var hasAccess = plan.IsCaOperatorPlan || (subscription.Status switch
+        // The CA operator plan is deliberately NOT special-cased here. It is granted to a
+        // CA as a normal active subscription, so an admin revoking it (which cancels the
+        // subscription) must deny access through exactly these rules.
+        var hasAccess = subscription.Status switch
         {
             SubscriptionStatus.Active => true,
             SubscriptionStatus.PastDue => true, // Grace period - still has access
@@ -3528,7 +3541,7 @@ public class SubscriptionService : ISubscriptionService
                 // For trialing: must have a valid trial period configured AND not expired
                 plan.TrialDays > 0 && subscription.TrialEnd.HasValue && subscription.TrialEnd.Value > DateTime.UtcNow,
             _ => false
-        });
+        };
 
         return new SubscriptionDto(
             Id: subscription.Id,

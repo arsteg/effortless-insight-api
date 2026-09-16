@@ -123,6 +123,64 @@ public class AdminCasController : AdminControllerBase
     }
 
     /// <summary>
+    /// Grant a CA free access via the CA operator plan.
+    /// </summary>
+    [HttpPost("{caProfileId:guid}/free-plan")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> GrantCaFreePlan(Guid caProfileId, [FromBody] AdminGrantCaFreePlanRequest request)
+    {
+        if (!HasPermission(AdminPermissions.UsersSuspend))
+        {
+            return Forbid();
+        }
+
+        try
+        {
+            await _caService.GrantFreePlanAsync(caProfileId, CurrentAdminId, request.Notes);
+            return Success<object?>(null, "CA free plan granted successfully");
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFoundResponse(ex.Message);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Error(ex.Message, "INVALID_OPERATION");
+        }
+    }
+
+    /// <summary>
+    /// Revoke a CA's free access.
+    /// </summary>
+    [HttpPost("{caProfileId:guid}/free-plan/revoke")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> RevokeCaFreePlan(Guid caProfileId, [FromBody] AdminRevokeCaFreePlanRequest request)
+    {
+        if (!HasPermission(AdminPermissions.UsersSuspend))
+        {
+            return Forbid();
+        }
+
+        try
+        {
+            await _caService.RevokeFreePlanAsync(caProfileId, CurrentAdminId, request.Reason);
+            return Success<object?>(null, "CA free plan revoked successfully");
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFoundResponse(ex.Message);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Error(ex.Message, "INVALID_OPERATION");
+        }
+    }
+
+    /// <summary>
     /// Suspend a CA profile.
     /// </summary>
     [HttpPost("{caProfileId:guid}/suspend")]

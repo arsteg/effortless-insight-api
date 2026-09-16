@@ -2,6 +2,8 @@ using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities.Billing;
 using EffortlessInsight.Api.Services.Organizations;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.JsonWebTokens;
+using System.Security.Claims;
 
 namespace EffortlessInsight.Api.Middleware;
 
@@ -222,14 +224,29 @@ public class SubscriptionEnforcementMiddleware
                 "Access denied for organization {OrganizationId} with subscription status: {Status}",
                 orgId.Value, org.SubscriptionStatus);
 
+            // A CA's free access is granted per-CA by an admin. One who has never been
+            // reviewed is waiting for approval, not refusing to pay, so tell the client to
+            // show "awaiting approval" instead of the plan-selection flow. Access is still
+            // denied either way - this only changes the reason reported.
+            // Deliberately on the denial path, so normal requests pay nothing for it.
+            var isAwaitingCaApproval = await IsAwaitingCaApprovalAsync(context, dbContext);
+
             context.Response.StatusCode = StatusCodes.Status402PaymentRequired;
-            await context.Response.WriteAsJsonAsync(new
-            {
-                success = false,
-                error = "SUBSCRIPTION_REQUIRED",
-                message = "An active subscription is required to access this resource. Please select a plan or renew your subscription.",
-                subscriptionStatus = org.SubscriptionStatus
-            });
+            await context.Response.WriteAsJsonAsync(isAwaitingCaApproval
+                ? new
+                {
+                    success = false,
+                    error = "CA_APPROVAL_PENDING",
+                    message = "Your CA account is awaiting approval. You'll get access once an administrator approves it.",
+                    subscriptionStatus = org.SubscriptionStatus
+                }
+                : new
+                {
+                    success = false,
+                    error = "SUBSCRIPTION_REQUIRED",
+                    message = "An active subscription is required to access this resource. Please select a plan or renew your subscription.",
+                    subscriptionStatus = org.SubscriptionStatus
+                });
             return;
         }
 
@@ -256,6 +273,32 @@ public class SubscriptionEnforcementMiddleware
         }
 
         await _next(context);
+    }
+
+    /// <summary>
+    /// True when the caller is a CA whose free access no administrator has decided on yet
+    /// (never granted, never revoked). Used only to pick the error code on the denial path.
+    /// </summary>
+    private static async Task<bool> IsAwaitingCaApprovalAsync(
+        HttpContext context,
+        ApplicationDbContext dbContext)
+    {
+        if (context.User.FindFirst("is_ca")?.Value != "true")
+        {
+            return false;
+        }
+
+        var userIdClaim = context.User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value
+            ?? context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+
+        if (!Guid.TryParse(userIdClaim, out var userId))
+        {
+            return false;
+        }
+
+        return await dbContext.CaProfiles
+            .AsNoTracking()
+            .AnyAsync(p => p.UserId == userId && !p.AllowFreePlan && p.FreePlanRevokedAt == null);
     }
 
     // SECURITY FIX #8: Use exact path matching for sensitive endpoints

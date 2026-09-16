@@ -106,8 +106,17 @@ public interface ISubscriptionService
     /// </summary>
     /// <param name="organizationId">The organization ID.</param>
     /// <param name="planCode">The free plan code (must have 0 pricing).</param>
+    /// <param name="allowCaOperatorPlan">
+    /// Must be true to assign a CA operator plan. That plan is free with unlimited limits,
+    /// so it is only assignable from the trusted CA onboarding and admin-grant paths -
+    /// never from the self-service billing endpoints, which would otherwise let any
+    /// organization claim it by posting its plan code.
+    /// </param>
     /// <returns>The activated subscription.</returns>
-    Task<SubscriptionDto> ActivateFreePlanAsync(Guid organizationId, string planCode);
+    Task<SubscriptionDto> ActivateFreePlanAsync(
+        Guid organizationId,
+        string planCode,
+        bool allowCaOperatorPlan = false);
 
     /// <summary>
     /// Processes subscription renewal.

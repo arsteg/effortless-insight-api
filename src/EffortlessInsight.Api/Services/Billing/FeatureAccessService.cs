@@ -31,20 +31,11 @@ public class FeatureAccessService : IFeatureAccessService
         string featureCode,
         CancellationToken cancellationToken = default)
     {
-        // Check if organization has CA operator plan - they get full access to all features
-        var subscription = await _dbContext.BillingSubscriptions
-            .Include(s => s.Plan)
-            .Where(s => s.OrganizationId == organizationId && s.DeletedAt == null)
-            .FirstOrDefaultAsync(cancellationToken);
-
-        if (subscription?.Plan?.IsCaOperatorPlan == true)
-        {
-            _logger.LogDebug(
-                "Organization {OrganizationId} has CA operator plan - granting access to feature {FeatureCode}",
-                organizationId, featureCode);
-            return true;
-        }
-
+        // The CA operator plan used to short-circuit to full access here, ignoring
+        // subscription status entirely. It is no longer special-cased: a CA is granted the
+        // plan as a normal active subscription, so revoking it (which cancels the
+        // subscription) must actually remove access. The plan's own unlimited feature list
+        // is what grants a CA everything while the subscription is active.
         var features = await GetAvailableFeaturesAsync(organizationId, cancellationToken);
         return features.Contains(featureCode, StringComparer.OrdinalIgnoreCase);
     }
@@ -79,16 +70,6 @@ public class FeatureAccessService : IFeatureAccessService
         {
             _logger.LogWarning("No active subscription found for organization {OrganizationId}", organizationId);
             return [];
-        }
-
-        // CA operator plans get every feature regardless of subscription status, matching
-        // the short-circuit in HasFeatureAccessAsync above. Without it the two methods
-        // disagree: a CA could pass a per-feature check yet get an empty feature list.
-        if (subscription.Plan.IsCaOperatorPlan)
-        {
-            var caFeatures = subscription.Plan.Features ?? [];
-            await CacheFeaturesAsync(cacheKey, caFeatures, cancellationToken);
-            return caFeatures;
         }
 
         // Check if subscription is active (not cancelled or expired)

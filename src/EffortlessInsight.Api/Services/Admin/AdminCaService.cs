@@ -2,6 +2,7 @@ using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities.Ca;
 using EffortlessInsight.Api.DTOs.Admin;
 using EffortlessInsight.Api.Services.Admin;
+using EffortlessInsight.Api.Services.Billing;
 using Microsoft.EntityFrameworkCore;
 
 namespace EffortlessInsight.Api.Services.Admin;
@@ -11,17 +12,28 @@ namespace EffortlessInsight.Api.Services.Admin;
 /// </summary>
 public class AdminCaService : IAdminCaService
 {
+    /// <summary>
+    /// Zero-cost plan granted to CAs whose free access an admin has approved.
+    /// </summary>
+    private const string CaOperatorPlanCode = "ca_operator";
+
     private readonly ApplicationDbContext _dbContext;
     private readonly IAdminAuditService _auditService;
+    private readonly ISubscriptionService _subscriptionService;
+    private readonly IFeatureAccessService _featureAccessService;
     private readonly ILogger<AdminCaService> _logger;
 
     public AdminCaService(
         ApplicationDbContext dbContext,
         IAdminAuditService auditService,
+        ISubscriptionService subscriptionService,
+        IFeatureAccessService featureAccessService,
         ILogger<AdminCaService> logger)
     {
         _dbContext = dbContext;
         _auditService = auditService;
+        _subscriptionService = subscriptionService;
+        _featureAccessService = featureAccessService;
         _logger = logger;
     }
 
@@ -113,6 +125,7 @@ public class AdminCaService : IAdminCaService
             IsVerified: cp.IsVerified,
             VerifiedAt: cp.VerifiedAt,
             Status: cp.Status,
+            AllowFreePlan: cp.AllowFreePlan,
             ActiveClientCount: activeClientCounts.GetValueOrDefault(cp.UserId, 0),
             PendingInvitationCount: pendingInvitationCounts.GetValueOrDefault(cp.UserId, 0),
             CreatedAt: cp.CreatedAt
@@ -204,6 +217,10 @@ public class AdminCaService : IAdminCaService
             SuspendedAt: caProfile.SuspendedAt,
             SuspendedByAdminId: null, // Would need to add to entity
             SuspendedReason: caProfile.SuspensionReason,
+            OrganizationId: caProfile.User.OrganizationId,
+            AllowFreePlan: caProfile.AllowFreePlan,
+            FreePlanGrantedAt: caProfile.FreePlanGrantedAt,
+            FreePlanRevokedAt: caProfile.FreePlanRevokedAt,
             ActiveClientCount: activeClientCount,
             PendingInvitationCount: pendingInvitationCount,
             TotalAuthorizedGstins: totalAuthorizedGstins,
@@ -285,6 +302,115 @@ public class AdminCaService : IAdminCaService
             });
 
         _logger.LogInformation("CA verification revoked: {CaProfileId} by admin: {AdminId}", caProfileId, adminUserId);
+    }
+
+    public async Task GrantFreePlanAsync(Guid caProfileId, Guid adminUserId, string? notes)
+    {
+        var caProfile = await _dbContext.CaProfiles
+            .Include(cp => cp.User)
+            .FirstOrDefaultAsync(cp => cp.Id == caProfileId);
+
+        if (caProfile == null)
+        {
+            throw new KeyNotFoundException($"CA profile not found: {caProfileId}");
+        }
+
+        caProfile.AllowFreePlan = true;
+        caProfile.FreePlanGrantedAt = DateTime.UtcNow;
+        caProfile.FreePlanRevokedAt = null;
+        caProfile.UpdatedAt = DateTime.UtcNow;
+
+        await _dbContext.SaveChangesAsync();
+
+        // The CA may not have created their organization yet. In that case the flag alone
+        // is enough - CaProfileService applies it when the organization is created.
+        var organizationId = caProfile.User.OrganizationId;
+        if (organizationId.HasValue)
+        {
+            await _subscriptionService.ActivateFreePlanAsync(
+                organizationId.Value,
+                CaOperatorPlanCode,
+                allowCaOperatorPlan: true);
+
+            await _featureAccessService.InvalidateCacheAsync(organizationId.Value);
+        }
+
+        await _auditService.LogAsync(
+            adminUserId,
+            "ca_free_plan_granted",
+            "CaProfile",
+            caProfileId.ToString(),
+            $"CA free plan granted: {caProfile.User.Name}",
+            new Dictionary<string, object>
+            {
+                ["organization_id"] = organizationId?.ToString() ?? "",
+                ["notes"] = notes ?? ""
+            });
+
+        _logger.LogInformation(
+            "CA free plan granted: {CaProfileId} (organization {OrganizationId}) by admin: {AdminId}",
+            caProfileId, organizationId, adminUserId);
+    }
+
+    public async Task RevokeFreePlanAsync(Guid caProfileId, Guid adminUserId, string? reason)
+    {
+        var caProfile = await _dbContext.CaProfiles
+            .Include(cp => cp.User)
+            .FirstOrDefaultAsync(cp => cp.Id == caProfileId);
+
+        if (caProfile == null)
+        {
+            throw new KeyNotFoundException($"CA profile not found: {caProfileId}");
+        }
+
+        caProfile.AllowFreePlan = false;
+        caProfile.FreePlanRevokedAt = DateTime.UtcNow;
+        caProfile.UpdatedAt = DateTime.UtcNow;
+
+        await _dbContext.SaveChangesAsync();
+
+        var organizationId = caProfile.User.OrganizationId;
+        if (organizationId.HasValue)
+        {
+            try
+            {
+                await _subscriptionService.CancelSubscriptionAsync(
+                    organizationId.Value,
+                    caProfile.UserId,
+                    new DTOs.CancelSubscriptionRequest(
+                        Reason: reason ?? "Free plan revoked by administrator",
+                        Feedback: null,
+                        CancelImmediately: true));
+            }
+            catch (InvalidOperationException ex)
+            {
+                // CancelSubscriptionAsync throws when there is no subscription or it is
+                // already cancelled. Revoking must be idempotent, so treat that as done.
+                _logger.LogInformation(
+                    ex,
+                    "No active subscription to cancel for organization {OrganizationId} while revoking CA free plan",
+                    organizationId.Value);
+            }
+
+            // Features are cached for 5 minutes; without this the CA keeps access until it expires.
+            await _featureAccessService.InvalidateCacheAsync(organizationId.Value);
+        }
+
+        await _auditService.LogAsync(
+            adminUserId,
+            "ca_free_plan_revoked",
+            "CaProfile",
+            caProfileId.ToString(),
+            $"CA free plan revoked: {caProfile.User.Name}",
+            new Dictionary<string, object>
+            {
+                ["organization_id"] = organizationId?.ToString() ?? "",
+                ["reason"] = reason ?? ""
+            });
+
+        _logger.LogInformation(
+            "CA free plan revoked: {CaProfileId} (organization {OrganizationId}) by admin: {AdminId}",
+            caProfileId, organizationId, adminUserId);
     }
 
     public async Task SuspendCaAsync(Guid caProfileId, Guid adminUserId, AdminSuspendCaRequest request)

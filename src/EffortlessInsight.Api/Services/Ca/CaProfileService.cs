@@ -356,26 +356,36 @@ public class CaProfileService : ICaProfileService
             }
         });
 
-        // CAs use the platform free of charge. Put the new organization on the zero-cost
-        // CA operator plan so the subscription gates let them straight through instead of
-        // pushing them to plan selection / checkout.
+        // Free access is granted per-CA by an admin. If it has already been granted, put
+        // the new organization on the zero-cost CA operator plan now; otherwise leave the
+        // org unsubscribed and let the normal subscription gates run, which surfaces the
+        // "awaiting approval" state.
         //
         // Deliberately outside the execution strategy above: this does its own
         // SaveChanges, and re-running it on a transient retry would be wasteful. It is
         // idempotent, so a later retry of the whole request is still safe.
-        try
+        var caProfile = await _db.CaProfiles
+            .FirstOrDefaultAsync(p => p.UserId == userId, ct);
+
+        if (caProfile?.AllowFreePlan == true)
         {
-            await _subscriptionService.ActivateFreePlanAsync(response.OrganizationId, CaOperatorPlanCode);
-        }
-        catch (Exception ex)
-        {
-            // Never fail organization creation over this - the org exists and the user is
-            // logged in. Surfaces as the subscription gate until it is put right.
-            _logger.LogError(
-                ex,
-                "Failed to activate '{PlanCode}' for CA organization {OrganizationId}; the CA will be treated as unsubscribed",
-                CaOperatorPlanCode,
-                response.OrganizationId);
+            try
+            {
+                await _subscriptionService.ActivateFreePlanAsync(
+                    response.OrganizationId,
+                    CaOperatorPlanCode,
+                    allowCaOperatorPlan: true);
+            }
+            catch (Exception ex)
+            {
+                // Never fail organization creation over this - the org exists and the user
+                // is logged in. Surfaces as the subscription gate until it is put right.
+                _logger.LogError(
+                    ex,
+                    "Failed to activate '{PlanCode}' for CA organization {OrganizationId}; the CA will be treated as unsubscribed",
+                    CaOperatorPlanCode,
+                    response.OrganizationId);
+            }
         }
 
         return response;
