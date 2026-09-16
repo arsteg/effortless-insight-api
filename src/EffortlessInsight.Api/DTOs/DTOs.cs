@@ -59,6 +59,16 @@ public record TwoFactorRequiredResponse(
 
 public record VerifyEmailRequest( [MaxLength(500)] string Token );
 
+/// <summary>
+/// Response after email verification with redirect URL based on user type.
+/// </summary>
+public record VerifyEmailResponse(
+    string Message,
+    string RedirectUrl,
+    bool IsCa,
+    bool NeedsOnboarding
+);
+
 public record RefreshTokenRequest( [MaxLength(2000)] string RefreshToken );
 
 public record TokenResponse(
@@ -262,6 +272,7 @@ public record UserProfileDto(
     bool Is2faEnabled,
     bool HasPassword,
     string Role,
+    bool IsCa,
     UserOrganizationDto? Organization,
     List<UserOrganizationDto> Organizations,
     Dictionary<string, object>? Preferences,
@@ -287,6 +298,7 @@ public record UserDto(
     string? Mobile,
     string? AvatarUrl,
     string Role,
+    bool IsCa,
     UserOrganizationDto? Organization,
     List<UserOrganizationDto> Organizations
 );
@@ -1201,3 +1213,35 @@ public record ApprovalActionDto
     public bool IsAutomatic { get; init; }
     public DateTime CreatedAt { get; init; }
 }
+
+// ============================================================================
+// CA Organization DTOs
+// ============================================================================
+
+/// <summary>
+/// Request to create an organization for a CA user.
+/// Unlike BO onboarding, GSTIN is optional for CA users.
+/// </summary>
+public record CreateCaOrganizationRequest(
+    [MaxLength(200)] string Name,
+    [MaxLength(200)] string? LegalName,
+    [MaxLength(15)] string? Gstin,  // Optional for CA
+    [MaxLength(100)] string? Industry,
+    [MaxLength(50)] string State,
+    [MaxLength(100)] string? City
+);
+
+/// <summary>
+/// Response after creating CA organization, includes new tokens with org_id claim.
+/// </summary>
+public record CreateCaOrganizationResponse(
+    Guid OrganizationId,
+    string Name,
+    string? LegalName,
+    string? Gstin,
+    string State,
+    string? City,
+    string AccessToken,
+    string RefreshToken,
+    int ExpiresIn
+);

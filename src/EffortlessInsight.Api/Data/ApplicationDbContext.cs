@@ -1,6 +1,7 @@
 using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.Data.Entities.Admin;
 using EffortlessInsight.Api.Data.Entities.Billing;
+using EffortlessInsight.Api.Data.Entities.Ca;
 using EffortlessInsight.Api.Data.Entities.GstSync;
 using EffortlessInsight.Api.Services;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
@@ -182,6 +183,12 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
     public DbSet<GstNoticeRaw> GstNoticesRaw => Set<GstNoticeRaw>();
     public DbSet<GstExtensionEvent> GstExtensionEvents => Set<GstExtensionEvent>();
     public DbSet<GstSyncReminder> GstSyncReminders => Set<GstSyncReminder>();
+
+    // CA Distribution Channel entities
+    public DbSet<CaProfile> CaProfiles => Set<CaProfile>();
+    public DbSet<CaClientRelationship> CaClientRelationships => Set<CaClientRelationship>();
+    public DbSet<CaGstinAuthorization> CaGstinAuthorizations => Set<CaGstinAuthorization>();
+    public DbSet<CaInvitation> CaInvitations => Set<CaInvitation>();
 
     protected override void OnModelCreating( ModelBuilder modelBuilder )
     {
@@ -3013,6 +3020,163 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
             entity.HasIndex(e => new { e.VisitorId, e.CreatedAt });
             entity.HasIndex(e => new { e.UserId, e.CreatedAt });
             entity.HasIndex(e => new { e.EventType, e.CreatedAt });
+        });
+
+        // ============================================================================
+        // CA Distribution Channel Entities
+        // ============================================================================
+
+        // CaProfile Configuration
+        modelBuilder.Entity<CaProfile>(entity =>
+        {
+            entity.ToTable("ca_profiles");
+
+            entity.HasQueryFilter(p => p.DeletedAt == null);
+
+            // One-to-one with ApplicationUser
+            entity.HasIndex(e => e.UserId).IsUnique();
+
+            // ICAI membership number index for lookups
+            entity.HasIndex(e => e.MembershipNumber)
+                .HasFilter("\"MembershipNumber\" IS NOT NULL");
+
+            entity.HasOne(e => e.User)
+                .WithOne(u => u.CaProfile)
+                .HasForeignKey<CaProfile>(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // CaClientRelationship Configuration
+        modelBuilder.Entity<CaClientRelationship>(entity =>
+        {
+            entity.ToTable("ca_client_relationships");
+
+            entity.HasQueryFilter(r => r.DeletedAt == null);
+
+            // Composite unique: one relationship per CA-Client pair
+            entity.HasIndex(e => new { e.CaUserId, e.ClientUserId })
+                .IsUnique()
+                .HasFilter("\"DeletedAt\" IS NULL");
+
+            // Performance indexes
+            entity.HasIndex(e => e.CaUserId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.ClientUserId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.OrganizationId)
+                .HasFilter("\"DeletedAt\" IS NULL AND \"OrganizationId\" IS NOT NULL");
+            entity.HasIndex(e => e.Status)
+                .HasFilter("\"DeletedAt\" IS NULL");
+
+            // Relationships
+            entity.HasOne(e => e.CaUser)
+                .WithMany(u => u.CaClientRelationships)
+                .HasForeignKey(e => e.CaUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.ClientUser)
+                .WithMany(u => u.CaRelationshipsAsClient)
+                .HasForeignKey(e => e.ClientUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.Organization)
+                .WithMany()
+                .HasForeignKey(e => e.OrganizationId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(e => e.RevokedBy)
+                .WithMany()
+                .HasForeignKey(e => e.RevokedById)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // CaGstinAuthorization Configuration
+        modelBuilder.Entity<CaGstinAuthorization>(entity =>
+        {
+            entity.ToTable("ca_gstin_authorizations");
+
+            entity.HasQueryFilter(a => a.DeletedAt == null);
+
+            // Composite unique: one authorization per GSTIN in a relationship
+            entity.HasIndex(e => new { e.CaClientRelationshipId, e.Gstin })
+                .IsUnique()
+                .HasFilter("\"DeletedAt\" IS NULL");
+
+            // GSTIN lookup index
+            entity.HasIndex(e => e.Gstin)
+                .HasFilter("\"DeletedAt\" IS NULL");
+
+            // OrganizationGstin lookup
+            entity.HasIndex(e => e.OrganizationGstinId)
+                .HasFilter("\"DeletedAt\" IS NULL AND \"OrganizationGstinId\" IS NOT NULL");
+
+            // Permissions stored as JSONB array
+            entity.Property(e => e.Permissions)
+                .HasColumnType("jsonb");
+
+            // Relationships
+            entity.HasOne(e => e.CaClientRelationship)
+                .WithMany(r => r.GstinAuthorizations)
+                .HasForeignKey(e => e.CaClientRelationshipId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.OrganizationGstin)
+                .WithMany(g => g.CaAuthorizations)
+                .HasForeignKey(e => e.OrganizationGstinId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(e => e.RevokedBy)
+                .WithMany()
+                .HasForeignKey(e => e.RevokedById)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // CaInvitation Configuration
+        modelBuilder.Entity<CaInvitation>(entity =>
+        {
+            entity.ToTable("ca_invitations");
+
+            entity.HasQueryFilter(i => i.DeletedAt == null);
+
+            // Composite unique: one pending invitation per inviter-email-gstin combo
+            entity.HasIndex(e => new { e.InviterUserId, e.InviteeEmailNormalized, e.Gstin })
+                .IsUnique()
+                .HasFilter("\"DeletedAt\" IS NULL AND \"Status\" = 'pending'")
+                .HasDatabaseName("IX_CaInvitations_Unique_Pending");
+
+            // Performance indexes
+            entity.HasIndex(e => e.InviteeEmailNormalized)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.InviterUserId)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.TokenHash)
+                .HasFilter("\"DeletedAt\" IS NULL AND \"Status\" = 'pending'");
+            entity.HasIndex(e => e.Status)
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => e.ExpiresAt)
+                .HasFilter("\"DeletedAt\" IS NULL AND \"Status\" = 'pending'")
+                .HasDatabaseName("IX_CaInvitations_PendingExpiry");
+
+            // Relationships
+            entity.HasOne(e => e.InviterUser)
+                .WithMany(u => u.SentCaInvitations)
+                .HasForeignKey(e => e.InviterUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.InviterOrganization)
+                .WithMany()
+                .HasForeignKey(e => e.InviterOrganizationId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(e => e.AcceptedUser)
+                .WithMany(u => u.AcceptedCaInvitations)
+                .HasForeignKey(e => e.AcceptedUserId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(e => e.CancelledBy)
+                .WithMany()
+                .HasForeignKey(e => e.CancelledById)
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         // Seed initial data

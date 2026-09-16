@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using EffortlessInsight.Api.Data.Entities.Ca;
 using Microsoft.AspNetCore.Identity;
 
 namespace EffortlessInsight.Api.Data.Entities;
@@ -25,6 +26,21 @@ public class ApplicationUser : IdentityUser<Guid>
     [Required]
     [MaxLength(50)]
     public string Role { get; set; } = "member"; // owner, admin, manager, member, ca, viewer
+
+    // ============================================================================
+    // CA (Chartered Accountant) Fields
+    // ============================================================================
+
+    /// <summary>
+    /// Whether this user is a Chartered Accountant.
+    /// CAs use the platform free and help Business Owners manage their GST notices.
+    /// </summary>
+    public bool IsCa { get; set; }
+
+    /// <summary>
+    /// CA profile data (only set if IsCa is true).
+    /// </summary>
+    public CaProfile? CaProfile { get; set; }
 
     public bool IsActive { get; set; } = true;
 
@@ -163,6 +179,34 @@ public class ApplicationUser : IdentityUser<Guid>
     /// WhatsApp sessions for this user.
     /// </summary>
     public ICollection<WhatsAppSession> WhatsAppSessions { get; set; } = [];
+
+    // ============================================================================
+    // CA Navigation Properties
+    // ============================================================================
+
+    /// <summary>
+    /// If this user is a CA, their client relationships (as the CA).
+    /// </summary>
+    [InverseProperty(nameof(CaClientRelationship.CaUser))]
+    public ICollection<CaClientRelationship> CaClientRelationships { get; set; } = [];
+
+    /// <summary>
+    /// If this user is a Business Owner, their relationships with CAs (as the client).
+    /// </summary>
+    [InverseProperty(nameof(CaClientRelationship.ClientUser))]
+    public ICollection<CaClientRelationship> CaRelationshipsAsClient { get; set; } = [];
+
+    /// <summary>
+    /// Invitations sent by this user (CA or BO).
+    /// </summary>
+    [InverseProperty(nameof(CaInvitation.InviterUser))]
+    public ICollection<CaInvitation> SentCaInvitations { get; set; } = [];
+
+    /// <summary>
+    /// Invitations accepted by this user.
+    /// </summary>
+    [InverseProperty(nameof(CaInvitation.AcceptedUser))]
+    public ICollection<CaInvitation> AcceptedCaInvitations { get; set; } = [];
 }
 
 public class ApplicationRole : IdentityRole<Guid>

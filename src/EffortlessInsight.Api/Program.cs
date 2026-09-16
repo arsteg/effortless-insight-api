@@ -183,6 +183,7 @@ builder.Services.AddBillingServices(builder.Configuration);
 builder.Services.AddAdminServices(builder.Configuration);
 builder.Services.AddAdminAuthentication(builder.Configuration);
 builder.Services.AddWhatsAppServices(builder.Configuration);
+builder.Services.AddCaServices();
 
 // Add Database Seeders
 builder.Services.AddScoped<WorkflowTemplateSeeder>();
@@ -398,6 +399,9 @@ app.UseAuthorization();
 
 // Tenant context (must come after authentication so the org_id claim is available)
 app.UseTenantContext();
+
+// CA client context (sets tenant context to client's org when CA has selected a client)
+app.UseCaClientContext();
 
 // Subscription enforcement (must come after authentication/authorization)
 app.UseSubscriptionEnforcement();

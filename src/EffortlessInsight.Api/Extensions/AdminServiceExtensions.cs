@@ -29,6 +29,9 @@ public static class AdminServiceExtensions
         // Register system settings service
         services.AddScoped<ISystemSettingsService, SystemSettingsService>();
 
+        // Register admin CA management service
+        services.AddScoped<IAdminCaService, AdminCaService>();
+
         return services;
     }
 

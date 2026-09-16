@@ -89,22 +89,18 @@ public class AuthController : ControllerBase
     }
 
     /// <summary>
-    /// Verify email address using token from email link
+    /// Verify email address using token from email link.
+    /// Returns appropriate redirect URL based on user type (CA vs BO).
     /// </summary>
     [HttpPost("verify-email")]
-    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<VerifyEmailResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> VerifyEmail( [FromBody] VerifyEmailRequest request )
     {
         try
         {
-            await _authService.VerifyEmailAsync(request.Token);
-
-            return Ok(new ApiResponse<object>(true, new
-            {
-                Message = "Email verified successfully",
-                RedirectUrl = "/onboarding"
-            }));
+            var response = await _authService.VerifyEmailAsync(request.Token);
+            return Ok(new ApiResponse<VerifyEmailResponse>(true, response));
         }
         catch (InvalidOperationException ex) when (ex.Message == "INVALID_TOKEN")
         {
@@ -509,6 +505,7 @@ public class AuthController : ControllerBase
                 Is2faEnabled: user.Is2faEnabled,
                 HasPassword: !string.IsNullOrEmpty(user.PasswordHash),
                 Role: currentOrg?.Role ?? user.Role,
+                IsCa: user.IsCa,
                 Organization: currentOrg,
                 Organizations: organizations,
                 Preferences: user.Preferences,

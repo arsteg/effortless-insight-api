@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using EffortlessInsight.Api.Data.Entities.Ca;
 
 namespace EffortlessInsight.Api.Data.Entities.GstSync;
 
@@ -47,6 +48,27 @@ public class GstClient : BaseEntity
 
     [ForeignKey(nameof(OrganizationGstinId))]
     public OrganizationGstin? OrganizationGstin { get; set; }
+
+    // ============================================================================
+    // CA Distribution Channel
+    // ============================================================================
+
+    /// <summary>
+    /// CA who set up this sync (nullable for self-sync by Business Owner).
+    /// When set, synced notices are attributed to this CA.
+    /// </summary>
+    public Guid? CaUserId { get; set; }
+
+    [ForeignKey(nameof(CaUserId))]
+    public ApplicationUser? CaUser { get; set; }
+
+    /// <summary>
+    /// Link to the CA's GSTIN authorization (if sync was set up by a CA).
+    /// </summary>
+    public Guid? CaGstinAuthorizationId { get; set; }
+
+    [ForeignKey(nameof(CaGstinAuthorizationId))]
+    public CaGstinAuthorization? CaGstinAuthorization { get; set; }
 
     /// <summary>
     /// Trade name associated with this GSTIN (from GST portal).

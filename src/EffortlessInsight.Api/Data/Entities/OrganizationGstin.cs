@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using EffortlessInsight.Api.Data.Entities.Ca;
 
 namespace EffortlessInsight.Api.Data.Entities;
 
@@ -121,6 +122,29 @@ public class OrganizationGstin : BaseEntity
     public string Source { get; set; } = OrganizationGstinSource.Manual;
 
     // ============================================================================
+    // GSTIN Claiming (CA Distribution Channel)
+    // ============================================================================
+
+    /// <summary>
+    /// Whether this GSTIN has been claimed by a Business Owner.
+    /// A GSTIN can only be claimed once across all organizations.
+    /// </summary>
+    public bool IsClaimed { get; set; }
+
+    /// <summary>
+    /// Business Owner who claimed this GSTIN.
+    /// </summary>
+    public Guid? ClaimedByUserId { get; set; }
+
+    [ForeignKey(nameof(ClaimedByUserId))]
+    public ApplicationUser? ClaimedByUser { get; set; }
+
+    /// <summary>
+    /// When this GSTIN was claimed.
+    /// </summary>
+    public DateTime? ClaimedAt { get; set; }
+
+    // ============================================================================
     // GSTN Portal Integration
     // ============================================================================
 
@@ -133,6 +157,15 @@ public class OrganizationGstin : BaseEntity
     /// Navigation property to the GSTN portal connection.
     /// </summary>
     public GstnConnection? GstnConnection { get; set; }
+
+    // ============================================================================
+    // CA Navigation Properties
+    // ============================================================================
+
+    /// <summary>
+    /// CA authorizations for this GSTIN.
+    /// </summary>
+    public ICollection<CaGstinAuthorization> CaAuthorizations { get; set; } = [];
 }
 
 /// <summary>
@@ -148,4 +181,11 @@ public static class OrganizationGstinSource
 
     /// <summary>A client GSTIN auto-registered by GST notice sync (unverified).</summary>
     public const string GstSync = "gst_sync";
+
+    /// <summary>GSTIN claimed via CA invitation acceptance.</summary>
+    public const string CaInvitation = "ca_invitation";
+
+    public static readonly string[] All = [Onboarding, Manual, GstSync, CaInvitation];
+
+    public static bool IsValid(string source) => All.Contains(source);
 }

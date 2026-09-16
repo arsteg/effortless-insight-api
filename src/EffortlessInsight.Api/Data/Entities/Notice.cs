@@ -218,11 +218,40 @@ public class Notice : BaseEntity
     public string? Notes { get; set; }
 
     // ============================================================================
+    // CA Distribution Channel (Staging)
+    // ============================================================================
+
+    /// <summary>
+    /// Whether this notice is staged (synced by CA before BO accepted invitation).
+    /// Staged notices are transferred to BO's org upon invitation acceptance.
+    /// </summary>
+    public bool IsStaged { get; set; }
+
+    /// <summary>
+    /// For pre-claim staging: the Business Owner user ID this notice is staged for.
+    /// Set when CA syncs notices before BO accepts invitation.
+    /// Cleared when notice is transferred to BO's organization.
+    /// </summary>
+    public Guid? StagedForClientUserId { get; set; }
+
+    [ForeignKey(nameof(StagedForClientUserId))]
+    public ApplicationUser? StagedForClient { get; set; }
+
+    /// <summary>
+    /// CA who synced this notice (if synced by a CA on behalf of BO).
+    /// Tracks attribution even after notice is transferred to BO's org.
+    /// </summary>
+    public Guid? CaSyncedByUserId { get; set; }
+
+    [ForeignKey(nameof(CaSyncedByUserId))]
+    public ApplicationUser? CaSyncedByUser { get; set; }
+
+    // ============================================================================
     // GSTN Portal Integration
     // ============================================================================
 
     /// <summary>
-    /// Source of the notice: upload, manual, gstn_portal.
+    /// Source of the notice: upload, manual, gstn_portal, ca_synced, ca_staged.
     /// </summary>
     [Required]
     [MaxLength(30)]
@@ -396,7 +425,24 @@ public static class NoticeSource
     /// </summary>
     public const string GstnPortal = "gstn_portal";
 
-    public static readonly string[] All = [Upload, Manual, GstnPortal];
+    /// <summary>
+    /// Notice synced by CA after Business Owner accepted invitation.
+    /// Stored directly in BO's organization.
+    /// </summary>
+    public const string CaSynced = "ca_synced";
+
+    /// <summary>
+    /// Notice staged by CA before Business Owner accepted invitation.
+    /// Stored temporarily in CA's workspace, transferred to BO's org upon acceptance.
+    /// </summary>
+    public const string CaStagedForClient = "ca_staged";
+
+    public static readonly string[] All = [Upload, Manual, GstnPortal, CaSynced, CaStagedForClient];
 
     public static bool IsValid(string source) => All.Contains(source);
+
+    /// <summary>
+    /// Whether the source indicates CA involvement.
+    /// </summary>
+    public static bool IsCaSource(string source) => source is CaSynced or CaStagedForClient;
 }

@@ -65,7 +65,9 @@ public class SubscriptionEnforcementMiddleware
         // In-app support must work regardless of subscription state — a customer
         // blocked by a payment/limit problem is exactly who needs to raise a ticket.
         // Endpoints are still [Authorize]-protected and org-scoped.
-        "/api/v1/support/"
+        "/api/v1/support/",
+        // CA endpoints - CAs don't belong to organizations, they manage BO clients independently
+        "/api/v1/ca/"
     };
 
     public SubscriptionEnforcementMiddleware(

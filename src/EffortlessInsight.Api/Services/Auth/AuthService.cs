@@ -387,7 +387,7 @@ public class AuthService : IAuthService
         );
     }
 
-    public async Task VerifyEmailAsync( string token )
+    public async Task<VerifyEmailResponse> VerifyEmailAsync( string token )
     {
         var cacheKey = $"email_verify:{token}";
         var cachedData = await _cache.GetStringAsync(cacheKey);
@@ -428,6 +428,34 @@ public class AuthService : IAuthService
         await LogAuthEventAsync(user.Id, user.Email, AuthEventTypes.EmailVerified, true, null, null, null);
 
         _logger.LogInformation("Email verified for user: {Email}", user.Email);
+
+        // Determine redirect URL based on user type
+        var isCa = user.IsCa;
+        var needsOnboarding = !user.OrganizationId.HasValue;
+
+        string redirectUrl;
+        if (isCa && needsOnboarding)
+        {
+            // CA without organization needs CA onboarding
+            redirectUrl = "/ca-onboarding";
+        }
+        else if (needsOnboarding)
+        {
+            // Regular user (BO) without organization needs standard onboarding
+            redirectUrl = "/onboarding";
+        }
+        else
+        {
+            // User already has organization, go to dashboard
+            redirectUrl = "/dashboard";
+        }
+
+        return new VerifyEmailResponse(
+            Message: "Email verified successfully",
+            RedirectUrl: redirectUrl,
+            IsCa: isCa,
+            NeedsOnboarding: needsOnboarding
+        );
     }
 
     public async Task ForgotPasswordAsync( string email, string ipAddress )
@@ -1951,6 +1979,7 @@ public class AuthService : IAuthService
                 Mobile: user.Mobile,
                 AvatarUrl: user.AvatarUrl,
                 Role: roleOverride ?? user.Role ?? "member",
+                IsCa: user.IsCa,
                 Organization: currentOrg,
                 Organizations: orgs
             )
