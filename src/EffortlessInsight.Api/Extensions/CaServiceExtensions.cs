@@ -27,7 +27,11 @@ public static class CaServiceExtensions
         // CA Context management (client context switching, JWT refresh)
         services.AddScoped<ICaContextService, CaContextService>();
 
-        // CA Notice access (with authorization filtering)
+        // Per-request re-validation of the acting CA-client engagement
+        services.AddScoped<ICaActingContextService, CaActingContextService>();
+
+        // CA Notice access - no longer exposed over HTTP; retained because
+        // CaDashboardService depends on it for the per-client dashboard.
         services.AddScoped<ICaNoticeService, CaNoticeService>();
 
         // CA Dashboard aggregation

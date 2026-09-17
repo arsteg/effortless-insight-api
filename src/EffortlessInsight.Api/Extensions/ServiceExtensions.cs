@@ -139,6 +139,8 @@ public static class ServiceExtensions
         services.AddScoped<IBillingNotificationService, BillingNotificationService>();
         services.AddScoped<IPaymentMethodService, PaymentMethodService>();
         services.AddScoped<IFeatureAccessService, FeatureAccessService>();
+        services.AddScoped<ISubscriptionStatusEvaluator, SubscriptionStatusEvaluator>();
+        services.AddScoped<IEffectiveBillingOrganizationService, EffectiveBillingOrganizationService>();
         services.AddScoped<Jobs.BillingJobs>();
 
         // Register filters

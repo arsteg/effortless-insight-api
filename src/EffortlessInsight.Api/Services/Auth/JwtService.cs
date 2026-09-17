@@ -85,7 +85,12 @@ public class JwtService : IJwtService
         }
     }
 
-    public string GenerateAccessToken(ApplicationUser user, Organization? organization, string? roleOverride = null, bool isExternal = false)
+    public string GenerateAccessToken(
+        ApplicationUser user,
+        Organization? organization,
+        string? roleOverride = null,
+        bool isExternal = false,
+        IEnumerable<Claim>? additionalClaims = null)
     {
         // Use roleOverride if provided, otherwise user.Role, default to "member" if both null
         var role = roleOverride ?? user.Role ?? "member";
@@ -117,6 +122,13 @@ public class JwtService : IJwtService
 
         // Add email verified claim
         claims.Add(new Claim("email_verified", user.EmailConfirmed.ToString().ToLower()));
+
+        // Caller-supplied claims (e.g. ca_client_rel_id when a CA is acting for a client).
+        // Deliberately generic: the CA feature does not get its own parameter here.
+        if (additionalClaims != null)
+        {
+            claims.AddRange(additionalClaims);
+        }
 
         SigningCredentials credentials;
         if (_useAsymmetricSigning && _rsaPrivateKey != null)

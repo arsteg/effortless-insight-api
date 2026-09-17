@@ -1,8 +1,10 @@
+using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities;
+using EffortlessInsight.Api.Data.Entities.Ca;
 using EffortlessInsight.Api.DTOs;
 using EffortlessInsight.Api.Services.Email;
 using Microsoft.AspNetCore.Identity;
@@ -347,19 +349,20 @@ public class AuthService : IAuthService
         session.RevokedAt = DateTime.UtcNow;
         session.RevokedReason = "token_refresh";
 
-        // Get user's organization from memberships first (multi-org support), then fallback to legacy field
-        var membership = await _dbContext.OrganizationMembers
-            .Include(m => m.Organization)
-            .Where(m => m.UserId == user.Id && m.Status == "active" && m.Organization.DeletedAt == null)
-            .OrderByDescending(m => m.JoinedAt)
-            .FirstOrDefaultAsync();
-
-        var organization = membership?.Organization ?? user.Organization;
-        var roleOverride = membership?.Role;
+        // Reproduce the context these tokens were minted for, rather than guessing at it.
+        // Guessing (the user's most recently joined membership) is what used to throw a
+        // multi-org user - and any CA acting for a client - back to an arbitrary
+        // organization every time the 15-minute access token rolled over.
+        var context = await ResolveRefreshContextAsync(user, session);
 
         // Generate new tokens
         var (newRefreshToken, newJti, expiresAt) = _jwtService.GenerateRefreshToken(session.ExpiresAt > DateTime.UtcNow.AddDays(7));
-        var accessToken = _jwtService.GenerateAccessToken(user, organization, roleOverride);
+        var accessToken = _jwtService.GenerateAccessToken(
+            user,
+            context.Organization,
+            context.Role,
+            context.IsExternal,
+            context.AdditionalClaims);
 
         // Create new session
         var newSession = new UserSession
@@ -373,7 +376,11 @@ public class AuthService : IAuthService
             UserAgent = userAgent ?? session.UserAgent,
             IpAddress = ipAddress,
             ExpiresAt = expiresAt,
-            LastActiveAt = DateTime.UtcNow
+            LastActiveAt = DateTime.UtcNow,
+            OrganizationId = context.Organization?.Id,
+            Role = context.Role,
+            IsExternal = context.IsExternal,
+            CaClientRelationshipId = context.CaClientRelationshipId
         };
 
         _dbContext.UserSessions.Add(newSession);
@@ -385,6 +392,107 @@ public class AuthService : IAuthService
             TokenType: "Bearer",
             ExpiresIn: _jwtService.GetAccessTokenExpiryMinutes() * 60
         );
+    }
+
+    /// <summary>
+    /// The organization/role a refreshed token should carry.
+    /// </summary>
+    private sealed record RefreshContext(
+        Organization? Organization,
+        string? Role,
+        bool IsExternal,
+        Guid? CaClientRelationshipId,
+        IEnumerable<Claim>? AdditionalClaims);
+
+    /// <summary>
+    /// Works out what the refreshed token should say, in order of decreasing confidence:
+    /// the CA-client relationship the session was opened under, the organization the session
+    /// was stamped with, or - for sessions predating those columns - the old guess.
+    /// </summary>
+    private async Task<RefreshContext> ResolveRefreshContextAsync(ApplicationUser user, UserSession session)
+    {
+        if (session.CaClientRelationshipId is { } relationshipId)
+        {
+            var relationship = await _dbContext.CaClientRelationships
+                .Include(r => r.Organization)
+                .FirstOrDefaultAsync(r =>
+                    r.Id == relationshipId &&
+                    r.CaUserId == user.Id &&
+                    r.OrganizationId == session.OrganizationId &&
+                    r.Status == CaClientRelationshipStatus.Active &&
+                    (r.ExpiresAt == null || r.ExpiresAt > DateTime.UtcNow) &&
+                    r.Organization!.DeletedAt == null);
+
+            var caProfileActive = relationship != null && await _dbContext.CaProfiles
+                .AnyAsync(p => p.UserId == user.Id && p.Status == CaProfileStatus.Active);
+
+            if (relationship != null && caProfileActive)
+            {
+                return new RefreshContext(
+                    relationship.Organization,
+                    Role: "ca",
+                    IsExternal: true,
+                    CaClientRelationshipId: relationshipId,
+                    AdditionalClaims: [new Claim("ca_client_rel_id", relationshipId.ToString())]);
+            }
+
+            // The engagement ended while this session was alive. Drop the CA back into their
+            // own firm rather than 401-ing: one revoked client should not log them out.
+            _logger.LogInformation(
+                "CA {UserId} lost access to relationship {RelationshipId}; refreshing into their own organization",
+                user.Id, relationshipId);
+
+            return await ResolveOwnOrganizationContextAsync(user);
+        }
+
+        if (session.OrganizationId is { } sessionOrgId)
+        {
+            var membership = await _dbContext.OrganizationMembers
+                .Include(m => m.Organization)
+                .FirstOrDefaultAsync(m =>
+                    m.UserId == user.Id &&
+                    m.OrganizationId == sessionOrgId &&
+                    m.Status == "active" &&
+                    m.Organization.DeletedAt == null &&
+                    (m.AccessExpiresAt == null || m.AccessExpiresAt > DateTime.UtcNow));
+
+            if (membership != null)
+            {
+                return new RefreshContext(
+                    membership.Organization,
+                    membership.Role,
+                    membership.IsExternal,
+                    CaClientRelationshipId: null,
+                    AdditionalClaims: null);
+            }
+        }
+
+        return await ResolveOwnOrganizationContextAsync(user);
+    }
+
+    /// <summary>
+    /// Legacy resolution: the user's most recently joined active membership, else their
+    /// legacy single-org pointer. Kept for sessions created before the session context columns.
+    /// </summary>
+    private async Task<RefreshContext> ResolveOwnOrganizationContextAsync(ApplicationUser user)
+    {
+        var membership = await _dbContext.OrganizationMembers
+            .Include(m => m.Organization)
+            .Where(m => m.UserId == user.Id && m.Status == "active" && m.Organization.DeletedAt == null)
+            .OrderByDescending(m => m.JoinedAt)
+            .FirstOrDefaultAsync();
+
+        var organization = membership?.Organization
+            ?? (user.OrganizationId.HasValue
+                ? await _dbContext.Organizations.FindAsync(user.OrganizationId.Value)
+                : null);
+
+        return new RefreshContext(
+            organization,
+            membership?.Role,
+            membership?.IsExternal ?? false,
+            CaClientRelationshipId: null,
+            AdditionalClaims: null);
     }
 
     public async Task<VerifyEmailResponse> VerifyEmailAsync( string token )
@@ -1014,7 +1122,10 @@ public class AuthService : IAuthService
             UserAgent = userAgent,
             IpAddress = ipAddress,
             ExpiresAt = expiresAt,
-            LastActiveAt = DateTime.UtcNow
+            LastActiveAt = DateTime.UtcNow,
+            OrganizationId = organization?.Id,
+            Role = roleOverride ?? user.Role,
+            IsExternal = membership?.IsExternal ?? false
         };
 
         _dbContext.UserSessions.Add(session);
@@ -1940,7 +2051,10 @@ public class AuthService : IAuthService
             LocationCity = geoLocation?.City,
             LocationCountry = geoLocation?.Country,
             ExpiresAt = expiresAt,
-            LastActiveAt = DateTime.UtcNow
+            LastActiveAt = DateTime.UtcNow,
+            OrganizationId = organization?.Id,
+            Role = roleOverride ?? user.Role,
+            IsExternal = membership?.IsExternal ?? false
         };
 
         _dbContext.UserSessions.Add(session);

@@ -702,6 +702,10 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
             .IsUnique();
         modelBuilder.Entity<UserSession>()
             .HasIndex(s => s.ExpiresAt);
+        // Revoking a CA-client relationship sweeps every session it authorised.
+        modelBuilder.Entity<UserSession>()
+            .HasIndex(s => s.CaClientRelationshipId)
+            .HasFilter("\"CaClientRelationshipId\" IS NOT NULL");
 
         // Login Audit indexes
         modelBuilder.Entity<LoginAudit>()

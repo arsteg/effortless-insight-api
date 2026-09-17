@@ -53,8 +53,13 @@ public class RequiresFeatureAttribute : Attribute, IAsyncActionFilter
             return;
         }
 
-        // Check feature access
-        var hasAccess = await featureService.HasFeatureAccessAsync(organizationId.Value, FeatureCode);
+        // Check feature access against whichever plan governs this request: normally the
+        // organization's own, but a CA acting for a client is covered by their firm's.
+        var effectiveBillingOrg = context.HttpContext.RequestServices
+            .GetRequiredService<IEffectiveBillingOrganizationService>();
+        var billingOrganizationId = await effectiveBillingOrg.ResolveAsync(organizationId.Value);
+
+        var hasAccess = await featureService.HasFeatureAccessAsync(billingOrganizationId, FeatureCode);
 
         if (!hasAccess)
         {

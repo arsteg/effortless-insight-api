@@ -322,7 +322,10 @@ public class CaProfileService : ICaProfileService
                     UserAgent = userAgent,
                     Platform = "web",
                     ExpiresAt = expiresAt,
-                    LastActiveAt = DateTime.UtcNow
+                    LastActiveAt = DateTime.UtcNow,
+                    OrganizationId = organization.Id,
+                    Role = "owner",
+                    IsExternal = false
                 };
 
                 _db.UserSessions.Add(session);

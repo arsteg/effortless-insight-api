@@ -10,13 +10,27 @@ public class TenantContextMiddleware
 {
     private readonly RequestDelegate _next;
     private readonly ILogger<TenantContextMiddleware> _logger;
+    private readonly bool _allowHeaderOverride;
 
     public TenantContextMiddleware(
         RequestDelegate next,
-        ILogger<TenantContextMiddleware> logger)
+        ILogger<TenantContextMiddleware> logger,
+        IHostEnvironment environment,
+        IConfiguration configuration)
     {
         _next = next;
         _logger = logger;
+
+        // Off in production regardless; opt-in elsewhere so performance tests can still
+        // drive the tenant context without a real login.
+        _allowHeaderOverride = !environment.IsProduction()
+            && configuration.GetValue("Tenancy:AllowHeaderOverride", true);
+
+        if (_allowHeaderOverride)
+        {
+            _logger.LogWarning(
+                "X-Organization-Id header override is enabled. This must never be on in production.");
+        }
     }
 
     public async Task InvokeAsync(HttpContext context, ITenantContext tenantContext)
@@ -29,8 +43,15 @@ public class TenantContextMiddleware
             tenantContext.SetOrganizationId(claimOrgId);
             _logger.LogDebug("Tenant context set from claim to organization {OrganizationId}", claimOrgId);
         }
-        // Fall back to the X-Organization-Id header (used by performance tests)
-        else if (context.Request.Headers.TryGetValue("X-Organization-Id", out var orgIdHeader) &&
+        // Fall back to the X-Organization-Id header (used by performance tests).
+        //
+        // Restricted to non-production because it is otherwise a tenant-escape primitive:
+        // any caller whose token happens to carry no org_id could point the global query
+        // filters at an arbitrary organization just by setting a header. Most endpoints
+        // resolve their org from the claim rather than ITenantContext and so would still
+        // refuse, but the filters are meant to be defence in depth, not the last line.
+        else if (_allowHeaderOverride &&
+            context.Request.Headers.TryGetValue("X-Organization-Id", out var orgIdHeader) &&
             Guid.TryParse(orgIdHeader.ToString(), out var organizationId))
         {
             tenantContext.SetOrganizationId(organizationId);

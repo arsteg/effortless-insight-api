@@ -703,6 +703,18 @@ public class AdminCaService : IAdminCaService
             auth.UpdatedAt = DateTime.UtcNow;
         }
 
+        // Kill any session the CA is currently holding for this engagement, so the
+        // revocation cannot be outlived by a refresh token.
+        var sessions = await _dbContext.UserSessions
+            .Where(s => s.CaClientRelationshipId == relationshipId && s.RevokedAt == null)
+            .ToListAsync();
+
+        foreach (var session in sessions)
+        {
+            session.RevokedAt = DateTime.UtcNow;
+            session.RevokedReason = "ca_relationship_revoked";
+        }
+
         await _dbContext.SaveChangesAsync();
 
         await _auditService.LogAsync(

@@ -21,6 +21,7 @@ public class NoticesController : ControllerBase
     private readonly INoticeResponseDraftService _responseDraftService;
     private readonly IAiServiceClient _aiServiceClient;
     private readonly IFeatureAccessService _featureAccessService;
+    private readonly IEffectiveBillingOrganizationService _effectiveBillingOrg;
     private readonly ICurrentOrganizationService _currentOrg;
     private readonly ILogger<NoticesController> _logger;
 
@@ -31,6 +32,7 @@ public class NoticesController : ControllerBase
         INoticeResponseDraftService responseDraftService,
         IAiServiceClient aiServiceClient,
         IFeatureAccessService featureAccessService,
+        IEffectiveBillingOrganizationService effectiveBillingOrg,
         ICurrentOrganizationService currentOrg,
         ILogger<NoticesController> logger)
     {
@@ -40,6 +42,7 @@ public class NoticesController : ControllerBase
         _responseDraftService = responseDraftService;
         _aiServiceClient = aiServiceClient;
         _featureAccessService = featureAccessService;
+        _effectiveBillingOrg = effectiveBillingOrg;
         _currentOrg = currentOrg;
         _logger = logger;
     }
@@ -1100,7 +1103,7 @@ public class NoticesController : ControllerBase
             var orgId = GetCurrentOrganizationId();
 
             // Check feature access - AI explanation requires paid plan
-            if (!await _featureAccessService.HasFeatureAccessAsync(orgId, FeatureCodes.AiExplanation, cancellationToken))
+            if (!await _featureAccessService.HasFeatureAccessAsync(await _effectiveBillingOrg.ResolveAsync(orgId, cancellationToken), FeatureCodes.AiExplanation, cancellationToken))
             {
                 return StatusCode(StatusCodes.Status403Forbidden, new ApiErrorResponse(
                     false,
@@ -1148,7 +1151,7 @@ public class NoticesController : ControllerBase
             var orgId = GetCurrentOrganizationId();
 
             // Check feature access - AI explanation requires paid plan
-            if (!await _featureAccessService.HasFeatureAccessAsync(orgId, FeatureCodes.AiExplanation, cancellationToken))
+            if (!await _featureAccessService.HasFeatureAccessAsync(await _effectiveBillingOrg.ResolveAsync(orgId, cancellationToken), FeatureCodes.AiExplanation, cancellationToken))
             {
                 return StatusCode(StatusCodes.Status403Forbidden, new ApiErrorResponse(
                     false,
@@ -1325,7 +1328,7 @@ public class NoticesController : ControllerBase
             var userId = GetCurrentUserId();
 
             // Check feature access - draft reply requires paid plan
-            if (!await _featureAccessService.HasFeatureAccessAsync(orgId, FeatureCodes.DraftReply, cancellationToken))
+            if (!await _featureAccessService.HasFeatureAccessAsync(await _effectiveBillingOrg.ResolveAsync(orgId, cancellationToken), FeatureCodes.DraftReply, cancellationToken))
             {
                 return StatusCode(StatusCodes.Status403Forbidden, new ApiErrorResponse(
                     false,
@@ -2070,7 +2073,7 @@ public class NoticesController : ControllerBase
             var orgId = GetCurrentOrganizationId();
 
             // Check feature access - AI explanation requires paid plan
-            if (!await _featureAccessService.HasFeatureAccessAsync(orgId, FeatureCodes.AiExplanation, cancellationToken))
+            if (!await _featureAccessService.HasFeatureAccessAsync(await _effectiveBillingOrg.ResolveAsync(orgId, cancellationToken), FeatureCodes.AiExplanation, cancellationToken))
             {
                 return StatusCode(StatusCodes.Status403Forbidden, new ApiErrorResponse(
                     false,

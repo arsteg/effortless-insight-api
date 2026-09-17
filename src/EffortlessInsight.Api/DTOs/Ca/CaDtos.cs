@@ -219,6 +219,9 @@ public record CaClientSummaryDto(
     Guid ClientUserId,
     string ClientName,
     string ClientEmail,
+    // Null until the Business Owner creates their organization. The client picker uses
+    // this to disable clients there is nothing to switch into yet.
+    Guid? OrganizationId,
     string? OrganizationName,
     string Status,
     int AuthorizedGstinCount,

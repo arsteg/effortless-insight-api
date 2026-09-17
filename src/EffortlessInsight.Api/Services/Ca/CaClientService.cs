@@ -58,6 +58,7 @@ public class CaClientService : ICaClientService
                 ClientUserId: r.ClientUserId,
                 ClientName: r.ClientUser.Name,
                 ClientEmail: r.ClientUser.Email!,
+                OrganizationId: r.OrganizationId,
                 OrganizationName: r.Organization?.Name,
                 Status: r.Status,
                 AuthorizedGstinCount: r.GstinAuthorizations.Count(a => a.Status == CaGstinAuthorizationStatus.Active),
@@ -191,10 +192,34 @@ public class CaClientService : ICaClientService
             auth.UpdatedAt = DateTime.UtcNow;
         }
 
+        await RevokeSessionsForRelationshipAsync(relationshipId, "ca_relationship_revoked", ct);
+
         await _db.SaveChangesAsync(ct);
 
         _logger.LogInformation("Relationship revoked: {RelationshipId}, By: {UserId}", relationshipId, revokingUserId);
         return true;
+    }
+
+    /// <summary>
+    /// Kills any live session the CA holds for this engagement.
+    ///
+    /// CaActingContextMiddleware already blocks the access token on the next request; this
+    /// closes the other half, so the refresh token cannot be used to mint a new one either.
+    /// </summary>
+    private async Task RevokeSessionsForRelationshipAsync(
+        Guid relationshipId,
+        string reason,
+        CancellationToken ct)
+    {
+        var sessions = await _db.UserSessions
+            .Where(s => s.CaClientRelationshipId == relationshipId && s.RevokedAt == null)
+            .ToListAsync(ct);
+
+        foreach (var session in sessions)
+        {
+            session.RevokedAt = DateTime.UtcNow;
+            session.RevokedReason = reason;
+        }
     }
 
     public async Task<bool> LinkOrganizationAsync(
@@ -303,6 +328,8 @@ public class CaClientService : ICaClientService
                 auth.RevocationReason = "Relationship expired";
                 auth.UpdatedAt = now;
             }
+
+            await RevokeSessionsForRelationshipAsync(relationship.Id, "ca_relationship_expired", ct);
         }
 
         if (expiredRelationships.Any())

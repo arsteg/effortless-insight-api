@@ -23,6 +23,8 @@ public class NoticesControllerPhaseDTests
     private readonly Mock<INoticeWorkflowService> _workflowService;
     private readonly Mock<INoticeResponseDraftService> _responseDraftService;
     private readonly Mock<IAiServiceClient> _aiServiceClient;
+    private readonly Mock<EffortlessInsight.Api.Services.Billing.IFeatureAccessService> _featureAccess;
+    private readonly Mock<EffortlessInsight.Api.Services.Billing.IEffectiveBillingOrganizationService> _effectiveBillingOrg;
     private readonly Mock<ICurrentOrganizationService> _currentOrg;
     private readonly Mock<ILogger<NoticesController>> _logger;
     private readonly NoticesController _controller;
@@ -38,6 +40,10 @@ public class NoticesControllerPhaseDTests
         _workflowService = new Mock<INoticeWorkflowService>();
         _responseDraftService = new Mock<INoticeResponseDraftService>();
         _aiServiceClient = new Mock<IAiServiceClient>();
+        _featureAccess = new Mock<EffortlessInsight.Api.Services.Billing.IFeatureAccessService>();
+        _effectiveBillingOrg = new Mock<EffortlessInsight.Api.Services.Billing.IEffectiveBillingOrganizationService>();
+        _effectiveBillingOrg.Setup(x => x.ResolveAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Guid orgId, CancellationToken _) => orgId);
         _currentOrg = new Mock<ICurrentOrganizationService>();
         _logger = new Mock<ILogger<NoticesController>>();
 
@@ -51,6 +57,8 @@ public class NoticesControllerPhaseDTests
             _workflowService.Object,
             _responseDraftService.Object,
             _aiServiceClient.Object,
+            _featureAccess.Object,
+            _effectiveBillingOrg.Object,
             _currentOrg.Object,
             _logger.Object);
 

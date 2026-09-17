@@ -400,8 +400,8 @@ app.UseAuthorization();
 // Tenant context (must come after authentication so the org_id claim is available)
 app.UseTenantContext();
 
-// CA client context (sets tenant context to client's org when CA has selected a client)
-app.UseCaClientContext();
+// CA acting context (rejects requests whose CA-client engagement has ended)
+app.UseCaActingContext();
 
 // Subscription enforcement (must come after authentication/authorization)
 app.UseSubscriptionEnforcement();

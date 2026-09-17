@@ -307,22 +307,22 @@ public interface ICaAuthorizationService
 public interface ICaContextService
 {
     /// <summary>
-    /// Select a client context for the CA.
+    /// Select a client context for the CA, issuing tokens scoped to that client's organization.
     /// </summary>
     Task<SelectClientContextResult> SelectClientAsync(
         Guid caUserId,
         Guid relationshipId,
+        string ipAddress,
+        string? userAgent,
         CancellationToken ct = default);
 
     /// <summary>
-    /// Get current context for a CA.
+    /// Get current context for a CA, including the selected client when one is active.
     /// </summary>
-    Task<CaContextDto?> GetCurrentContextAsync(Guid caUserId, CancellationToken ct = default);
-
-    /// <summary>
-    /// Clear the client context (back to client list).
-    /// </summary>
-    Task ClearContextAsync(Guid caUserId, CancellationToken ct = default);
+    Task<CaContextDto?> GetCurrentContextAsync(
+        Guid caUserId,
+        Guid? selectedRelationshipId = null,
+        CancellationToken ct = default);
 
     /// <summary>
     /// Validate that CA has active context for an organization.

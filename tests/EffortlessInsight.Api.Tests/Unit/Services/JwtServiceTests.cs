@@ -130,6 +130,53 @@ public class JwtServiceTests
         jwtToken.ValidTo.Should().BeCloseTo(expectedExpiry, TimeSpan.FromMinutes(1));
     }
 
+    [Fact]
+    public void GenerateAccessToken_ForCaActingOnBehalfOfClient_CarriesClientOrgRoleAndRelationship()
+    {
+        // Arrange - the CA's own Role is "owner" of their firm; acting for a client must
+        // override it, or CurrentOrganizationService would grant them owner rights there.
+        var caUser = TestFixture.CreateUser(email: "ca@example.com", name: "Test CA");
+        caUser.IsCa = true;
+        caUser.Role = "owner";
+
+        var clientOrganization = TestFixture.CreateOrganization(name: "Client Org");
+        var relationshipId = Guid.NewGuid();
+
+        // Act
+        var token = _jwtService.GenerateAccessToken(
+            caUser,
+            clientOrganization,
+            roleOverride: "ca",
+            isExternal: true,
+            additionalClaims: [new Claim("ca_client_rel_id", relationshipId.ToString())]);
+
+        // Assert
+        var jwtToken = new JwtSecurityTokenHandler().ReadJwtToken(token);
+
+        jwtToken.Claims.First(c => c.Type == "org_id").Value
+            .Should().Be(clientOrganization.Id.ToString());
+        jwtToken.Claims.First(c => c.Type == "role").Value.Should().Be("ca");
+        jwtToken.Claims.First(c => c.Type == "is_external").Value.Should().Be("true");
+        jwtToken.Claims.First(c => c.Type == "is_ca").Value.Should().Be("true");
+        jwtToken.Claims.First(c => c.Type == "ca_client_rel_id").Value
+            .Should().Be(relationshipId.ToString());
+    }
+
+    [Fact]
+    public void GenerateAccessToken_WithoutAdditionalClaims_EmitsNoCaRelationshipClaim()
+    {
+        // Arrange
+        var user = TestFixture.CreateUser();
+        var organization = TestFixture.CreateOrganization();
+
+        // Act
+        var token = _jwtService.GenerateAccessToken(user, organization);
+
+        // Assert - an ordinary user must never look like a CA acting for a client
+        var jwtToken = new JwtSecurityTokenHandler().ReadJwtToken(token);
+        jwtToken.Claims.Should().NotContain(c => c.Type == "ca_client_rel_id");
+    }
+
     #endregion
 
     #region GenerateRefreshToken Tests

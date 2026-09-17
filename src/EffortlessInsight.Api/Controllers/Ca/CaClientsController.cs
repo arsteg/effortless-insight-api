@@ -152,10 +152,22 @@ public class CaClientsController : ControllerBase
     /// </summary>
     [HttpGet("{relationshipId:guid}/authorizations")]
     [ProducesResponseType(typeof(ApiResponse<List<CaGstinAuthorizationDto>>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetAuthorizations(
         Guid relationshipId,
         CancellationToken ct)
     {
+        // Confirm the relationship is this CA's before reading it. GetAuthorizationsByRelationshipAsync
+        // filters only on the relationship id, so without this any CA could read any other
+        // CA's client GSTINs by guessing an id.
+        var userId = GetCurrentUserId();
+        var client = await _clientService.GetClientAsync(userId, relationshipId, ct);
+
+        if (client == null)
+        {
+            return NotFound(new ApiErrorResponse(false, "NOT_FOUND", "Client not found"));
+        }
+
         var authorizations = await _authService.GetAuthorizationsByRelationshipAsync(relationshipId, ct);
         return Ok(new ApiResponse<List<CaGstinAuthorizationDto>>(true, authorizations));
     }

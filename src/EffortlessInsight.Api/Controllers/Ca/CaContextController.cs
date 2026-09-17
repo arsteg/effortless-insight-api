@@ -1,5 +1,6 @@
 using EffortlessInsight.Api.DTOs;
 using EffortlessInsight.Api.DTOs.Ca;
+using EffortlessInsight.Api.Services.Auth;
 using EffortlessInsight.Api.Services.Ca;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -17,15 +18,18 @@ public class CaContextController : ControllerBase
 {
     private readonly ICaContextService _contextService;
     private readonly ICaProfileService _profileService;
+    private readonly IJwtService _jwtService;
     private readonly ILogger<CaContextController> _logger;
 
     public CaContextController(
         ICaContextService contextService,
         ICaProfileService profileService,
+        IJwtService jwtService,
         ILogger<CaContextController> logger)
     {
         _contextService = contextService;
         _profileService = profileService;
+        _jwtService = jwtService;
         _logger = logger;
     }
 
@@ -49,7 +53,11 @@ public class CaContextController : ControllerBase
                 new ApiErrorResponse(false, "NOT_CA", "User is not a CA"));
         }
 
-        var result = await _contextService.SelectClientAsync(userId, request.ClientRelationshipId, ct);
+        var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        var userAgent = Request.Headers.UserAgent.ToString();
+
+        var result = await _contextService.SelectClientAsync(
+            userId, request.ClientRelationshipId, ipAddress, userAgent, ct);
 
         if (!result.Success)
         {
@@ -60,7 +68,7 @@ public class CaContextController : ControllerBase
             AccessToken: result.AccessToken!,
             RefreshToken: result.RefreshToken!,
             TokenType: "Bearer",
-            ExpiresIn: 3600, // 1 hour
+            ExpiresIn: _jwtService.GetAccessTokenExpiryMinutes() * 60,
             Context: result.Context!
         );
 
@@ -76,45 +84,24 @@ public class CaContextController : ControllerBase
     public async Task<IActionResult> GetCurrentContext(CancellationToken ct)
     {
         var userId = GetCurrentUserId();
-        var context = await _contextService.GetCurrentContextAsync(userId, ct);
+
+        // The selected client is whatever the token was issued for. Everything else about
+        // that engagement is read fresh from the database, so a revoked relationship stops
+        // being reported as selected without waiting for the token to roll over.
+        Guid? selectedRelationshipId = null;
+        if (Guid.TryParse(User.FindFirst(CaClaimTypes.ClientRelationshipId)?.Value, out var relId))
+        {
+            selectedRelationshipId = relId;
+        }
+
+        var context = await _contextService.GetCurrentContextAsync(userId, selectedRelationshipId, ct);
 
         if (context == null)
         {
             return NotFound(new ApiErrorResponse(false, "NOT_CA", "User is not a CA"));
         }
 
-        // Check if there's a client context in the current token
-        var clientRelIdClaim = User.FindFirst("ca_client_rel_id")?.Value;
-        if (!string.IsNullOrEmpty(clientRelIdClaim))
-        {
-            var orgIdClaim = User.FindFirst("ca_client_org_id")?.Value;
-            var gstinsClaim = User.FindFirst("ca_authorized_gstins")?.Value;
-            var permsClaim = User.FindFirst("ca_permissions")?.Value;
-
-            context = context with
-            {
-                SelectedClientRelationshipId = Guid.Parse(clientRelIdClaim),
-                SelectedOrganizationId = !string.IsNullOrEmpty(orgIdClaim) ? Guid.Parse(orgIdClaim) : null,
-                AuthorizedGstins = !string.IsNullOrEmpty(gstinsClaim) ? gstinsClaim.Split(',').ToList() : [],
-                Permissions = !string.IsNullOrEmpty(permsClaim) ? permsClaim.Split(',').ToList() : [],
-                ContextSetAt = DateTime.UtcNow
-            };
-        }
-
         return Ok(new ApiResponse<CaContextDto>(true, context));
-    }
-
-    /// <summary>
-    /// Clear client context (go back to client list).
-    /// Client should discard current token and use a non-CA-context token.
-    /// </summary>
-    [HttpPost("clear")]
-    [ProducesResponseType(StatusCodes.Status204NoContent)]
-    public async Task<IActionResult> ClearContext(CancellationToken ct)
-    {
-        var userId = GetCurrentUserId();
-        await _contextService.ClearContextAsync(userId, ct);
-        return NoContent();
     }
 
     private Guid GetCurrentUserId()

@@ -1477,7 +1477,10 @@ public class OrganizationManagementService : IOrganizationManagementService
             UserAgent = userAgent,
             Platform = "web",
             ExpiresAt = expiresAt,
-            LastActiveAt = DateTime.UtcNow
+            LastActiveAt = DateTime.UtcNow,
+            OrganizationId = invitation.OrganizationId,
+            Role = membership.Role,
+            IsExternal = membership.IsExternal
         };
 
         _dbContext.UserSessions.Add(session);
@@ -1607,7 +1610,10 @@ public class OrganizationManagementService : IOrganizationManagementService
             UserAgent = userAgent,
             Platform = "web",
             ExpiresAt = expiresAt,
-            LastActiveAt = DateTime.UtcNow
+            LastActiveAt = DateTime.UtcNow,
+            OrganizationId = organization.Id,
+            Role = membership.Role,
+            IsExternal = membership.IsExternal
         };
 
         _dbContext.UserSessions.Add(session);

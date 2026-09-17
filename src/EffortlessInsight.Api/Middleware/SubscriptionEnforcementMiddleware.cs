@@ -1,5 +1,7 @@
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities.Billing;
+using EffortlessInsight.Api.Services.Billing;
+using EffortlessInsight.Api.Services.Ca;
 using EffortlessInsight.Api.Services.Organizations;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.JsonWebTokens;
@@ -50,6 +52,16 @@ public class SubscriptionEnforcementMiddleware
         "/api/v1/organizations",
         "/api/v1/organizations/current",
 
+        // CA onboarding, and the invitation endpoints a Business Owner must be able to
+        // reach before they have any subscription of their own.
+        "/api/v1/ca/register",
+        "/api/v1/ca/profile",
+        "/api/v1/ca/organization",
+        "/api/v1/ca/invitations/validate",
+        "/api/v1/ca/invitations/accept",
+        "/api/v1/ca/invitations/decline",
+        "/api/v1/ca/invitations/pending",
+
         // SignalR hubs - needed for real-time notifications regardless of subscription status
         "/hubs/notifications",
         "/hubs/notices",
@@ -67,9 +79,12 @@ public class SubscriptionEnforcementMiddleware
         // In-app support must work regardless of subscription state — a customer
         // blocked by a payment/limit problem is exactly who needs to raise a ticket.
         // Endpoints are still [Authorize]-protected and org-scoped.
-        "/api/v1/support/",
-        // CA endpoints - CAs don't belong to organizations, they manage BO clients independently
-        "/api/v1/ca/"
+        "/api/v1/support/"
+        // "/api/v1/ca/" used to be exempt wholesale, from when CAs had a separate portal
+        // and no organization of their own. They now work inside their clients'
+        // organizations through the ordinary endpoints, so a blanket exemption would just
+        // mean a suspended CA keeps their client-management screens. The specific paths
+        // needed before entitlement exists are listed in ExactPublicPaths instead.
     };
 
     public SubscriptionEnforcementMiddleware(
@@ -83,7 +98,9 @@ public class SubscriptionEnforcementMiddleware
     public async Task InvokeAsync(
         HttpContext context,
         ICurrentOrganizationService currentOrganization,
-        ApplicationDbContext dbContext)
+        ApplicationDbContext dbContext,
+        ISubscriptionStatusEvaluator evaluator,
+        ICaActingContextService caActingContext)
     {
         // Skip if not authenticated
         if (!context.User.Identity?.IsAuthenticated ?? true)
@@ -122,157 +139,56 @@ public class SubscriptionEnforcementMiddleware
             return;
         }
 
-        var org = await dbContext.Organizations
-            .AsNoTracking()
-            .FirstOrDefaultAsync(o => o.Id == orgId.Value);
-
-        if (org == null)
+        var decision = await evaluator.EvaluateAsync(orgId.Value, context.RequestAborted);
+        if (decision.Allowed)
         {
-            _logger.LogWarning("Organization {OrganizationId} not found", orgId.Value);
-            context.Response.StatusCode = StatusCodes.Status404NotFound;
-            await context.Response.WriteAsJsonAsync(new
-            {
-                success = false,
-                error = "ORGANIZATION_NOT_FOUND",
-                message = "Organization not found"
-            });
+            await _next(context);
             return;
         }
 
-        // SECURITY FIX #1: Block paused subscriptions immediately
-        if (org.SubscriptionStatus == "paused")
-        {
-            _logger.LogWarning(
-                "Access denied: Subscription paused for organization {OrganizationId}",
-                orgId.Value);
+        // Denial path only, so ordinary requests pay for none of what follows.
 
-            context.Response.StatusCode = StatusCodes.Status402PaymentRequired;
-            await context.Response.WriteAsJsonAsync(new
-            {
-                success = false,
-                error = "SUBSCRIPTION_PAUSED",
-                message = "Your subscription is paused. Please resume your subscription to continue using the application.",
-                subscriptionStatus = org.SubscriptionStatus
-            });
+        // A CA works inside their clients' organizations but pays through their own firm.
+        // While that entitlement is live, the client organization's subscription state is
+        // not their problem. ResolveAsync returns immediately for anyone who is not a CA
+        // acting for a client, so enforcement for Business Owners is unchanged.
+        var acting = await caActingContext.ResolveAsync(context.RequestAborted);
+        if (acting != null &&
+            await evaluator.HasLiveCaEntitlementAsync(acting.CaBillingOrganizationId, context.RequestAborted))
+        {
+            await _next(context);
             return;
         }
 
-        // SECURITY FIX #2: Check grace period expiration for past_due subscriptions
-        if (org.SubscriptionStatus == "past_due")
+        // A CA whose free access no administrator has decided on yet is waiting for
+        // approval, not refusing to pay, so tell the client to show "awaiting approval"
+        // rather than the plan-selection flow. Access is denied either way.
+        var errorCode = decision.ErrorCode;
+        var message = decision.Message;
+        if (decision.StatusCode == StatusCodes.Status402PaymentRequired &&
+            await IsAwaitingCaApprovalAsync(context, dbContext))
         {
-            var subscription = await dbContext.BillingSubscriptions
-                .AsNoTracking()
-                .Where(s => s.OrganizationId == orgId.Value && s.DeletedAt == null)
-                .FirstOrDefaultAsync();
+            errorCode = "CA_APPROVAL_PENDING";
+            message = "Your CA account is awaiting approval. You'll get access once an administrator approves it.";
+        }
 
-            if (subscription?.GracePeriodEndAt != null && subscription.GracePeriodEndAt <= DateTime.UtcNow)
+        var body = new Dictionary<string, object?>
+        {
+            ["success"] = false,
+            ["error"] = errorCode,
+            ["message"] = message
+        };
+
+        if (decision.Detail != null)
+        {
+            foreach (var (key, value) in decision.Detail)
             {
-                _logger.LogWarning(
-                    "Access denied: Grace period expired for organization {OrganizationId}. Grace period ended at {GracePeriodEnd}",
-                    orgId.Value, subscription.GracePeriodEndAt);
-
-                context.Response.StatusCode = StatusCodes.Status402PaymentRequired;
-                await context.Response.WriteAsJsonAsync(new
-                {
-                    success = false,
-                    error = "GRACE_PERIOD_EXPIRED",
-                    message = "Your grace period has expired. Please update your payment method to continue using the application.",
-                    subscriptionStatus = org.SubscriptionStatus,
-                    gracePeriodEndedAt = subscription.GracePeriodEndAt
-                });
-                return;
+                body[key] = value;
             }
         }
 
-        // SECURITY FIX #3: Check CurrentPeriodEnd as fallback for active subscriptions
-        if (org.SubscriptionStatus == "active")
-        {
-            var subscription = await dbContext.BillingSubscriptions
-                .AsNoTracking()
-                .Where(s => s.OrganizationId == orgId.Value && s.DeletedAt == null)
-                .FirstOrDefaultAsync();
-
-            if (subscription?.CurrentPeriodEnd != null && subscription.CurrentPeriodEnd < DateTime.UtcNow)
-            {
-                // Only check for non-Razorpay-managed subscriptions or those without auto-renewal
-                // Razorpay-managed subscriptions will be updated via webhook
-                if (string.IsNullOrEmpty(subscription.RazorpaySubscriptionId) || subscription.CancelAtPeriodEnd)
-                {
-                    _logger.LogWarning(
-                        "Access denied: Subscription period ended for organization {OrganizationId}. Period ended at {CurrentPeriodEnd}",
-                        orgId.Value, subscription.CurrentPeriodEnd);
-
-                    context.Response.StatusCode = StatusCodes.Status402PaymentRequired;
-                    await context.Response.WriteAsJsonAsync(new
-                    {
-                        success = false,
-                        error = "SUBSCRIPTION_PERIOD_ENDED",
-                        message = "Your subscription period has ended. Please renew your subscription to continue.",
-                        subscriptionStatus = org.SubscriptionStatus,
-                        periodEndedAt = subscription.CurrentPeriodEnd
-                    });
-                    return;
-                }
-            }
-        }
-
-        // Check subscription status - allow trial (or trialing), active, past_due (within grace period)
-        var validStatuses = new[] { "trial", "trialing", "active", "past_due" };
-        if (!validStatuses.Contains(org.SubscriptionStatus))
-        {
-            _logger.LogInformation(
-                "Access denied for organization {OrganizationId} with subscription status: {Status}",
-                orgId.Value, org.SubscriptionStatus);
-
-            // A CA's free access is granted per-CA by an admin. One who has never been
-            // reviewed is waiting for approval, not refusing to pay, so tell the client to
-            // show "awaiting approval" instead of the plan-selection flow. Access is still
-            // denied either way - this only changes the reason reported.
-            // Deliberately on the denial path, so normal requests pay nothing for it.
-            var isAwaitingCaApproval = await IsAwaitingCaApprovalAsync(context, dbContext);
-
-            context.Response.StatusCode = StatusCodes.Status402PaymentRequired;
-            await context.Response.WriteAsJsonAsync(isAwaitingCaApproval
-                ? new
-                {
-                    success = false,
-                    error = "CA_APPROVAL_PENDING",
-                    message = "Your CA account is awaiting approval. You'll get access once an administrator approves it.",
-                    subscriptionStatus = org.SubscriptionStatus
-                }
-                : new
-                {
-                    success = false,
-                    error = "SUBSCRIPTION_REQUIRED",
-                    message = "An active subscription is required to access this resource. Please select a plan or renew your subscription.",
-                    subscriptionStatus = org.SubscriptionStatus
-                });
-            return;
-        }
-
-        // Check if trial has expired (support both "trial" and "trialing" for backwards compatibility)
-        if ((org.SubscriptionStatus == "trial" || org.SubscriptionStatus == "trialing") && org.TrialEndsAt.HasValue)
-        {
-            if (org.TrialEndsAt.Value < DateTime.UtcNow)
-            {
-                _logger.LogInformation(
-                    "Trial expired for organization {OrganizationId}. Expired on: {TrialEnd}",
-                    orgId.Value, org.TrialEndsAt.Value);
-
-                context.Response.StatusCode = StatusCodes.Status402PaymentRequired;
-                await context.Response.WriteAsJsonAsync(new
-                {
-                    success = false,
-                    error = "TRIAL_EXPIRED",
-                    message = "Your free trial has expired. Please subscribe to a plan to continue using the application.",
-                    trialEndedAt = org.TrialEndsAt.Value,
-                    subscriptionStatus = org.SubscriptionStatus
-                });
-                return;
-            }
-        }
-
-        await _next(context);
+        context.Response.StatusCode = decision.StatusCode;
+        await context.Response.WriteAsJsonAsync(body);
     }
 
     /// <summary>

@@ -18,6 +18,7 @@ public class SubscriptionsController : ControllerBase
     private readonly ISubscriptionService _subscriptionService;
     private readonly ICouponService _couponService;
     private readonly IFeatureAccessService _featureAccessService;
+    private readonly IEffectiveBillingOrganizationService _effectiveBillingOrg;
     private readonly ICurrentOrganizationService _currentOrganization;
     private readonly ILogger<SubscriptionsController> _logger;
 
@@ -25,12 +26,14 @@ public class SubscriptionsController : ControllerBase
         ISubscriptionService subscriptionService,
         ICouponService couponService,
         IFeatureAccessService featureAccessService,
+        IEffectiveBillingOrganizationService effectiveBillingOrg,
         ICurrentOrganizationService currentOrganization,
         ILogger<SubscriptionsController> logger)
     {
         _subscriptionService = subscriptionService;
         _couponService = couponService;
         _featureAccessService = featureAccessService;
+        _effectiveBillingOrg = effectiveBillingOrg;
         _currentOrganization = currentOrganization;
         _logger = logger;
     }
@@ -72,7 +75,8 @@ public class SubscriptionsController : ControllerBase
             return NotFound(new ApiErrorResponse(false, "NO_ORG", "No organization selected"));
         }
 
-        var features = await _featureAccessService.GetAvailableFeaturesAsync(orgId.Value);
+        var billingOrgId = await _effectiveBillingOrg.ResolveAsync(orgId.Value);
+        var features = await _featureAccessService.GetAvailableFeaturesAsync(billingOrgId);
 
         return Ok(new ApiResponse<FeaturesResponse>(true, new FeaturesResponse(features)));
     }
@@ -91,7 +95,8 @@ public class SubscriptionsController : ControllerBase
             return NotFound(new ApiErrorResponse(false, "NO_ORG", "No organization selected"));
         }
 
-        var hasAccess = await _featureAccessService.HasFeatureAccessAsync(orgId.Value, featureCode);
+        var billingOrgId = await _effectiveBillingOrg.ResolveAsync(orgId.Value);
+        var hasAccess = await _featureAccessService.HasFeatureAccessAsync(billingOrgId, featureCode);
 
         return Ok(new ApiResponse<FeatureCheckResponse>(true, new FeatureCheckResponse(featureCode, hasAccess)));
     }

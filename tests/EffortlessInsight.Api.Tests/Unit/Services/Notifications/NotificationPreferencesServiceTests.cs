@@ -18,7 +18,10 @@ namespace EffortlessInsight.Api.Tests.Unit.Services.Notifications;
 public class NotificationPreferencesServiceTests
 {
     private static NotificationPreferencesService CreateService(EffortlessInsight.Api.Data.ApplicationDbContext db)
-        => new(db, Mock.Of<IChannelUnsubscribeService>(), Mock.Of<ILogger<NotificationPreferencesService>>());
+        => new(db,
+            Mock.Of<IChannelUnsubscribeService>(),
+            Mock.Of<EffortlessInsight.Api.Services.Billing.IFeatureAccessService>(),
+            Mock.Of<ILogger<NotificationPreferencesService>>());
 
     [Fact]
     public async Task UpdatePreferences_DisablingPushChannel_Persists()
