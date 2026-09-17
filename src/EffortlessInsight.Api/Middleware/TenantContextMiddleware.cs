@@ -10,13 +10,16 @@ public class TenantContextMiddleware
 {
     private readonly RequestDelegate _next;
     private readonly ILogger<TenantContextMiddleware> _logger;
+    private readonly IHostEnvironment _environment;
 
     public TenantContextMiddleware(
         RequestDelegate next,
-        ILogger<TenantContextMiddleware> logger)
+        ILogger<TenantContextMiddleware> logger,
+        IHostEnvironment environment)
     {
         _next = next;
         _logger = logger;
+        _environment = environment;
     }
 
     public async Task InvokeAsync(HttpContext context, ITenantContext tenantContext)
@@ -29,8 +32,16 @@ public class TenantContextMiddleware
             tenantContext.SetOrganizationId(claimOrgId);
             _logger.LogDebug("Tenant context set from claim to organization {OrganizationId}", claimOrgId);
         }
-        // Fall back to the X-Organization-Id header (used by performance tests)
-        else if (context.Request.Headers.TryGetValue("X-Organization-Id", out var orgIdHeader) &&
+        // Fall back to the unsigned X-Organization-Id header, but ONLY outside
+        // production - this header is client-supplied and trivially spoofable,
+        // and is used solely by local/CI performance tests that have no
+        // authenticated JWT to derive org_id from. This global query-filter
+        // context is defense-in-depth, never the sole authorization check
+        // (every controller separately validates membership/permission via
+        // ICurrentOrganizationService or the relevant service layer) - but a
+        // production request should never be able to steer it via a header.
+        else if ((_environment.IsDevelopment() || _environment.EnvironmentName == "Local") &&
+            context.Request.Headers.TryGetValue("X-Organization-Id", out var orgIdHeader) &&
             Guid.TryParse(orgIdHeader.ToString(), out var organizationId))
         {
             tenantContext.SetOrganizationId(organizationId);

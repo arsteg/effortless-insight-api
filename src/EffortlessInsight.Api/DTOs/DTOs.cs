@@ -15,7 +15,10 @@ public record RegisterRequest(
     bool AcceptTerms,
     // Proof from POST auth/signup/otp/verify that Mobile passed OTP
     // verification; required when MobileVerification:RequiredForSignup is on.
-    [MaxLength(128)] string? MobileVerificationToken = null
+    [MaxLength(128)] string? MobileVerificationToken = null,
+    // Self-registered Chartered Accountant signup path (CA-as-distributor).
+    // Sets ApplicationUser.IsCA, which allows GSTIN-optional org creation.
+    bool IsCA = false
 );
 
 public record MobileVerificationResponse( string VerificationToken, int ExpiresIn );
@@ -266,7 +269,8 @@ public record UserProfileDto(
     List<UserOrganizationDto> Organizations,
     Dictionary<string, object>? Preferences,
     DateTime CreatedAt,
-    DateTime? LastLogin
+    DateTime? LastLogin,
+    bool IsCA = false
 );
 
 public record UserOrganizationDto( Guid Id, string Name, string Role );
@@ -300,7 +304,10 @@ public record UpdateUserDto( [MaxLength(100)] string? Name, [MaxLength(20)] stri
 public record CreateOrganizationRequest(
     [MaxLength(200)] string Name,
     [MaxLength(200)] string? LegalName,
-    [MaxLength(15)] string Gstin,
+    // Required for a normal Business Owner. Optional only when the creating
+    // user is a self-registered CA (ApplicationUser.IsCA); enforced server-side
+    // in OrganizationManagementService.CreateAsync, never trusted from the client.
+    [MaxLength(15)] string? Gstin,
     [MaxLength(100)] string? Industry,
     [MaxLength(50)] string State,
     [MaxLength(100)] string? City,

@@ -77,6 +77,9 @@ public static class ServiceExtensions
         services.AddScoped<IOrganizationManagementService, OrganizationManagementService>();
         services.AddScoped<IOrganizationDataMigrationService, OrganizationDataMigrationService>();
         services.AddScoped<IDataExportService, DataExportService>();
+        services.AddScoped<ICaAccessService, CaAccessService>();
+        services.AddScoped<ICaGstinAuthorizationService, CaGstinAuthorizationService>();
+        services.AddScoped<ICaClientService, CaClientService>();
 
         // Register GSTN integration services
         services.AddScoped<Services.GstnIntegration.IGstnConnectionService, Services.GstnIntegration.GstnConnectionService>();

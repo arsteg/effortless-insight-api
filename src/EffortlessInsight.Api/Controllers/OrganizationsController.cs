@@ -42,6 +42,10 @@ public class OrganizationsController : ControllerBase
             var result = await _organizationService.CreateAsync(request, userId);
             return StatusCode(StatusCodes.Status201Created, new ApiResponse<CreateOrganizationResponse>(true, result));
         }
+        catch (InvalidOperationException ex) when (ex.Message.StartsWith("GSTIN_REQUIRED"))
+        {
+            return BadRequest(new ApiErrorResponse(false, "GSTIN_REQUIRED", "GSTIN is required to create an organization"));
+        }
         catch (InvalidOperationException ex) when (ex.Message.StartsWith("INVALID_GSTIN"))
         {
             return BadRequest(new ApiErrorResponse(false, "INVALID_GSTIN", ex.Message.Replace("INVALID_GSTIN: ", "")));

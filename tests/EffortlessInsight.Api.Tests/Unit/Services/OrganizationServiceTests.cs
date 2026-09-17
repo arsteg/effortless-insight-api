@@ -574,7 +574,10 @@ public class RoleHierarchyTests
     [InlineData("owner", "members.invite", true)]
     [InlineData("admin", "members.invite", true)]
     [InlineData("manager", "members.invite", false)]
-    [InlineData("ca", "members.view", false)]
+    // Phase 5 (CA-as-distributor hardening): CA can view the team (needed to
+    // work alongside a BO's members) but never invite/remove/change roles -
+    // see CurrentOrganizationServiceCaTests for the full CA permission matrix.
+    [InlineData("ca", "members.view", true)]
     [InlineData("member", "members.view", true)]
     [InlineData("viewer", "notices.upload", false)]
     [InlineData("member", "notices.upload", true)]

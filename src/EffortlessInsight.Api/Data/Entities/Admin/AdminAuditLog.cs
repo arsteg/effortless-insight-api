@@ -117,6 +117,8 @@ public static class AdminAuditActions
     public const string UserUnsuspended = "user.unsuspended";
     public const string UserDeleted = "user.deleted";
     public const string UserPasswordReset = "user.password_reset";
+    public const string CaFreeAccessGranted = "user.ca_free_access_granted";
+    public const string CaFreeAccessRevoked = "user.ca_free_access_revoked";
 
     // Impersonation
     public const string ImpersonationStarted = "impersonation.started";

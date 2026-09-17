@@ -26,6 +26,14 @@ public class ApplicationUser : IdentityUser<Guid>
     [MaxLength(50)]
     public string Role { get; set; } = "member"; // owner, admin, manager, member, ca, viewer
 
+    /// <summary>
+    /// True for a self-registered Chartered Accountant account (the CA-as-distributor
+    /// identity). Set once at registration and immutable thereafter. Distinct from
+    /// OrganizationMember.Role == "ca", which is a per-organization membership role a
+    /// non-CA user can also hold if invited as an external collaborator.
+    /// </summary>
+    public bool IsCA { get; set; }
+
     public bool IsActive { get; set; } = true;
 
     public bool IsMobileVerified { get; set; }

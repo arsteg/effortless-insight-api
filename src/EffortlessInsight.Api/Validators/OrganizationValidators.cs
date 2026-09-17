@@ -1,4 +1,5 @@
 using EffortlessInsight.Api.DTOs;
+using EffortlessInsight.Api.Services.Organizations;
 using FluentValidation;
 
 namespace EffortlessInsight.Api.Validators;
@@ -16,11 +17,16 @@ public class CreateOrganizationRequestValidator : AbstractValidator<CreateOrgani
             .MaximumLength(255).WithMessage("Legal name cannot exceed 255 characters")
             .When(x => !string.IsNullOrEmpty(x.LegalName));
 
+        // GSTIN is required for a normal Business Owner, but optional for a
+        // self-registered CA — that distinction depends on the current user
+        // (ApplicationUser.IsCA), which this request-shape validator cannot see.
+        // Format is validated here when a value is supplied; the "required
+        // unless CA" rule is enforced in OrganizationManagementService.CreateAsync.
         RuleFor(x => x.Gstin)
-            .NotEmpty().WithMessage("GSTIN is required")
             .Length(15).WithMessage("GSTIN must be exactly 15 characters")
             .Matches(@"^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[A-Z0-9]{1}Z[A-Z0-9]{1}$")
-            .WithMessage("Invalid GSTIN format");
+            .WithMessage("Invalid GSTIN format")
+            .When(x => !string.IsNullOrEmpty(x.Gstin));
 
         RuleFor(x => x.Industry)
             .MaximumLength(100).WithMessage("Industry cannot exceed 100 characters")
@@ -44,6 +50,33 @@ public class CreateOrganizationRequestValidator : AbstractValidator<CreateOrgani
         if (string.IsNullOrEmpty(range)) return true;
         var validRanges = new[] { "0-40L", "40L-1.5Cr", "1.5Cr-5Cr", "5Cr-25Cr", "25Cr+" };
         return validRanges.Contains(range);
+    }
+}
+
+public class AcceptCaClientInvitationRequestValidator : AbstractValidator<AcceptCaClientInvitationRequest>
+{
+    public AcceptCaClientInvitationRequestValidator()
+    {
+        RuleFor(x => x.OrganizationName)
+            .NotEmpty().WithMessage("Organization name is required")
+            .MinimumLength(2).WithMessage("Organization name must be at least 2 characters")
+            .MaximumLength(255).WithMessage("Organization name cannot exceed 255 characters");
+
+        RuleFor(x => x.LegalName)
+            .MaximumLength(255).WithMessage("Legal name cannot exceed 255 characters")
+            .When(x => !string.IsNullOrEmpty(x.LegalName));
+
+        RuleFor(x => x.Industry)
+            .MaximumLength(100).WithMessage("Industry cannot exceed 100 characters")
+            .When(x => !string.IsNullOrEmpty(x.Industry));
+
+        RuleFor(x => x.State)
+            .NotEmpty().WithMessage("State is required")
+            .MaximumLength(50).WithMessage("State cannot exceed 50 characters");
+
+        RuleFor(x => x.City)
+            .MaximumLength(100).WithMessage("City cannot exceed 100 characters")
+            .When(x => !string.IsNullOrEmpty(x.City));
     }
 }
 

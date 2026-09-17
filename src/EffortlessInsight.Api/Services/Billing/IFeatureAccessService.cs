@@ -30,6 +30,13 @@ public interface IFeatureAccessService
     /// <param name="cancellationToken">Cancellation token</param>
     /// <exception cref="FeatureNotAvailableException">Thrown when feature is not available</exception>
     Task RequireFeatureAccessAsync(Guid organizationId, string featureCode, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Invalidates the cached feature list for an organization (call after a plan
+    /// change or a Free CA Access grant/revoke, so the change takes effect immediately
+    /// rather than waiting out the cache TTL).
+    /// </summary>
+    Task InvalidateCacheAsync(Guid organizationId, CancellationToken cancellationToken = default);
 }
 
 /// <summary>

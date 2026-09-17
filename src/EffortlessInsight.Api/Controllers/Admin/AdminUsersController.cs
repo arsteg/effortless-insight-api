@@ -3,6 +3,8 @@ using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.Data.Entities.Admin;
 using EffortlessInsight.Api.Services.Admin;
+using EffortlessInsight.Api.Services.Billing;
+using EffortlessInsight.Api.Services.Organizations;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -18,15 +20,21 @@ public class AdminUsersController : AdminControllerBase
 {
     private readonly ApplicationDbContext _dbContext;
     private readonly IAdminAuditService _auditService;
+    private readonly ICaAccessService _caAccessService;
+    private readonly IFeatureAccessService _featureAccessService;
 
     public AdminUsersController(
         ApplicationDbContext dbContext,
         IAdminAuditService auditService,
+        ICaAccessService caAccessService,
+        IFeatureAccessService featureAccessService,
         ILogger<AdminUsersController> logger)
         : base(logger)
     {
         _dbContext = dbContext;
         _auditService = auditService;
+        _caAccessService = caAccessService;
+        _featureAccessService = featureAccessService;
     }
 
     /// <summary>
@@ -81,6 +89,12 @@ public class AdminUsersController : AdminControllerBase
             query = query.Where(u => u.OrganizationId == request.OrganizationId.Value);
         }
 
+        // Apply IsCA filter
+        if (request.IsCA.HasValue)
+        {
+            query = query.Where(u => u.IsCA == request.IsCA.Value);
+        }
+
         // Get total count
         var totalCount = await query.CountAsync();
 
@@ -113,6 +127,8 @@ public class AdminUsersController : AdminControllerBase
                     Name = u.Organization.Name
                 } : null,
                 Plan = null, // TODO: Get from BillingSubscription
+                IsCA = u.IsCA,
+                HasActiveFreeCaAccess = _dbContext.CaFreeAccessGrants.Any(g => g.CaUserId == u.Id && g.IsActive),
                 CreatedAt = u.CreatedAt,
                 LastLoginAt = u.LastLoginAt
             })
@@ -182,6 +198,25 @@ public class AdminUsersController : AdminControllerBase
             })
             .ToListAsync();
 
+        // Get CA free-access grant history (most recent first), if this is a CA account
+        var caFreeAccessHistory = user.IsCA
+            ? await _dbContext.CaFreeAccessGrants
+                .Where(g => g.CaUserId == userId)
+                .OrderByDescending(g => g.GrantedAt)
+                .Select(g => new CaFreeAccessGrantDto
+                {
+                    Id = g.Id,
+                    IsActive = g.IsActive,
+                    GrantedAt = g.GrantedAt,
+                    GrantedByAdminName = g.GrantedByAdmin.Name,
+                    GrantReason = g.GrantReason,
+                    RevokedAt = g.RevokedAt,
+                    RevokedByAdminName = g.RevokedByAdmin != null ? g.RevokedByAdmin.Name : null,
+                    RevokeReason = g.RevokeReason
+                })
+                .ToListAsync()
+            : [];
+
         // Get login history
         var loginHistory = await _dbContext.LoginAudits
             .Where(l => l.UserId == userId)
@@ -206,6 +241,8 @@ public class AdminUsersController : AdminControllerBase
             EmailVerified = user.EmailConfirmed,
             PhoneVerified = user.IsMobileVerified,
             TwoFactorEnabled = user.Is2faEnabled,
+            IsCA = user.IsCA,
+            CaFreeAccessHistory = caFreeAccessHistory,
             Organization = user.Organization != null ? new AdminOrgDetail
             {
                 Id = user.Organization.Id,
@@ -310,6 +347,126 @@ public class AdminUsersController : AdminControllerBase
             sessionId: CurrentSessionId);
 
         return Success<object?>(null, "User unsuspended successfully");
+    }
+
+    /// <summary>
+    /// Grant Free CA Access to a self-registered CA user. Bypasses subscription
+    /// requirements for every organization the CA owns, with immediate effect.
+    /// </summary>
+    [HttpPost("{userId:guid}/ca-access/grant")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> GrantCaAccess(Guid userId, [FromBody] CaAccessActionRequest request)
+    {
+        if (!HasPermission(AdminPermissions.CaAccessManage))
+        {
+            return Forbid();
+        }
+
+        var user = await _dbContext.Users.FindAsync(userId);
+        if (user == null)
+        {
+            return NotFoundResponse("User not found");
+        }
+
+        if (!user.IsCA)
+        {
+            return Error("User is not a Chartered Accountant account", "NOT_A_CA");
+        }
+
+        var alreadyGranted = await _caAccessService.HasActiveFreeAccessAsync(userId);
+        if (alreadyGranted)
+        {
+            return Error("User already has active Free CA Access", "ALREADY_GRANTED");
+        }
+
+        _dbContext.CaFreeAccessGrants.Add(new CaFreeAccessGrant
+        {
+            CaUserId = userId,
+            IsActive = true,
+            GrantedByAdminId = CurrentAdminId,
+            GrantedAt = DateTime.UtcNow,
+            GrantReason = request.Reason
+        });
+        await _dbContext.SaveChangesAsync();
+
+        // Immediate effect: clear the cached feature list for every org this CA owns.
+        var ownedOrgIds = await _caAccessService.GetOwnedOrganizationIdsAsync(userId);
+        foreach (var orgId in ownedOrgIds)
+        {
+            await _featureAccessService.InvalidateCacheAsync(orgId);
+        }
+
+        await _auditService.LogAsync(
+            CurrentAdminId,
+            AdminAuditActions.CaFreeAccessGranted,
+            AuditTargetTypes.User,
+            userId.ToString(),
+            $"Free CA Access granted: {request.Reason}",
+            new Dictionary<string, object> { ["reason"] = request.Reason },
+            ClientIpAddress,
+            ClientUserAgent,
+            CurrentSessionId);
+
+        return Success<object?>(null, "Free CA Access granted successfully");
+    }
+
+    /// <summary>
+    /// Revoke Free CA Access from a CA user. Takes effect immediately (the org
+    /// features cache is invalidated synchronously, so the very next request
+    /// re-evaluates access against the subscription's actual plan).
+    /// </summary>
+    [HttpPost("{userId:guid}/ca-access/revoke")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> RevokeCaAccess(Guid userId, [FromBody] CaAccessActionRequest request)
+    {
+        if (!HasPermission(AdminPermissions.CaAccessManage))
+        {
+            return Forbid();
+        }
+
+        var user = await _dbContext.Users.FindAsync(userId);
+        if (user == null)
+        {
+            return NotFoundResponse("User not found");
+        }
+
+        var grant = await _dbContext.CaFreeAccessGrants
+            .FirstOrDefaultAsync(g => g.CaUserId == userId && g.IsActive);
+        if (grant == null)
+        {
+            return Error("User does not have active Free CA Access", "NOT_GRANTED");
+        }
+
+        grant.IsActive = false;
+        grant.RevokedByAdminId = CurrentAdminId;
+        grant.RevokedAt = DateTime.UtcNow;
+        grant.RevokeReason = request.Reason;
+        await _dbContext.SaveChangesAsync();
+
+        var ownedOrgIds = await _caAccessService.GetOwnedOrganizationIdsAsync(userId);
+        foreach (var orgId in ownedOrgIds)
+        {
+            await _featureAccessService.InvalidateCacheAsync(orgId);
+        }
+
+        await _auditService.LogAsync(
+            CurrentAdminId,
+            AdminAuditActions.CaFreeAccessRevoked,
+            AuditTargetTypes.User,
+            userId.ToString(),
+            $"Free CA Access revoked: {request.Reason}",
+            new Dictionary<string, object> { ["reason"] = request.Reason },
+            ClientIpAddress,
+            ClientUserAgent,
+            CurrentSessionId);
+
+        return Success<object?>(null, "Free CA Access revoked successfully");
     }
 
     /// <summary>
@@ -540,6 +697,7 @@ public record UserSearchRequest
     public string? Status { get; init; }
     public string? Plan { get; init; }
     public Guid? OrganizationId { get; init; }
+    public bool? IsCA { get; init; }
     public string? SortBy { get; init; }
     public bool SortDesc { get; init; } = true;
     public int Page { get; init; } = 1;
@@ -569,6 +727,8 @@ public record AdminUserListItem
     public string Status { get; init; } = string.Empty;
     public AdminOrgSummary? Organization { get; init; }
     public string Plan { get; init; } = string.Empty;
+    public bool IsCA { get; init; }
+    public bool HasActiveFreeCaAccess { get; init; }
     public DateTime CreatedAt { get; init; }
     public DateTime? LastLoginAt { get; init; }
 }
@@ -589,6 +749,8 @@ public record AdminUserDetail
     public bool EmailVerified { get; init; }
     public bool PhoneVerified { get; init; }
     public bool TwoFactorEnabled { get; init; }
+    public bool IsCA { get; init; }
+    public List<CaFreeAccessGrantDto> CaFreeAccessHistory { get; init; } = [];
     public AdminOrgDetail? Organization { get; init; }
     public DateTime CreatedAt { get; init; }
     public DateTime? LastLoginAt { get; init; }
@@ -596,6 +758,23 @@ public record AdminUserDetail
     public string? LockoutReason { get; init; }
     public List<RecentNoticeDto> RecentNotices { get; init; } = [];
     public List<LoginHistoryDto> LoginHistory { get; init; } = [];
+}
+
+public record CaFreeAccessGrantDto
+{
+    public Guid Id { get; init; }
+    public bool IsActive { get; init; }
+    public DateTime GrantedAt { get; init; }
+    public string GrantedByAdminName { get; init; } = string.Empty;
+    public string GrantReason { get; init; } = string.Empty;
+    public DateTime? RevokedAt { get; init; }
+    public string? RevokedByAdminName { get; init; }
+    public string? RevokeReason { get; init; }
+}
+
+public record CaAccessActionRequest
+{
+    public string Reason { get; init; } = string.Empty;
 }
 
 public record AdminOrgDetail

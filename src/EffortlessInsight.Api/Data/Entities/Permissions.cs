@@ -232,19 +232,42 @@ public static class Permissions
                 DocumentRequestsView, DocumentRequestsCreate
             ],
 
+            // CA (external, invited into a Business Owner's org to manage their GST
+            // notices): same ceiling as "member" plus NoticesViewAll, so the CA
+            // can operate the same modules a BO team member would, per the
+            // CA-as-distributor requirement that CA gets no reduced/separate
+            // portal experience. Deliberately still excludes NoticesDelete,
+            // NoticesApproveResponse, WorkflowApprove, and all org-governance
+            // permissions (OrgMembersInvite/Manage/Remove/ChangeRole,
+            // OrgSettingsEdit, BillingManage, OrgDelete, OrgTransferOwnership) -
+            // the Business Owner remains the owner of their organization, GSTIN,
+            // data, and subscription; the CA never gains governance authority
+            // over it. Must be kept in sync by hand with the equivalent
+            // "ca"-role branches in CurrentOrganizationService.HasPermission,
+            // which is the hardcoded switch most controllers actually call.
             "ca" =>
             [
-                // Notices - view and comment only
-                NoticesView, NoticesComment, NoticesDraftResponse,
+                // Notices - same as member, plus seeing every notice (not just own)
+                NoticesView, NoticesViewAll, NoticesCreate, NoticesEdit,
+                NoticesComment, NoticesDraftResponse,
 
-                // Tasks - view and complete assigned
-                TasksView, TasksComplete,
+                // Tasks - view and complete own
+                TasksView, TasksCreate, TasksComplete,
 
-                // Workflow - view only
-                WorkflowView,
+                // Workflow - view and transition
+                WorkflowView, WorkflowTransition,
 
-                // Document Requests - view only
-                DocumentRequestsView
+                // Members - view only
+                OrgMembersView,
+
+                // Reports - view only
+                ReportsView,
+
+                // Teams - view only
+                TeamsView,
+
+                // Document Requests - view and create
+                DocumentRequestsView, DocumentRequestsCreate
             ],
 
             "viewer" =>
