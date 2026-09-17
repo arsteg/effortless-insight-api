@@ -229,6 +229,55 @@ public sealed class EmailTemplateRenderer : IEmailTemplateRenderer
                 </html>
                 """
             ),
+            "ca_invitation" => new EmailTemplateContent(
+                $"{data.GetValueOrDefault("ca_name", "A Chartered Accountant")} invites you to manage GST notices - EffortlessInsight",
+                $"""
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta charset="utf-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                </head>
+                <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+                    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 10px 10px 0 0;">
+                        <h1 style="color: white; margin: 0; font-size: 24px;">EffortlessInsight</h1>
+                    </div>
+                    <div style="background: #ffffff; padding: 30px; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 10px 10px;">
+                        <h2 style="color: #333; margin-top: 0;">CA Invitation</h2>
+                        <p>Hi there,</p>
+                        <p><strong>{data.GetValueOrDefault("ca_name", "A Chartered Accountant")}</strong>{(string.IsNullOrWhiteSpace(data.GetValueOrDefault("firm_name", "")?.ToString()) ? "" : $" from <strong>{data["firm_name"]}</strong>")} has invited you to manage GST notices for GSTIN:</p>
+                        <p style="background: #f8f9fa; padding: 15px; border-radius: 6px; font-family: monospace; font-size: 18px; text-align: center; letter-spacing: 1px;">
+                            <strong>{data.GetValueOrDefault("gstin", "N/A")}</strong>
+                        </p>
+                        {(string.IsNullOrWhiteSpace(data.GetValueOrDefault("message", "")?.ToString()) ? "" : $"""
+                        <div style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 12px 16px; margin: 20px 0; border-radius: 0 5px 5px 0;">
+                            <p style="margin: 0; color: #555; font-style: italic;">"{data["message"]}"</p>
+                        </div>
+                        """)}
+                        <p>By accepting this invitation, your CA will be able to:</p>
+                        <ul style="color: #666; margin: 15px 0; padding-left: 20px;">
+                            <li style="margin-bottom: 8px;">View and sync GST notices on your behalf</li>
+                            <li style="margin-bottom: 8px;">Help you respond to compliance requirements</li>
+                            <li style="margin-bottom: 8px;">Provide professional guidance on notices</li>
+                        </ul>
+                        <div style="text-align: center; margin: 30px 0;">
+                            <a href="{data.GetValueOrDefault("invitation_url", "#")}"
+                               style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 14px 35px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">
+                                Accept Invitation
+                            </a>
+                        </div>
+                        <p style="color: #666; font-size: 14px;">This invitation will expire in <strong>{data.GetValueOrDefault("expires_in_days", "7")} days</strong>.</p>
+                        <p style="color: #666; font-size: 14px;">If you weren't expecting this invitation, you can safely ignore this email.</p>
+                        <hr style="border: none; border-top: 1px solid #e0e0e0; margin: 30px 0;">
+                        <p style="color: #999; font-size: 12px; margin: 0;">
+                            If the button doesn't work, copy and paste this link into your browser:<br>
+                            <a href="{data.GetValueOrDefault("invitation_url", "#")}" style="color: #667eea;">{data.GetValueOrDefault("invitation_url", "#")}</a>
+                        </p>
+                    </div>
+                </body>
+                </html>
+                """
+            ),
             _ => new EmailTemplateContent(
                 "Notification from EffortlessInsight",
                 $"""

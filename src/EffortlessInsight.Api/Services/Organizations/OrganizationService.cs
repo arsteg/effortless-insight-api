@@ -5,6 +5,7 @@ using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.Data.Entities.Billing;
 using EffortlessInsight.Api.DTOs;
 using EffortlessInsight.Api.Services.Auth;
+using EffortlessInsight.Api.Services.Ca;
 using EffortlessInsight.Api.Services.Email;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -60,6 +61,7 @@ public class OrganizationManagementService : IOrganizationManagementService
     private readonly IEmailService _emailService;
     private readonly IAuditService _auditService;
     private readonly IConfiguration _configuration;
+    private readonly ICaClientService _caClientService;
     private readonly ILogger<OrganizationManagementService> _logger;
 
     private const int InvitationExpiryDays = 7;
@@ -75,6 +77,7 @@ public class OrganizationManagementService : IOrganizationManagementService
         IEmailService emailService,
         IAuditService auditService,
         IConfiguration configuration,
+        ICaClientService caClientService,
         ILogger<OrganizationManagementService> logger)
     {
         _dbContext = dbContext;
@@ -85,6 +88,7 @@ public class OrganizationManagementService : IOrganizationManagementService
         _emailService = emailService;
         _auditService = auditService;
         _configuration = configuration;
+        _caClientService = caClientService;
         _logger = logger;
     }
 
@@ -204,6 +208,23 @@ public class OrganizationManagementService : IOrganizationManagementService
         await _dbContext.SaveChangesAsync();
 
         _logger.LogInformation("Organization {OrganizationId} created by user {UserId}", organization.Id, userId);
+
+        // Link any pending CA relationships to this organization
+        // This happens when a CA invited the BO before the BO created their organization
+        try
+        {
+            var linked = await _caClientService.LinkOrganizationAsync(userId, organization.Id);
+            if (linked)
+            {
+                _logger.LogInformation("Linked pending CA relationships to organization {OrganizationId} for user {UserId}",
+                    organization.Id, userId);
+            }
+        }
+        catch (Exception ex)
+        {
+            // Don't fail org creation if CA linking fails
+            _logger.LogWarning(ex, "Failed to link CA relationships for organization {OrganizationId}", organization.Id);
+        }
 
         // Audit logging (C2 fix) - outside transaction
         await _auditService.LogAsync(new AuditLogEntry

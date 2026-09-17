@@ -56,8 +56,16 @@ public class PlanService : IPlanService
         return new PlansListResponse(planDtos, addOns);
     }
 
-    public async Task<SubscriptionPlan?> GetPlanByCodeAsync(string code)
+    public async Task<SubscriptionPlan?> GetPlanByCodeAsync(string code, bool includeInactive = false)
     {
+        if (includeInactive)
+        {
+            // Direct DB query including inactive plans (but not soft-deleted)
+            return await _dbContext.SubscriptionPlans
+                .FirstOrDefaultAsync(p => p.Code == code && p.DeletedAt == null);
+        }
+
+        // Original behavior: only active plans (uses cache)
         var plans = await GetActivePlansAsync();
         return plans.FirstOrDefault(p => p.Code == code);
     }

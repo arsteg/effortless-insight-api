@@ -16,7 +16,9 @@ public interface IPlanService
     /// <summary>
     /// Gets a plan by its code.
     /// </summary>
-    Task<SubscriptionPlan?> GetPlanByCodeAsync(string code);
+    /// <param name="code">The plan code.</param>
+    /// <param name="includeInactive">If true, includes inactive plans. Use for admin operations.</param>
+    Task<SubscriptionPlan?> GetPlanByCodeAsync(string code, bool includeInactive = false);
 
     /// <summary>
     /// Gets a plan by its ID.

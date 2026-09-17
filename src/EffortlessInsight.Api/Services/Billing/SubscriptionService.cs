@@ -1554,7 +1554,8 @@ public class SubscriptionService : ISubscriptionService
         string planCode,
         bool allowCaOperatorPlan = false)
     {
-        var plan = await _planService.GetPlanByCodeAsync(planCode)
+        // When allowCaOperatorPlan is true, include inactive plans (admin context)
+        var plan = await _planService.GetPlanByCodeAsync(planCode, includeInactive: allowCaOperatorPlan)
             ?? throw new InvalidOperationException($"Plan '{planCode}' not found");
 
         // Validate this is actually a free plan
