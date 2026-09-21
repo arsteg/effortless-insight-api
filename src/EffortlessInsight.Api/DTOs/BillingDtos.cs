@@ -13,6 +13,17 @@ public record FeatureCheckResponse(
     bool HasAccess
 );
 
+/// <summary>
+/// Whether the current user has an active admin-granted "Free CA Access" grant
+/// (self-registered CAs only - see CaFreeAccessGrant). Self-registered CAs never
+/// have a row in BillingSubscriptions for their own firm org, so /subscriptions/current
+/// always 404s for them; the frontend uses this endpoint instead to decide whether
+/// to treat the CA as having access.
+/// </summary>
+public record CaAccessStatusResponse(
+    bool HasActiveAccess
+);
+
 // ============================================================================
 // Plan DTOs
 // ============================================================================
