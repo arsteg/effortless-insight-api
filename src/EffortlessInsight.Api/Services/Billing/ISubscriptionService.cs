@@ -186,6 +186,29 @@ public interface ISubscriptionService
     /// </summary>
     Task ExpireGracePeriodSubscriptionsAsync();
 
+    /// <summary>
+    /// Grants a CA free access subscription by creating a ca_operator subscription.
+    /// This is called when an admin grants free CA access to a self-registered CA user.
+    /// </summary>
+    /// <param name="caUserId">The CA user ID to grant access to.</param>
+    /// <param name="adminId">The admin user ID who is granting access.</param>
+    /// <param name="reason">The reason for granting access.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>The created or updated subscription.</returns>
+    Task<BillingSubscription> GrantCaAccessSubscriptionAsync(
+        Guid caUserId, Guid adminId, string reason, CancellationToken ct = default);
+
+    /// <summary>
+    /// Revokes a CA free access subscription by cancelling the ca_operator subscription.
+    /// This is called when an admin revokes free CA access from a CA user.
+    /// </summary>
+    /// <param name="caUserId">The CA user ID to revoke access from.</param>
+    /// <param name="adminId">The admin user ID who is revoking access.</param>
+    /// <param name="reason">The reason for revoking access.</param>
+    /// <param name="ct">Cancellation token.</param>
+    Task RevokeCaAccessSubscriptionAsync(
+        Guid caUserId, Guid adminId, string reason, CancellationToken ct = default);
+
 }
 
 /// <summary>

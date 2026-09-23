@@ -1953,7 +1953,8 @@ public class AuthService : IAuthService
                 AvatarUrl: user.AvatarUrl,
                 Role: roleOverride ?? user.Role ?? "member",
                 Organization: currentOrg,
-                Organizations: orgs
+                Organizations: orgs,
+                IsCA: user.IsCA
             )
         );
     }

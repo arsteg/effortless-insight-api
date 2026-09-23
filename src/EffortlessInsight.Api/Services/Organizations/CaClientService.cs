@@ -80,6 +80,32 @@ public record AcceptCaClientInvitationResult(
     int ExpiresIn
 );
 
+public record ExistingOrganizationForGstinDto(
+    Guid OrganizationId,
+    string OrganizationName,
+    string Role
+);
+
+public record CaClientInvitationDetailsWithContextDto(
+    string CaOrganizationName,
+    string Gstin,
+    string? ClientDisplayName,
+    string Email,
+    string Status,
+    DateTime ExpiresAt,
+    string? Message,
+    ExistingOrganizationForGstinDto? ExistingOrganization
+);
+
+public record AcceptCaClientInvitationLinkRequest(Guid ExistingOrganizationId);
+
+public record AcceptCaClientInvitationLinkResult(
+    Guid OrganizationId,
+    string OrganizationName,
+    int MergedNoticeCount,
+    int NewNoticeCount
+);
+
 public interface ICaClientService
 {
     Task<CaClientInvitationDto> CreateInvitationAsync(Guid caUserId, CreateCaClientInvitationRequest request);
@@ -92,6 +118,8 @@ public interface ICaClientService
         CancellationToken cancellationToken = default);
     Task<AcceptCaClientInvitationResult> AcceptInvitationAsync(string token, Guid boUserId, AcceptCaClientInvitationRequest request);
     Task DeclineInvitationAsync(string token, Guid boUserId);
+    Task<CaClientInvitationDetailsWithContextDto> GetInvitationWithContextAsync(string token, Guid boUserId);
+    Task<AcceptCaClientInvitationLinkResult> AcceptInvitationLinkAsync(string token, Guid boUserId, AcceptCaClientInvitationLinkRequest request);
 }
 
 public class CaClientService : ICaClientService
@@ -142,6 +170,12 @@ public class CaClientService : ICaClientService
 
     public async Task<CaClientInvitationDto> CreateInvitationAsync(Guid caUserId, CreateCaClientInvitationRequest request)
     {
+        // Input validation
+        if (string.IsNullOrWhiteSpace(request.Email))
+        {
+            throw new InvalidOperationException("INVALID_EMAIL: Email is required");
+        }
+
         var caUser = await _userManager.FindByIdAsync(caUserId.ToString())
             ?? throw new KeyNotFoundException("USER_NOT_FOUND");
 
@@ -687,6 +721,282 @@ public class CaClientService : ICaClientService
         // Deliberately does NOT touch the CaProspectClient/CaStagedNotice rows -
         // the CA may still hold staged data and re-invite the same or a
         // different email later.
+    }
+
+    public async Task<CaClientInvitationDetailsWithContextDto> GetInvitationWithContextAsync(string token, Guid boUserId)
+    {
+        var tokenHash = HashToken(token);
+        var invitation = await _dbContext.CaClientInvitations
+            .Include(i => i.CaOrganization)
+            .FirstOrDefaultAsync(i => i.TokenHash == tokenHash)
+            ?? throw new KeyNotFoundException("INVALID_INVITATION");
+
+        if (invitation.Status == "pending" && invitation.ExpiresAt < DateTime.UtcNow)
+        {
+            invitation.Status = "expired";
+            await _dbContext.SaveChangesAsync();
+        }
+
+        // Check if the authenticated user already has an organization with this GSTIN
+        var existingOrg = await FindUserOrganizationByGstinAsync(boUserId, invitation.Gstin);
+
+        return new CaClientInvitationDetailsWithContextDto(
+            CaOrganizationName: invitation.CaOrganization.Name,
+            Gstin: invitation.Gstin,
+            ClientDisplayName: invitation.ClientDisplayName,
+            Email: invitation.Email,
+            Status: invitation.Status,
+            ExpiresAt: invitation.ExpiresAt,
+            Message: invitation.Message,
+            ExistingOrganization: existingOrg
+        );
+    }
+
+    public async Task<AcceptCaClientInvitationLinkResult> AcceptInvitationLinkAsync(
+        string token, Guid boUserId, AcceptCaClientInvitationLinkRequest request)
+    {
+        var tokenHash = HashToken(token);
+
+        var invitation = await _dbContext.CaClientInvitations
+            .FirstOrDefaultAsync(i => i.TokenHash == tokenHash)
+            ?? throw new KeyNotFoundException("INVALID_INVITATION");
+
+        if (invitation.Status != "pending")
+        {
+            throw new InvalidOperationException($"INVITATION_{invitation.Status.ToUpperInvariant()}");
+        }
+
+        if (invitation.ExpiresAt < DateTime.UtcNow)
+        {
+            invitation.Status = "expired";
+            await _dbContext.SaveChangesAsync();
+            throw new InvalidOperationException("INVITATION_EXPIRED");
+        }
+
+        var boUser = await _userManager.FindByIdAsync(boUserId.ToString())
+            ?? throw new KeyNotFoundException("USER_NOT_FOUND");
+
+        if (!string.Equals(boUser.NormalizedEmail, invitation.EmailNormalized.ToUpperInvariant(), StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("EMAIL_MISMATCH");
+        }
+
+        // Verify the user owns/admins the specified organization
+        var membership = await _dbContext.OrganizationMembers
+            .Include(m => m.Organization)
+            .ThenInclude(o => o.OrganizationGstins)
+            .FirstOrDefaultAsync(m =>
+                m.UserId == boUserId &&
+                m.OrganizationId == request.ExistingOrganizationId &&
+                (m.Role == "owner" || m.Role == "admin") &&
+                m.Status == "active" &&
+                m.Organization.DeletedAt == null)
+            ?? throw new InvalidOperationException("ORGANIZATION_NOT_FOUND_OR_NOT_AUTHORIZED");
+
+        // Verify the organization has the matching GSTIN
+        var hasMatchingGstin = membership.Organization.OrganizationGstins
+            .Any(g => g.Gstin == invitation.Gstin && g.DeletedAt == null);
+
+        if (!hasMatchingGstin)
+        {
+            throw new InvalidOperationException("GSTIN_MISMATCH");
+        }
+
+        // Check if the CA is already a member
+        var existingCaMembership = await _dbContext.OrganizationMembers
+            .FirstOrDefaultAsync(m =>
+                m.OrganizationId == request.ExistingOrganizationId &&
+                m.UserId == invitation.CaUserId &&
+                m.Status == "active");
+
+        if (existingCaMembership != null)
+        {
+            throw new InvalidOperationException("CA_ALREADY_MEMBER");
+        }
+
+        var prospectClient = await _dbContext.CaProspectClients
+            .Include(p => p.StagedNotices)
+            .FirstOrDefaultAsync(p => p.CaClientInvitationId == invitation.Id);
+
+        var mergedCount = 0;
+        var newNoticeIds = new List<Guid>();
+        var organizationId = request.ExistingOrganizationId;
+        var organizationName = membership.Organization.Name;
+
+        var strategy = _dbContext.Database.CreateExecutionStrategy();
+        await strategy.ExecuteAsync(async () =>
+        {
+            await using var transaction = await _dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable);
+
+            // Re-validate inside the transaction
+            await _dbContext.Entry(invitation).ReloadAsync();
+            if (invitation.Status != "pending")
+            {
+                throw new InvalidOperationException($"INVITATION_{invitation.Status.ToUpperInvariant()}");
+            }
+
+            // Add CA as member with role="ca"
+            _dbContext.OrganizationMembers.Add(new OrganizationMember
+            {
+                OrganizationId = organizationId,
+                UserId = invitation.CaUserId,
+                Role = "ca",
+                IsExternal = true,
+                ClientReference = invitation.ClientDisplayName,
+                Status = "active",
+                InvitedById = boUserId,
+                JoinedAt = DateTime.UtcNow,
+                AccessExpiresAt = invitation.AccessDurationDays.HasValue
+                    ? DateTime.UtcNow.AddDays(invitation.AccessDurationDays.Value)
+                    : null
+            });
+
+            invitation.Status = "accepted";
+            invitation.RespondedAt = DateTime.UtcNow;
+            invitation.AcceptedUserId = boUserId;
+            invitation.ResultingOrganizationId = organizationId;
+
+            await _dbContext.SaveChangesAsync();
+
+            // Merge staged notices (same logic as AcceptInvitationAsync)
+            if (prospectClient != null)
+            {
+                var primaryGstin = await _dbContext.OrganizationGstins
+                    .FirstOrDefaultAsync(g => g.OrganizationId == organizationId && g.IsPrimary);
+
+                if (primaryGstin != null)
+                {
+                    foreach (var staged in prospectClient.StagedNotices.Where(n => !n.MergedToNotices))
+                    {
+                        var existingNotice = await FindMatchingNoticeAsync(organizationId, staged);
+                        if (existingNotice != null)
+                        {
+                            staged.MergedToNotices = true;
+                            staged.MergedNoticeId = existingNotice.Id;
+                            staged.MergedAt = DateTime.UtcNow;
+                            mergedCount++;
+                            continue;
+                        }
+
+                        var notice = new Notice
+                        {
+                            OrganizationId = organizationId,
+                            UploadedById = staged.UploadedByUserId,
+                            NoticeNumber = staged.NoticeNumber,
+                            NoticeType = staged.NoticeType,
+                            NoticeCategory = staged.NoticeCategory,
+                            Summary = staged.Summary,
+                            Gstin = staged.Gstin,
+                            GstinId = primaryGstin.Id,
+                            IssueDate = staged.IssueDate,
+                            ResponseDeadline = staged.ResponseDeadline,
+                            TaxAmount = staged.TaxAmount,
+                            PenaltyAmount = staged.PenaltyAmount,
+                            InterestAmount = staged.InterestAmount,
+                            PeriodFrom = staged.PeriodFrom,
+                            PeriodTo = staged.PeriodTo,
+                            FinancialYear = staged.FinancialYear,
+                            FileUrl = staged.FileUrl ?? string.Empty,
+                            FileName = staged.FileName ?? string.Empty,
+                            FileSize = staged.FileSize ?? 0,
+                            FileMimeType = staged.FileMimeType,
+                            FileHash = staged.FileHash,
+                            Metadata = new Dictionary<string, object> { ["source_ca_staged_notice_id"] = staged.Id.ToString() }
+                        };
+                        _dbContext.Notices.Add(notice);
+                        await _dbContext.SaveChangesAsync();
+
+                        staged.MergedToNotices = true;
+                        staged.MergedNoticeId = notice.Id;
+                        staged.MergedAt = DateTime.UtcNow;
+                        newNoticeIds.Add(notice.Id);
+                    }
+                }
+
+                prospectClient.Status = "merged";
+                prospectClient.MergedAt = DateTime.UtcNow;
+                prospectClient.MergedIntoOrganizationId = organizationId;
+            }
+
+            await _dbContext.SaveChangesAsync();
+            await transaction.CommitAsync();
+        });
+
+        // Usage counting and AI-processing after commit
+        foreach (var noticeId in newNoticeIds)
+        {
+            await _usageService.IncrementNoticeCountAsync(organizationId);
+            _backgroundJobs.Enqueue<INoticeProcessingJob>(job => job.ProcessAsync(noticeId, CancellationToken.None));
+        }
+
+        await _auditService.LogAsync(new AuditLogEntry
+        {
+            Action = "ca_client_invitation.linked",
+            EntityType = "Organization",
+            EntityId = organizationId,
+            UserId = boUserId,
+            OrganizationId = organizationId,
+            NewValues = new
+            {
+                CaUserId = invitation.CaUserId,
+                InvitationId = invitation.Id,
+                MergedNoticeCount = mergedCount,
+                NewNoticeCount = newNoticeIds.Count
+            }
+        });
+
+        _logger.LogInformation(
+            "BO {BoUserId} linked CA {CaUserId} to existing organization {OrganizationId} ({MergedCount} merged, {NewCount} new notices)",
+            boUserId, invitation.CaUserId, organizationId, mergedCount, newNoticeIds.Count);
+
+        return new AcceptCaClientInvitationLinkResult(
+            OrganizationId: organizationId,
+            OrganizationName: organizationName,
+            MergedNoticeCount: mergedCount,
+            NewNoticeCount: newNoticeIds.Count
+        );
+    }
+
+    private async Task<ExistingOrganizationForGstinDto?> FindUserOrganizationByGstinAsync(Guid userId, string gstin)
+    {
+        // GSTIN is AES-GCM encrypted with a random nonce, so a SQL WHERE on the
+        // column can never match (the query constant encrypts to a different
+        // ciphertext every time). Materialize the rows and compare in memory.
+        gstin = gstin.Trim().ToUpperInvariant();
+
+        var memberships = await _dbContext.OrganizationMembers
+            .Include(m => m.Organization)
+            .ThenInclude(o => o.OrganizationGstins)
+            .Where(m =>
+                m.UserId == userId &&
+                (m.Role == "owner" || m.Role == "admin") &&
+                m.Status == "active" &&
+                m.Organization.DeletedAt == null)
+            .Select(m => new {
+                m.OrganizationId,
+                m.Organization.Name,
+                m.Role,
+                Gstins = m.Organization.OrganizationGstins
+                    .Where(g => g.DeletedAt == null)
+                    .Select(g => g.Gstin)
+                    .ToList()
+            })
+            .ToListAsync();
+
+        // Compare in memory after decryption
+        var match = memberships.FirstOrDefault(m =>
+            m.Gstins.Any(g => string.Equals(g, gstin, StringComparison.OrdinalIgnoreCase)));
+
+        if (match == null)
+        {
+            return null;
+        }
+
+        return new ExistingOrganizationForGstinDto(
+            OrganizationId: match.OrganizationId,
+            OrganizationName: match.Name,
+            Role: match.Role
+        );
     }
 
     private async Task<Notice?> FindMatchingNoticeAsync(Guid organizationId, CaStagedNotice staged)

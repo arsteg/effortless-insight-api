@@ -22,12 +22,14 @@ public class AdminUsersController : AdminControllerBase
     private readonly IAdminAuditService _auditService;
     private readonly ICaAccessService _caAccessService;
     private readonly IFeatureAccessService _featureAccessService;
+    private readonly ISubscriptionService _subscriptionService;
 
     public AdminUsersController(
         ApplicationDbContext dbContext,
         IAdminAuditService auditService,
         ICaAccessService caAccessService,
         IFeatureAccessService featureAccessService,
+        ISubscriptionService subscriptionService,
         ILogger<AdminUsersController> logger)
         : base(logger)
     {
@@ -35,6 +37,7 @@ public class AdminUsersController : AdminControllerBase
         _auditService = auditService;
         _caAccessService = caAccessService;
         _featureAccessService = featureAccessService;
+        _subscriptionService = subscriptionService;
     }
 
     /// <summary>
@@ -382,6 +385,7 @@ public class AdminUsersController : AdminControllerBase
             return Error("User already has active Free CA Access", "ALREADY_GRANTED");
         }
 
+        // Create audit record (kept for audit trail)
         _dbContext.CaFreeAccessGrants.Add(new CaFreeAccessGrant
         {
             CaUserId = userId,
@@ -391,6 +395,9 @@ public class AdminUsersController : AdminControllerBase
             GrantReason = request.Reason
         });
         await _dbContext.SaveChangesAsync();
+
+        // Create ca_operator subscription for the CA's organizations
+        await _subscriptionService.GrantCaAccessSubscriptionAsync(userId, CurrentAdminId, request.Reason);
 
         // Immediate effect: clear the cached feature list for every org this CA owns.
         var ownedOrgIds = await _caAccessService.GetOwnedOrganizationIdsAsync(userId);
@@ -443,11 +450,15 @@ public class AdminUsersController : AdminControllerBase
             return Error("User does not have active Free CA Access", "NOT_GRANTED");
         }
 
+        // Update audit record
         grant.IsActive = false;
         grant.RevokedByAdminId = CurrentAdminId;
         grant.RevokedAt = DateTime.UtcNow;
         grant.RevokeReason = request.Reason;
         await _dbContext.SaveChangesAsync();
+
+        // Revoke the ca_operator subscription
+        await _subscriptionService.RevokeCaAccessSubscriptionAsync(userId, CurrentAdminId, request.Reason);
 
         var ownedOrgIds = await _caAccessService.GetOwnedOrganizationIdsAsync(userId);
         foreach (var orgId in ownedOrgIds)

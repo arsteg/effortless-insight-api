@@ -38,7 +38,7 @@ public class CaClientInvitation : BaseEntity
     /// equality check, always decrypt-and-compare in memory.
     /// </summary>
     [Required]
-    [MaxLength(15)]
+    [MaxLength(225)]  // Encrypted value is longer than plaintext GSTIN
     public string Gstin { get; set; } = string.Empty;
 
     [Required]

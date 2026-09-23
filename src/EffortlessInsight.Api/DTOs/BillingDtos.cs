@@ -132,7 +132,16 @@ public record SubscriptionDto(
     /// Whether the subscription grants access to the application.
     /// False when: cancelled, expired, or trialing without valid trial period/dates.
     /// </summary>
-    bool HasAccess
+    bool HasAccess,
+    /// <summary>
+    /// Whether this subscription was granted by an admin (e.g., CA free access).
+    /// Admin-granted subscriptions cannot be modified by the user.
+    /// </summary>
+    bool IsAdminGranted = false,
+    /// <summary>
+    /// Whether this subscription is for the CA operator plan.
+    /// </summary>
+    bool IsCaOperatorPlan = false
 );
 
 public record SeatsDto(

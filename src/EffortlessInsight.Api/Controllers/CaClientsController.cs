@@ -3,6 +3,7 @@ using EffortlessInsight.Api.DTOs;
 using EffortlessInsight.Api.Services.Organizations;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace EffortlessInsight.Api.Controllers;
 
@@ -56,6 +57,10 @@ public class CaClientsController : ControllerBase
         {
             return BadRequest(new ApiErrorResponse(false, "INVALID_GSTIN", ex.Message.Replace("INVALID_GSTIN: ", "")));
         }
+        catch (InvalidOperationException ex) when (ex.Message.StartsWith("INVALID_EMAIL"))
+        {
+            return BadRequest(new ApiErrorResponse(false, "INVALID_EMAIL", ex.Message.Replace("INVALID_EMAIL: ", "")));
+        }
         catch (InvalidOperationException ex) when (ex.Message.StartsWith("GSTIN_HAS_ACTIVE_CA"))
         {
             return Conflict(new ApiErrorResponse(false, "GSTIN_HAS_ACTIVE_CA", ex.Message.Replace("GSTIN_HAS_ACTIVE_CA: ", "")));
@@ -71,6 +76,12 @@ public class CaClientsController : ControllerBase
         catch (KeyNotFoundException)
         {
             return NotFound(new ApiErrorResponse(false, "USER_NOT_FOUND", "User not found"));
+        }
+        catch (Microsoft.EntityFrameworkCore.DbUpdateException dbEx)
+        {
+            _logger.LogError(dbEx, "Database error creating CA client invitation. Request: {@Request}", request);
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "DATABASE_ERROR", "A database error occurred while creating the invitation"));
         }
         catch (Exception ex)
         {
@@ -98,6 +109,87 @@ public class CaClientsController : ControllerBase
         catch (KeyNotFoundException)
         {
             return NotFound(new ApiErrorResponse(false, "INVALID_INVITATION", "Invitation not found or invalid"));
+        }
+    }
+
+    /// <summary>
+    /// Resolve invitation details with user context - if the authenticated user
+    /// already has an organization with the invited GSTIN, returns that info so
+    /// the frontend can show a simplified "Grant Access" flow instead of
+    /// "Set up your organization".
+    /// </summary>
+    [HttpGet("invitations/{token}/context")]
+    [ProducesResponseType(typeof(ApiResponse<CaClientInvitationDetailsWithContextDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetInvitationWithContext(string token)
+    {
+        try
+        {
+            var boUserId = GetCurrentUserId();
+            var result = await _caClientService.GetInvitationWithContextAsync(token, boUserId);
+            return Ok(new ApiResponse<CaClientInvitationDetailsWithContextDto>(true, result));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(new ApiErrorResponse(false, "INVALID_INVITATION", "Invitation not found or invalid"));
+        }
+    }
+
+    /// <summary>
+    /// Link a CA to an existing organization for the invited GSTIN. Use this
+    /// instead of AcceptInvitation when the BO already has an organization with
+    /// the same GSTIN - no new organization is created, just a membership link.
+    /// </summary>
+    [HttpPost("invitations/{token}/link")]
+    [ProducesResponseType(typeof(ApiResponse<AcceptCaClientInvitationLinkResult>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> LinkInvitation(string token, [FromBody] AcceptCaClientInvitationLinkRequest request)
+    {
+        try
+        {
+            var boUserId = GetCurrentUserId();
+            var result = await _caClientService.AcceptInvitationLinkAsync(token, boUserId, request);
+            return Ok(new ApiResponse<AcceptCaClientInvitationLinkResult>(true, result));
+        }
+        catch (KeyNotFoundException ex) when (ex.Message == "INVALID_INVITATION")
+        {
+            return NotFound(new ApiErrorResponse(false, "INVALID_INVITATION", "Invitation not found or invalid"));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(new ApiErrorResponse(false, "USER_NOT_FOUND", "User not found"));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "INVITATION_EXPIRED")
+        {
+            return BadRequest(new ApiErrorResponse(false, "INVITATION_EXPIRED", "Invitation has expired"));
+        }
+        catch (InvalidOperationException ex) when (ex.Message.StartsWith("INVITATION_"))
+        {
+            return BadRequest(new ApiErrorResponse(false, ex.Message, $"Invitation is {ex.Message.Replace("INVITATION_", "").ToLowerInvariant()}"));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "EMAIL_MISMATCH")
+        {
+            return BadRequest(new ApiErrorResponse(false, "EMAIL_MISMATCH", "Logged in email does not match invitation"));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "ORGANIZATION_NOT_FOUND_OR_NOT_AUTHORIZED")
+        {
+            return BadRequest(new ApiErrorResponse(false, "ORGANIZATION_NOT_FOUND_OR_NOT_AUTHORIZED", "Organization not found or you don't have permission"));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "GSTIN_MISMATCH")
+        {
+            return BadRequest(new ApiErrorResponse(false, "GSTIN_MISMATCH", "Organization GSTIN does not match invitation"));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "CA_ALREADY_MEMBER")
+        {
+            return Conflict(new ApiErrorResponse(false, "CA_ALREADY_MEMBER", "This CA is already a member of the organization"));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to link CA client invitation");
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
         }
     }
 

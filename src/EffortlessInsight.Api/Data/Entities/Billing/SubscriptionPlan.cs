@@ -131,6 +131,12 @@ public class SubscriptionPlan : BaseEntity
     public bool IsCaOperatorPlan { get; set; }
 
     /// <summary>
+    /// Whether this plan is publicly visible on plan selection pages.
+    /// Internal plans (e.g., CA operator, staff) should be set to false.
+    /// </summary>
+    public bool IsPublic { get; set; } = true;
+
+    /// <summary>
     /// Additional metadata for the plan.
     /// </summary>
     public Dictionary<string, object>? Metadata { get; set; }

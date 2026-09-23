@@ -292,7 +292,8 @@ public record UserDto(
     string? AvatarUrl,
     string Role,
     UserOrganizationDto? Organization,
-    List<UserOrganizationDto> Organizations
+    List<UserOrganizationDto> Organizations,
+    bool IsCA = false
 );
 
 public record UpdateUserDto( [MaxLength(100)] string? Name, [MaxLength(20)] string? Mobile, [MaxLength(500)] string? AvatarUrl, Dictionary<string, object>? Preferences );

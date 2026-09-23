@@ -25,7 +25,7 @@ public class CaProspectClient : BaseEntity
     /// Encrypted at rest (DPDP Act), same converter as OrganizationGstin.Gstin.
     /// </summary>
     [Required]
-    [MaxLength(15)]
+    [MaxLength(225)]  // Encrypted value is longer than plaintext GSTIN
     public string Gstin { get; set; } = string.Empty;
 
     /// <summary>
