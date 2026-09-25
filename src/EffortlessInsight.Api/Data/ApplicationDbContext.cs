@@ -147,6 +147,7 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
     public DbSet<CaClientInvitation> CaClientInvitations => Set<CaClientInvitation>();
     public DbSet<CaProspectClient> CaProspectClients => Set<CaProspectClient>();
     public DbSet<CaStagedNotice> CaStagedNotices => Set<CaStagedNotice>();
+    public DbSet<CaBoGstinLink> CaBoGstinLinks => Set<CaBoGstinLink>();
 
     // GSTN Integration entities
     public DbSet<GstnConnection> GstnConnections => Set<GstnConnection>();
@@ -621,6 +622,49 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
         });
 
         // ============================================================================
+        // CA-BO GSTIN Link Configuration (Cross-Organization Notice Visibility)
+        // ============================================================================
+        modelBuilder.Entity<CaBoGstinLink>(entity =>
+        {
+            // Unique constraint: one link per CA-BO-GSTIN combination
+            entity.HasIndex(e => new { e.CaOrganizationId, e.BoOrganizationId, e.GstinHash })
+                .IsUnique()
+                .HasDatabaseName("IX_CaBoGstinLinks_Unique");
+
+            // Index for querying all links for a CA's organization
+            entity.HasIndex(e => new { e.CaOrganizationId, e.IsActive })
+                .HasDatabaseName("IX_CaBoGstinLinks_CaOrg_Active");
+
+            // Index for querying all links for a BO's organization
+            entity.HasIndex(e => new { e.BoOrganizationId, e.IsActive })
+                .HasDatabaseName("IX_CaBoGstinLinks_BoOrg_Active");
+
+            // Index for cross-org notice queries: find notices by GstinHash
+            entity.HasIndex(e => new { e.GstinHash, e.IsActive })
+                .HasDatabaseName("IX_CaBoGstinLinks_GstinHash_Active");
+
+            entity.HasOne(e => e.CaOrganization)
+                .WithMany()
+                .HasForeignKey(e => e.CaOrganizationId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.BoOrganization)
+                .WithMany()
+                .HasForeignKey(e => e.BoOrganizationId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.CaUser)
+                .WithMany()
+                .HasForeignKey(e => e.CaUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.CaMembership)
+                .WithMany()
+                .HasForeignKey(e => e.CaMembershipId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ============================================================================
         // Organization Invitation Configuration
         // ============================================================================
         modelBuilder.Entity<OrganizationInvitation>(entity =>
@@ -731,6 +775,11 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
                 .HasFilter("\"DeletedAt\" IS NULL")
                 .HasDatabaseName("IX_Notices_Number_Search");
 
+            // Index for cross-organization notice visibility queries
+            entity.HasIndex(n => new { n.GstinHash, n.OrganizationId })
+                .HasFilter("\"DeletedAt\" IS NULL AND \"GstinHash\" IS NOT NULL")
+                .HasDatabaseName("IX_Notices_GstinHash_OrganizationId");
+
             // Relationships
             entity.HasOne(n => n.AssignedBy)
                 .WithMany()
@@ -745,6 +794,15 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
             entity.HasOne(n => n.GstinNavigation)
                 .WithMany()
                 .HasForeignKey(n => n.GstinId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            // CA Prospect Client relationship (for pre-acceptance notice tracking)
+            entity.HasIndex(n => n.CaProspectClientId)
+                .HasFilter("\"DeletedAt\" IS NULL AND \"CaProspectClientId\" IS NOT NULL");
+
+            entity.HasOne(n => n.CaProspectClient)
+                .WithMany()
+                .HasForeignKey(n => n.CaProspectClientId)
                 .OnDelete(DeleteBehavior.SetNull);
 
             // TotalDemand is a PostgreSQL STORED GENERATED column

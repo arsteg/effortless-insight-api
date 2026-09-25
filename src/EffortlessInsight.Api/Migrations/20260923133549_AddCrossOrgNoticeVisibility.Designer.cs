@@ -6,18 +6,21 @@ using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.Data.Entities.Billing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using Pgvector;
 
 #nullable disable
 
-namespace EffortlessInsight.Api.Data.Migrations
+namespace EffortlessInsight.Api.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260923133549_AddCrossOrgNoticeVisibility")]
+    partial class AddCrossOrgNoticeVisibility
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -5373,9 +5376,6 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Property<Guid?>("AssignedToId")
                         .HasColumnType("uuid");
 
-                    b.Property<Guid?>("CaProspectClientId")
-                        .HasColumnType("uuid");
-
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -5594,9 +5594,6 @@ namespace EffortlessInsight.Api.Data.Migrations
 
                     b.HasIndex("AssignedToId")
                         .HasFilter("\"DeletedAt\" IS NULL");
-
-                    b.HasIndex("CaProspectClientId")
-                        .HasFilter("\"DeletedAt\" IS NULL AND \"CaProspectClientId\" IS NOT NULL");
 
                     b.HasIndex("CreatedAt")
                         .HasFilter("\"DeletedAt\" IS NULL");
@@ -10568,11 +10565,6 @@ namespace EffortlessInsight.Api.Data.Migrations
                         .WithMany("AssignedNotices")
                         .HasForeignKey("AssignedToId");
 
-                    b.HasOne("EffortlessInsight.Api.Data.Entities.CaProspectClient", "CaProspectClient")
-                        .WithMany()
-                        .HasForeignKey("CaProspectClientId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
                     b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "DeletedBy")
                         .WithMany()
                         .HasForeignKey("DeletedById")
@@ -10598,8 +10590,6 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Navigation("AssignedBy");
 
                     b.Navigation("AssignedTo");
-
-                    b.Navigation("CaProspectClient");
 
                     b.Navigation("DeletedBy");
 

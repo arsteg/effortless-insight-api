@@ -5,6 +5,7 @@ using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.DTOs;
 using EffortlessInsight.Api.Services.Billing;
 using EffortlessInsight.Api.Services.Email;
+using EffortlessInsight.Api.Services.GstSync;
 using EffortlessInsight.Api.Services.Notices;
 using Hangfire;
 using Microsoft.AspNetCore.Identity;
@@ -128,6 +129,8 @@ public class CaClientService : ICaClientService
     private readonly IGstinValidatorService _gstinValidator;
     private readonly ICaGstinAuthorizationService _caGstinAuth;
     private readonly IOrganizationManagementService _organizationService;
+    private readonly ICaBoGstinLinkService _caBoGstinLinkService;
+    private readonly IGstNoticeRawService _gstNoticeRawService;
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly IEmailService _emailService;
     private readonly IFileStorageService _fileStorageService;
@@ -145,6 +148,8 @@ public class CaClientService : ICaClientService
         IGstinValidatorService gstinValidator,
         ICaGstinAuthorizationService caGstinAuth,
         IOrganizationManagementService organizationService,
+        ICaBoGstinLinkService caBoGstinLinkService,
+        IGstNoticeRawService gstNoticeRawService,
         UserManager<ApplicationUser> userManager,
         IEmailService emailService,
         IFileStorageService fileStorageService,
@@ -158,6 +163,8 @@ public class CaClientService : ICaClientService
         _gstinValidator = gstinValidator;
         _caGstinAuth = caGstinAuth;
         _organizationService = organizationService;
+        _caBoGstinLinkService = caBoGstinLinkService;
+        _gstNoticeRawService = gstNoticeRawService;
         _userManager = userManager;
         _emailService = emailService;
         _fileStorageService = fileStorageService;
@@ -281,8 +288,8 @@ public class CaClientService : ICaClientService
 
         _logger.LogInformation("CA {CaUserId} invited {Email} to claim GSTIN-associated organization", caUserId, request.Email);
 
-        var stagedCount = await _dbContext.CaStagedNotices
-            .CountAsync(n => n.CaProspectClientId == prospectClient.Id && !n.MergedToNotices);
+        var stagedCount = await _dbContext.Notices
+            .CountAsync(n => n.CaProspectClientId == prospectClient.Id && n.DeletedAt == null);
 
         return ToDto(invitation, stagedCount);
     }
@@ -352,8 +359,8 @@ public class CaClientService : ICaClientService
         var stagedItems = new List<CaClientListItemDto>();
         foreach (var prospect in stagedClients)
         {
-            var stagedCount = await _dbContext.CaStagedNotices
-                .CountAsync(n => n.CaProspectClientId == prospect.Id && !n.MergedToNotices);
+            var stagedCount = await _dbContext.Notices
+                .CountAsync(n => n.CaProspectClientId == prospect.Id && n.DeletedAt == null);
 
             stagedItems.Add(new CaClientListItemDto(
                 Id: prospect.Id,
@@ -408,7 +415,7 @@ public class CaClientService : ICaClientService
             .FirstOrDefaultAsync(p => p.CaClientInvitationId == invitation.Id);
         var stagedCount = prospectClient == null
             ? 0
-            : await _dbContext.CaStagedNotices.CountAsync(n => n.CaProspectClientId == prospectClient.Id && !n.MergedToNotices);
+            : await _dbContext.Notices.CountAsync(n => n.CaProspectClientId == prospectClient.Id && n.DeletedAt == null);
 
         return ToDto(invitation, stagedCount);
     }
@@ -450,6 +457,18 @@ public class CaClientService : ICaClientService
             throw new InvalidOperationException($"{authResult.ErrorCode}: {authResult.ErrorMessage}");
         }
 
+        // Get CA's organization ID
+        var caOrgId = await _dbContext.OrganizationMembers
+            .Where(m => m.UserId == caUserId && m.Role == "owner" && m.Status == "active" && m.Organization.DeletedAt == null)
+            .OrderBy(m => m.JoinedAt)
+            .Select(m => m.OrganizationId)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (caOrgId == default)
+        {
+            throw new InvalidOperationException("CA_NO_ORGANIZATION");
+        }
+
         using var hashBuffer = new MemoryStream();
         await fileStream.CopyToAsync(hashBuffer, cancellationToken);
         hashBuffer.Position = 0;
@@ -458,28 +477,38 @@ public class CaClientService : ICaClientService
 
         var fileUrl = await _fileStorageService.UploadAsync(hashBuffer, fileName, contentType);
 
-        var stagedNotice = new CaStagedNotice
+        // Create a Notice (not CaStagedNotice) with CaProspectClientId set
+        // This notice will be transferred to BO's org when they accept the invitation
+        var notice = new Notice
         {
-            CaProspectClientId = prospectClientId,
-            Gstin = prospectClient.Gstin,
-            FileUrl = fileUrl,
+            OrganizationId = caOrgId,
+            UploadedById = caUserId,
             FileName = fileName,
             FileSize = (int)hashBuffer.Length,
             FileMimeType = contentType,
             FileHash = fileHash,
-            UploadedByUserId = caUserId,
-            UploadedAt = DateTime.UtcNow,
-            Source = "manual_upload"
+            FileUrl = fileUrl,
+            Status = NoticeStatus.Uploaded,
+            ProcessingStatus = NoticeProcessingStatus.Queued,
+            Priority = NoticePriority.Medium,
+            Gstin = prospectClient.Gstin,
+            GstinHash = ComputeGstinHash(prospectClient.Gstin),
+            GstinId = null, // GSTIN not registered in CA's org
+            CaProspectClientId = prospectClientId,
+            Source = NoticeSource.Upload
         };
 
-        _dbContext.CaStagedNotices.Add(stagedNotice);
+        _dbContext.Notices.Add(notice);
         await _dbContext.SaveChangesAsync(cancellationToken);
 
-        _logger.LogInformation(
-            "CA {CaUserId} staged notice upload {FileName} for prospect client {ProspectClientId}",
-            caUserId, fileName, prospectClientId);
+        // Queue AI processing
+        _backgroundJobs.Enqueue<INoticeProcessingJob>(job => job.ProcessAsync(notice.Id, cancellationToken));
 
-        return new UploadCaStagedNoticeResult(stagedNotice.Id, stagedNotice.FileName, stagedNotice.FileSize, stagedNotice.UploadedAt);
+        _logger.LogInformation(
+            "CA {CaUserId} uploaded notice {NoticeId} for prospect client {ProspectClientId}",
+            caUserId, notice.Id, prospectClientId);
+
+        return new UploadCaStagedNoticeResult(notice.Id, notice.FileName, notice.FileSize, notice.CreatedAt);
     }
 
     public async Task<AcceptCaClientInvitationResult> AcceptInvitationAsync(string token, Guid boUserId, AcceptCaClientInvitationRequest request)
@@ -523,12 +552,24 @@ public class CaClientService : ICaClientService
             .Include(p => p.StagedNotices)
             .FirstOrDefaultAsync(p => p.CaClientInvitationId == invitation.Id);
 
+        // Diagnostic logging to trace merge flow
+        var unmergedStagedNotices = prospectClient?.StagedNotices?.Count(n => !n.MergedToNotices) ?? 0;
+        _logger.LogInformation(
+            "AcceptInvitation: invitationId={InvitationId}, prospectClientFound={Found}, prospectClientId={ProspectClientId}, " +
+            "prospectClientStatus={Status}, unmergedStagedNoticeCount={Count}",
+            invitation.Id,
+            prospectClient != null,
+            prospectClient?.Id,
+            prospectClient?.Status,
+            unmergedStagedNotices);
+
         Guid newOrganizationId = default;
         string newOrganizationName = string.Empty;
         string accessToken = string.Empty;
         int expiresIn = 0;
-        var mergedCount = 0;
+        var transferredCount = 0;
         var newNoticeIds = new List<Guid>();
+        Guid caOrgIdCaptured = default;
 
         // Execution strategy handles Npgsql's transient-failure retries; a bare
         // BeginTransactionAsync would break that retry behavior.
@@ -566,7 +607,8 @@ public class CaClientService : ICaClientService
             accessToken = orgResult.AccessToken!;
             expiresIn = orgResult.ExpiresIn!.Value;
 
-            _dbContext.OrganizationMembers.Add(new OrganizationMember
+            // Create CA membership in BO's organization
+            var caMembership = new OrganizationMember
             {
                 OrganizationId = newOrganizationId,
                 UserId = invitation.CaUserId,
@@ -579,7 +621,40 @@ public class CaClientService : ICaClientService
                 AccessExpiresAt = invitation.AccessDurationDays.HasValue
                     ? DateTime.UtcNow.AddDays(invitation.AccessDurationDays.Value)
                     : null
-            });
+            };
+            _dbContext.OrganizationMembers.Add(caMembership);
+
+            // Get CA's own organization (for cross-org visibility)
+            var caOrgId = await _dbContext.OrganizationMembers
+                .Where(m => m.UserId == invitation.CaUserId && m.Role == "owner" && m.Status == "active" && m.Organization.DeletedAt == null)
+                .OrderBy(m => m.JoinedAt)
+                .Select(m => m.OrganizationId)
+                .FirstOrDefaultAsync();
+            caOrgIdCaptured = caOrgId;
+
+            // Create CaBoGstinLink for cross-organization notice visibility
+            if (caOrgId != default)
+            {
+                var gstinHash = ComputeGstinHash(invitation.Gstin);
+                _dbContext.CaBoGstinLinks.Add(new CaBoGstinLink
+                {
+                    CaOrganizationId = caOrgId,
+                    BoOrganizationId = newOrganizationId,
+                    GstinHash = gstinHash,
+                    CaUserId = invitation.CaUserId,
+                    CaMembershipId = caMembership.Id,
+                    IsActive = true
+                });
+
+                // Link all additional GSTINs that the CA has for this client
+                // This ensures cross-org visibility for all client GSTINs, not just the invitation one
+                await _caBoGstinLinkService.LinkAllClientGstinsAsync(
+                    caOrgId,
+                    newOrganizationId,
+                    invitation.CaUserId,
+                    caMembership.Id,
+                    CancellationToken.None);
+            }
 
             invitation.Status = "accepted";
             invitation.RespondedAt = DateTime.UtcNow;
@@ -588,59 +663,37 @@ public class CaClientService : ICaClientService
 
             await _dbContext.SaveChangesAsync();
 
+            // Transfer notices from CA's org to BO's org
             if (prospectClient != null)
             {
                 var primaryGstin = await _dbContext.OrganizationGstins
                     .FirstAsync(g => g.OrganizationId == newOrganizationId && g.IsPrimary);
 
-                foreach (var staged in prospectClient.StagedNotices.Where(n => !n.MergedToNotices))
+                // Get the notice IDs before transferring (for AI processing queue)
+                var noticesToTransfer = await _dbContext.Notices
+                    .Where(n => n.CaProspectClientId == prospectClient.Id && n.DeletedAt == null)
+                    .Select(n => new { n.Id, n.ProcessingStatus })
+                    .ToListAsync();
+
+                // Transfer notices: update OrganizationId to BO's org, clear CaProspectClientId, set GstinId
+                transferredCount = await _dbContext.Notices
+                    .Where(n => n.CaProspectClientId == prospectClient.Id && n.DeletedAt == null)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(n => n.OrganizationId, newOrganizationId)
+                        .SetProperty(n => n.CaProspectClientId, (Guid?)null)
+                        .SetProperty(n => n.GstinId, primaryGstin.Id));
+
+                _logger.LogInformation(
+                    "Transferred {Count} notices from CA to BO org {OrgId}",
+                    transferredCount, newOrganizationId);
+
+                // Queue AI processing for notices that haven't been processed yet
+                foreach (var notice in noticesToTransfer)
                 {
-                    var existingNotice = await FindMatchingNoticeAsync(newOrganizationId, staged);
-                    if (existingNotice != null)
+                    if (notice.ProcessingStatus == NoticeProcessingStatus.Queued)
                     {
-                        // Idempotent no-op merge - same semantics as
-                        // GstNoticeRaw.ImportedToNotices, guards against retries
-                        // ever creating a duplicate.
-                        staged.MergedToNotices = true;
-                        staged.MergedNoticeId = existingNotice.Id;
-                        staged.MergedAt = DateTime.UtcNow;
-                        mergedCount++;
-                        continue;
+                        newNoticeIds.Add(notice.Id);
                     }
-
-                    var notice = new Notice
-                    {
-                        OrganizationId = newOrganizationId,
-                        UploadedById = staged.UploadedByUserId,
-                        NoticeNumber = staged.NoticeNumber,
-                        NoticeType = staged.NoticeType,
-                        NoticeCategory = staged.NoticeCategory,
-                        Summary = staged.Summary,
-                        Gstin = staged.Gstin,
-                        GstinId = primaryGstin.Id,
-                        IssueDate = staged.IssueDate,
-                        ResponseDeadline = staged.ResponseDeadline,
-                        TaxAmount = staged.TaxAmount,
-                        PenaltyAmount = staged.PenaltyAmount,
-                        InterestAmount = staged.InterestAmount,
-                        PeriodFrom = staged.PeriodFrom,
-                        PeriodTo = staged.PeriodTo,
-                        FinancialYear = staged.FinancialYear,
-                        FileUrl = staged.FileUrl ?? string.Empty,
-                        FileName = staged.FileName ?? string.Empty,
-                        FileSize = staged.FileSize ?? 0,
-                        FileMimeType = staged.FileMimeType,
-                        FileHash = staged.FileHash,
-                        Metadata = new Dictionary<string, object> { ["source_ca_staged_notice_id"] = staged.Id.ToString() }
-                    };
-                    _dbContext.Notices.Add(notice);
-                    // Needs Notice.Id assigned before it can be referenced below.
-                    await _dbContext.SaveChangesAsync();
-
-                    staged.MergedToNotices = true;
-                    staged.MergedNoticeId = notice.Id;
-                    staged.MergedAt = DateTime.UtcNow;
-                    newNoticeIds.Add(notice.Id);
                 }
 
                 prospectClient.Status = "merged";
@@ -652,13 +705,35 @@ public class CaClientService : ICaClientService
             await transaction.CommitAsync();
         });
 
-        // Usage counting and AI-processing enqueue happen after commit, mirroring
-        // NoticeService.UploadAsync - a rolled-back transaction must never have
-        // already queued a job for a Notice row that no longer exists.
+        // Queue AI processing for transferred notices that need it
         foreach (var noticeId in newNoticeIds)
         {
-            await _usageService.IncrementNoticeCountAsync(newOrganizationId);
             _backgroundJobs.Enqueue<INoticeProcessingJob>(job => job.ProcessAsync(noticeId, CancellationToken.None));
+        }
+
+        // Auto-import existing GstNoticeRaw records for this GSTIN from the CA's organization
+        var autoImportedCount = 0;
+        if (caOrgIdCaptured != default)
+        {
+            try
+            {
+                var autoImportResult = await _gstNoticeRawService.AutoImportForGstinAsync(
+                    caOrgIdCaptured,
+                    newOrganizationId,
+                    invitation.Gstin,
+                    boUserId,
+                    CancellationToken.None);
+
+                autoImportedCount = autoImportResult.Imported;
+                _logger.LogInformation(
+                    "Auto-imported {Count} GST notices on acceptance for org {OrgId} (duplicates: {Duplicates})",
+                    autoImportResult.Imported, newOrganizationId, autoImportResult.SkippedAsDuplicate);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Auto-import failed for org {OrgId}, GSTIN {Gstin}",
+                    newOrganizationId, invitation.Gstin);
+            }
         }
 
         await _auditService.LogAsync(new AuditLogEntry
@@ -672,20 +747,19 @@ public class CaClientService : ICaClientService
             {
                 CaUserId = invitation.CaUserId,
                 InvitationId = invitation.Id,
-                MergedNoticeCount = mergedCount,
-                NewNoticeCount = newNoticeIds.Count
+                TransferredNoticeCount = transferredCount
             }
         });
 
         _logger.LogInformation(
-            "BO {BoUserId} accepted CA client invitation {InvitationId}, created organization {OrganizationId} ({MergedCount} merged, {NewCount} new notices)",
-            boUserId, invitation.Id, newOrganizationId, mergedCount, newNoticeIds.Count);
+            "BO {BoUserId} accepted CA client invitation {InvitationId}, created organization {OrganizationId} ({TransferredCount} notices transferred)",
+            boUserId, invitation.Id, newOrganizationId, transferredCount);
 
         return new AcceptCaClientInvitationResult(
             OrganizationId: newOrganizationId,
             OrganizationName: newOrganizationName,
-            MergedNoticeCount: mergedCount,
-            NewNoticeCount: newNoticeIds.Count,
+            MergedNoticeCount: transferredCount,
+            NewNoticeCount: 0,
             AccessToken: accessToken,
             ExpiresIn: expiresIn
         );
@@ -818,10 +892,23 @@ public class CaClientService : ICaClientService
             .Include(p => p.StagedNotices)
             .FirstOrDefaultAsync(p => p.CaClientInvitationId == invitation.Id);
 
-        var mergedCount = 0;
+        // Diagnostic logging to trace merge flow
+        var unmergedStagedNotices = prospectClient?.StagedNotices?.Count(n => !n.MergedToNotices) ?? 0;
+        _logger.LogInformation(
+            "AcceptInvitationLink: invitationId={InvitationId}, prospectClientFound={Found}, prospectClientId={ProspectClientId}, " +
+            "prospectClientStatus={Status}, unmergedStagedNoticeCount={Count}, targetOrgId={TargetOrgId}",
+            invitation.Id,
+            prospectClient != null,
+            prospectClient?.Id,
+            prospectClient?.Status,
+            unmergedStagedNotices,
+            request.ExistingOrganizationId);
+
+        var transferredCount = 0;
         var newNoticeIds = new List<Guid>();
         var organizationId = request.ExistingOrganizationId;
         var organizationName = membership.Organization.Name;
+        Guid caOrgIdCaptured = default;
 
         var strategy = _dbContext.Database.CreateExecutionStrategy();
         await strategy.ExecuteAsync(async () =>
@@ -836,7 +923,7 @@ public class CaClientService : ICaClientService
             }
 
             // Add CA as member with role="ca"
-            _dbContext.OrganizationMembers.Add(new OrganizationMember
+            var caMembership = new OrganizationMember
             {
                 OrganizationId = organizationId,
                 UserId = invitation.CaUserId,
@@ -849,7 +936,40 @@ public class CaClientService : ICaClientService
                 AccessExpiresAt = invitation.AccessDurationDays.HasValue
                     ? DateTime.UtcNow.AddDays(invitation.AccessDurationDays.Value)
                     : null
-            });
+            };
+            _dbContext.OrganizationMembers.Add(caMembership);
+
+            // Get CA's own organization (for cross-org visibility)
+            var caOrgId = await _dbContext.OrganizationMembers
+                .Where(m => m.UserId == invitation.CaUserId && m.Role == "owner" && m.Status == "active" && m.Organization.DeletedAt == null)
+                .OrderBy(m => m.JoinedAt)
+                .Select(m => m.OrganizationId)
+                .FirstOrDefaultAsync();
+            caOrgIdCaptured = caOrgId;
+
+            // Create CaBoGstinLink for cross-organization notice visibility
+            if (caOrgId != default)
+            {
+                var gstinHash = ComputeGstinHash(invitation.Gstin);
+                _dbContext.CaBoGstinLinks.Add(new CaBoGstinLink
+                {
+                    CaOrganizationId = caOrgId,
+                    BoOrganizationId = organizationId,
+                    GstinHash = gstinHash,
+                    CaUserId = invitation.CaUserId,
+                    CaMembershipId = caMembership.Id,
+                    IsActive = true
+                });
+
+                // Link all additional GSTINs that the CA has for this client
+                // This ensures cross-org visibility for all client GSTINs, not just the invitation one
+                await _caBoGstinLinkService.LinkAllClientGstinsAsync(
+                    caOrgId,
+                    organizationId,
+                    invitation.CaUserId,
+                    caMembership.Id,
+                    CancellationToken.None);
+            }
 
             invitation.Status = "accepted";
             invitation.RespondedAt = DateTime.UtcNow;
@@ -858,7 +978,7 @@ public class CaClientService : ICaClientService
 
             await _dbContext.SaveChangesAsync();
 
-            // Merge staged notices (same logic as AcceptInvitationAsync)
+            // Transfer notices from CA's org to BO's org
             if (prospectClient != null)
             {
                 var primaryGstin = await _dbContext.OrganizationGstins
@@ -866,50 +986,31 @@ public class CaClientService : ICaClientService
 
                 if (primaryGstin != null)
                 {
-                    foreach (var staged in prospectClient.StagedNotices.Where(n => !n.MergedToNotices))
+                    // Get the notice IDs before transferring (for AI processing queue)
+                    var noticesToTransfer = await _dbContext.Notices
+                        .Where(n => n.CaProspectClientId == prospectClient.Id && n.DeletedAt == null)
+                        .Select(n => new { n.Id, n.ProcessingStatus })
+                        .ToListAsync();
+
+                    // Transfer notices: update OrganizationId to BO's org, clear CaProspectClientId, set GstinId
+                    transferredCount = await _dbContext.Notices
+                        .Where(n => n.CaProspectClientId == prospectClient.Id && n.DeletedAt == null)
+                        .ExecuteUpdateAsync(s => s
+                            .SetProperty(n => n.OrganizationId, organizationId)
+                            .SetProperty(n => n.CaProspectClientId, (Guid?)null)
+                            .SetProperty(n => n.GstinId, primaryGstin.Id));
+
+                    _logger.LogInformation(
+                        "Transferred {Count} notices from CA to BO org {OrgId}",
+                        transferredCount, organizationId);
+
+                    // Queue AI processing for notices that haven't been processed yet
+                    foreach (var notice in noticesToTransfer)
                     {
-                        var existingNotice = await FindMatchingNoticeAsync(organizationId, staged);
-                        if (existingNotice != null)
+                        if (notice.ProcessingStatus == NoticeProcessingStatus.Queued)
                         {
-                            staged.MergedToNotices = true;
-                            staged.MergedNoticeId = existingNotice.Id;
-                            staged.MergedAt = DateTime.UtcNow;
-                            mergedCount++;
-                            continue;
+                            newNoticeIds.Add(notice.Id);
                         }
-
-                        var notice = new Notice
-                        {
-                            OrganizationId = organizationId,
-                            UploadedById = staged.UploadedByUserId,
-                            NoticeNumber = staged.NoticeNumber,
-                            NoticeType = staged.NoticeType,
-                            NoticeCategory = staged.NoticeCategory,
-                            Summary = staged.Summary,
-                            Gstin = staged.Gstin,
-                            GstinId = primaryGstin.Id,
-                            IssueDate = staged.IssueDate,
-                            ResponseDeadline = staged.ResponseDeadline,
-                            TaxAmount = staged.TaxAmount,
-                            PenaltyAmount = staged.PenaltyAmount,
-                            InterestAmount = staged.InterestAmount,
-                            PeriodFrom = staged.PeriodFrom,
-                            PeriodTo = staged.PeriodTo,
-                            FinancialYear = staged.FinancialYear,
-                            FileUrl = staged.FileUrl ?? string.Empty,
-                            FileName = staged.FileName ?? string.Empty,
-                            FileSize = staged.FileSize ?? 0,
-                            FileMimeType = staged.FileMimeType,
-                            FileHash = staged.FileHash,
-                            Metadata = new Dictionary<string, object> { ["source_ca_staged_notice_id"] = staged.Id.ToString() }
-                        };
-                        _dbContext.Notices.Add(notice);
-                        await _dbContext.SaveChangesAsync();
-
-                        staged.MergedToNotices = true;
-                        staged.MergedNoticeId = notice.Id;
-                        staged.MergedAt = DateTime.UtcNow;
-                        newNoticeIds.Add(notice.Id);
                     }
                 }
 
@@ -922,11 +1023,35 @@ public class CaClientService : ICaClientService
             await transaction.CommitAsync();
         });
 
-        // Usage counting and AI-processing after commit
+        // Queue AI processing for transferred notices that need it
         foreach (var noticeId in newNoticeIds)
         {
-            await _usageService.IncrementNoticeCountAsync(organizationId);
             _backgroundJobs.Enqueue<INoticeProcessingJob>(job => job.ProcessAsync(noticeId, CancellationToken.None));
+        }
+
+        // Auto-import existing GstNoticeRaw records for this GSTIN from the CA's organization
+        var autoImportedCount = 0;
+        if (caOrgIdCaptured != default)
+        {
+            try
+            {
+                var autoImportResult = await _gstNoticeRawService.AutoImportForGstinAsync(
+                    caOrgIdCaptured,
+                    organizationId,
+                    invitation.Gstin,
+                    boUserId,
+                    CancellationToken.None);
+
+                autoImportedCount = autoImportResult.Imported;
+                _logger.LogInformation(
+                    "Auto-imported {Count} GST notices on link for org {OrgId} (duplicates: {Duplicates})",
+                    autoImportResult.Imported, organizationId, autoImportResult.SkippedAsDuplicate);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Auto-import failed for org {OrgId}, GSTIN {Gstin}",
+                    organizationId, invitation.Gstin);
+            }
         }
 
         await _auditService.LogAsync(new AuditLogEntry
@@ -940,20 +1065,19 @@ public class CaClientService : ICaClientService
             {
                 CaUserId = invitation.CaUserId,
                 InvitationId = invitation.Id,
-                MergedNoticeCount = mergedCount,
-                NewNoticeCount = newNoticeIds.Count
+                TransferredNoticeCount = transferredCount
             }
         });
 
         _logger.LogInformation(
-            "BO {BoUserId} linked CA {CaUserId} to existing organization {OrganizationId} ({MergedCount} merged, {NewCount} new notices)",
-            boUserId, invitation.CaUserId, organizationId, mergedCount, newNoticeIds.Count);
+            "BO {BoUserId} linked CA {CaUserId} to existing organization {OrganizationId} ({TransferredCount} notices transferred)",
+            boUserId, invitation.CaUserId, organizationId, transferredCount);
 
         return new AcceptCaClientInvitationLinkResult(
             OrganizationId: organizationId,
             OrganizationName: organizationName,
-            MergedNoticeCount: mergedCount,
-            NewNoticeCount: newNoticeIds.Count
+            MergedNoticeCount: transferredCount,
+            NewNoticeCount: 0
         );
     }
 
@@ -1053,6 +1177,16 @@ public class CaClientService : ICaClientService
     private static string HashToken(string token)
     {
         var bytes = SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(token));
+        return Convert.ToHexString(bytes).ToLowerInvariant();
+    }
+
+    private static string ComputeGstinHash(string gstin)
+    {
+        if (string.IsNullOrWhiteSpace(gstin))
+            return string.Empty;
+
+        var normalized = gstin.Trim().ToUpperInvariant();
+        var bytes = SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(normalized));
         return Convert.ToHexString(bytes).ToLowerInvariant();
     }
 

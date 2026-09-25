@@ -62,6 +62,7 @@ public static class ServiceExtensions
         // Register application services
         services.AddScoped<INoticeService, NoticeServiceImpl>();
         services.AddScoped<INoticeServiceExtended, NoticeServiceImpl>();
+        services.AddScoped<ICrossOrgNoticeVisibilityService, CrossOrgNoticeVisibilityService>();
         // Note: IOrganizationService and IUserService stub registrations removed
         // Real org management is in OrganizationManagementService
         // Real auth is in AuthService
@@ -80,6 +81,7 @@ public static class ServiceExtensions
         services.AddScoped<ICaAccessService, CaAccessService>();
         services.AddScoped<ICaGstinAuthorizationService, CaGstinAuthorizationService>();
         services.AddScoped<ICaClientService, CaClientService>();
+        services.AddScoped<ICaBoGstinLinkService, CaBoGstinLinkService>();
 
         // Register GSTN integration services
         services.AddScoped<Services.GstnIntegration.IGstnConnectionService, Services.GstnIntegration.GstnConnectionService>();

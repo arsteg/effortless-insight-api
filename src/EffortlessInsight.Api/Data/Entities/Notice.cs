@@ -69,8 +69,30 @@ public class Notice : BaseEntity
     [MaxLength(15)]
     public string? Gstin { get; set; }
 
+    /// <summary>
+    /// SHA-256 hash of the normalized (uppercase) GSTIN.
+    /// Used for cross-organization notice visibility queries since GSTINs are AES-GCM encrypted.
+    /// Computed on insert/update.
+    /// </summary>
+    [MaxLength(64)]
+    public string? GstinHash { get; set; }
+
     public Guid? GstinId { get; set; }
     public OrganizationGstin? GstinNavigation { get; set; }
+
+    // ============================================================================
+    // CA Prospect Client (Pre-Acceptance Tracking)
+    // ============================================================================
+
+    /// <summary>
+    /// When not null, indicates this notice was uploaded by a CA for a prospect client
+    /// before the BO accepted the invitation. The notice will be transferred to BO's
+    /// organization when they accept (OrganizationId updated, this field cleared).
+    /// </summary>
+    public Guid? CaProspectClientId { get; set; }
+
+    [ForeignKey(nameof(CaProspectClientId))]
+    public CaProspectClient? CaProspectClient { get; set; }
 
     // ============================================================================
     // Dates

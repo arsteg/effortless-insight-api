@@ -188,6 +188,32 @@ public class NoticeProcessingJob : INoticeProcessingJob
         notice.NoticeCategory = report.Metadata.NoticeCategory;
         notice.NoticeNumber = report.Metadata.NoticeNumber ?? notice.NoticeNumber;
         notice.Gstin = report.Metadata.Gstin ?? notice.Gstin;
+
+        // Link notice to CA prospect client after GSTIN extraction
+        if (notice.CaProspectClientId == null && !string.IsNullOrEmpty(notice.Gstin))
+        {
+            var uploader = await _db.Users.FindAsync(notice.UploadedById);
+            if (uploader?.IsCA == true)
+            {
+                var gstinHash = ICrossOrgNoticeVisibilityService.ComputeGstinHash(notice.Gstin);
+                var stagingClient = await _db.CaProspectClients
+                    .FirstOrDefaultAsync(p =>
+                        p.CaUserId == notice.UploadedById &&
+                        p.GstinHash == gstinHash &&
+                        p.Status == "staging" &&
+                        p.DeletedAt == null,
+                        cancellationToken);
+
+                if (stagingClient != null)
+                {
+                    notice.CaProspectClientId = stagingClient.Id;
+                    _logger.LogInformation(
+                        "Linked notice {NoticeId} to CA prospect client {ProspectClientId} after GSTIN extraction",
+                        notice.Id, stagingClient.Id);
+                }
+            }
+        }
+
         notice.IssueDate = report.Metadata.IssueDate;
         notice.ResponseDeadline = report.Metadata.ResponseDeadline;
         notice.TaxAmount = report.Metadata.TaxAmount;

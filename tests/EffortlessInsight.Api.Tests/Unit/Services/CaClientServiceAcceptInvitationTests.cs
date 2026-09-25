@@ -5,6 +5,7 @@ using EffortlessInsight.Api.Services;
 using EffortlessInsight.Api.Services.Billing;
 using EffortlessInsight.Api.Services.Email;
 using EffortlessInsight.Api.Services.Encryption;
+using EffortlessInsight.Api.Services.GstSync;
 using EffortlessInsight.Api.Services.Organizations;
 using EffortlessInsight.Api.Tests.Helpers;
 using FluentAssertions;
@@ -118,6 +119,11 @@ public class CaClientServiceAcceptInvitationTests
         var usageServiceMock = new Mock<IUsageService>();
         var backgroundJobsMock = new Mock<IBackgroundJobClient>();
         var auditServiceMock = new Mock<IAuditService>();
+        var caBoGstinLinkServiceMock = new Mock<ICaBoGstinLinkService>();
+        var gstNoticeRawServiceMock = new Mock<IGstNoticeRawService>();
+        gstNoticeRawServiceMock
+            .Setup(s => s.AutoImportForGstinAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AutoImportResult { Imported = 0, SkippedAsDuplicate = 0, Failed = 0 });
         var configuration = new ConfigurationBuilder().Build();
 
         var service = new CaClientService(
@@ -125,6 +131,8 @@ public class CaClientServiceAcceptInvitationTests
             gstinValidator,
             caGstinAuth,
             orgMock.Object,
+            caBoGstinLinkServiceMock.Object,
+            gstNoticeRawServiceMock.Object,
             userManagerMock.Object,
             emailServiceMock.Object,
             fileStorageMock.Object,

@@ -803,7 +803,18 @@ public record NoticeDto(
     string? SummaryEn,
     Guid? AssignedToId,
     string? AssignedToName,
-    DateTime CreatedAt
+    DateTime CreatedAt,
+    // Cross-organization visibility fields
+    /// <summary>Organization ID that owns this notice.</summary>
+    Guid OrganizationId,
+    /// <summary>Name of the organization that owns this notice.</summary>
+    string? OrganizationName = null,
+    /// <summary>True if this notice belongs to a linked organization (cross-org visibility).</summary>
+    bool IsFromLinkedOrganization = false,
+    /// <summary>Type of linked organization: "ca_org" (notice from CA's org) or "bo_org" (notice from BO's org), null if not linked.</summary>
+    string? LinkedOrganizationType = null,
+    /// <summary>True if this notice is read-only (cross-org notices cannot be edited).</summary>
+    bool IsReadOnly = false
 );
 
 public record NoticeDetailDto(
@@ -831,7 +842,18 @@ public record NoticeDetailDto(
     Guid? AssignedToId,
     string? AssignedToName,
     DateTime CreatedAt,
-    DateTime? UpdatedAt
+    DateTime? UpdatedAt,
+    // Cross-organization visibility fields
+    /// <summary>Organization ID that owns this notice.</summary>
+    Guid OrganizationId,
+    /// <summary>Name of the organization that owns this notice.</summary>
+    string? OrganizationName = null,
+    /// <summary>True if this notice belongs to a linked organization (cross-org visibility).</summary>
+    bool IsFromLinkedOrganization = false,
+    /// <summary>Type of linked organization: "ca_org" (notice from CA's org) or "bo_org" (notice from BO's org), null if not linked.</summary>
+    string? LinkedOrganizationType = null,
+    /// <summary>True if this notice is read-only (cross-org notices cannot be edited).</summary>
+    bool IsReadOnly = false
 );
 
 // Notice Relationship DTOs
