@@ -3070,6 +3070,7 @@ namespace EffortlessInsight.Api.Data.Migrations
                         .HasColumnType("integer");
 
                     b.Property<string>("Status")
+                        .IsConcurrencyToken()
                         .IsRequired()
                         .HasMaxLength(20)
                         .HasColumnType("character varying(20)");
@@ -3195,6 +3196,7 @@ namespace EffortlessInsight.Api.Data.Migrations
                         .HasColumnType("uuid");
 
                     b.Property<string>("Status")
+                        .IsConcurrencyToken()
                         .IsRequired()
                         .HasMaxLength(20)
                         .HasColumnType("character varying(20)");
@@ -4229,6 +4231,7 @@ namespace EffortlessInsight.Api.Data.Migrations
                         .HasColumnType("uuid");
 
                     b.Property<Guid>("OrganizationId")
+                        .IsConcurrencyToken()
                         .HasColumnType("uuid");
 
                     b.Property<string>("StateCode")
@@ -4438,6 +4441,7 @@ namespace EffortlessInsight.Api.Data.Migrations
                         .HasColumnType("character varying(255)");
 
                     b.Property<Guid>("OrganizationId")
+                        .IsConcurrencyToken()
                         .HasColumnType("uuid");
 
                     b.Property<bool>("PdfAvailable")
@@ -4638,6 +4642,7 @@ namespace EffortlessInsight.Api.Data.Migrations
                         .HasColumnType("integer");
 
                     b.Property<Guid>("OrganizationId")
+                        .IsConcurrencyToken()
                         .HasColumnType("uuid");
 
                     b.Property<int>("PdfsDownloaded")
@@ -5514,6 +5519,7 @@ namespace EffortlessInsight.Api.Data.Migrations
                         .HasColumnType("character varying(100)");
 
                     b.Property<Guid>("OrganizationId")
+                        .IsConcurrencyToken()
                         .HasColumnType("uuid");
 
                     b.Property<int?>("PageCount")
@@ -5546,6 +5552,7 @@ namespace EffortlessInsight.Api.Data.Migrations
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("ProcessingStatus")
+                        .IsConcurrencyToken()
                         .IsRequired()
                         .HasMaxLength(30)
                         .HasColumnType("character varying(30)");

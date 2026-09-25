@@ -13,6 +13,8 @@ using Microsoft.EntityFrameworkCore;
 
 namespace EffortlessInsight.Api.Services.Organizations;
 
+public record CreateCaProspectRequest(string Gstin, string? ClientDisplayName);
+
 public record CreateCaClientInvitationRequest(
     string Gstin,
     string Email,
@@ -109,6 +111,7 @@ public record AcceptCaClientInvitationLinkResult(
 
 public interface ICaClientService
 {
+    Task<Guid> CreateProspectAsync(Guid caUserId, CreateCaProspectRequest request);
     Task<CaClientInvitationDto> CreateInvitationAsync(Guid caUserId, CreateCaClientInvitationRequest request);
     Task<CaClientInvitationDetailsDto> GetInvitationByTokenAsync(string token);
     Task<List<CaClientListItemDto>> GetClientsAsync(Guid caUserId);
@@ -117,6 +120,7 @@ public interface ICaClientService
     Task<UploadCaStagedNoticeResult> UploadStagedNoticeAsync(
         Guid caUserId, Guid prospectClientId, Stream fileStream, string fileName, string contentType,
         CancellationToken cancellationToken = default);
+    Task<ExistingOrganizationForGstinDto> PrepareOrganizationAsync(string token, Guid boUserId, AcceptCaClientInvitationRequest request);
     Task<AcceptCaClientInvitationResult> AcceptInvitationAsync(string token, Guid boUserId, AcceptCaClientInvitationRequest request);
     Task DeclineInvitationAsync(string token, Guid boUserId);
     Task<CaClientInvitationDetailsWithContextDto> GetInvitationWithContextAsync(string token, Guid boUserId);
@@ -175,6 +179,47 @@ public class CaClientService : ICaClientService
         _logger = logger;
     }
 
+    public async Task<Guid> CreateProspectAsync(Guid caUserId, CreateCaProspectRequest request)
+    {
+        var user = await _userManager.FindByIdAsync(caUserId.ToString());
+        if (user?.IsCA != true) throw new UnauthorizedAccessException("NOT_A_CA");
+        var orgId = await _dbContext.OrganizationMembers.Where(m => m.UserId == caUserId
+                && m.Role == "owner" && m.Status == "active" && m.DeletedAt == null && m.Organization.DeletedAt == null)
+            .OrderBy(m => m.JoinedAt).Select(m => (Guid?)m.OrganizationId).FirstOrDefaultAsync()
+            ?? throw new InvalidOperationException("CA_ORGANIZATION_NOT_FOUND");
+        var validation = _gstinValidator.Validate(request.Gstin);
+        if (!validation.IsValid) throw new InvalidOperationException($"INVALID_GSTIN: {validation.ErrorMessage}");
+        if (request.ClientDisplayName?.Length > 255) throw new InvalidOperationException("INVALID_CLIENT_NAME");
+        var gstin = validation.Gstin!;
+        var hash = ComputeGstinHash(gstin);
+        var attempt = 0;
+        return await _dbContext.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+        {
+            if (attempt++ > 0) _dbContext.ChangeTracker.Clear();
+            await using var transaction = await _dbContext.Database.BeginTransactionAsync();
+            await CaWorkspaceWrites.LockAsync(_dbContext, orgId, gstin);
+            var prospect = await _dbContext.CaProspectClients.FirstOrDefaultAsync(p => p.CaUserId == caUserId && p.GstinHash == hash);
+            if (prospect != null && (prospect.Status != "staging" || prospect.DeletedAt != null))
+                throw new InvalidOperationException("PROSPECT_CLIENT_NOT_STAGING");
+            if (prospect == null)
+            {
+                prospect = new CaProspectClient { CaUserId = caUserId, Gstin = gstin, GstinHash = hash };
+                _dbContext.CaProspectClients.Add(prospect);
+            }
+            if (!string.IsNullOrWhiteSpace(request.ClientDisplayName)) prospect.ClientDisplayName = request.ClientDisplayName.Trim();
+            var gstins = await _dbContext.OrganizationGstins.Where(g => g.OrganizationId == orgId && g.DeletedAt == null).ToListAsync();
+            if (!gstins.Any(g => g.Gstin == gstin))
+                _dbContext.OrganizationGstins.Add(new OrganizationGstin {
+                    OrganizationId = orgId, Gstin = gstin, StateCode = gstin[..2],
+                    StateName = await _gstinValidator.GetStateNameAsync(gstin[..2]) ?? "Unknown",
+                    IsPrimary = gstins.Count == 0, Source = OrganizationGstinSource.Manual, Status = "active"
+                });
+            await _dbContext.SaveChangesAsync();
+            await transaction.CommitAsync();
+            return prospect.Id;
+        });
+    }
+
     public async Task<CaClientInvitationDto> CreateInvitationAsync(Guid caUserId, CreateCaClientInvitationRequest request)
     {
         // Input validation
@@ -213,6 +258,8 @@ public class CaClientService : ICaClientService
 
         var gstinHash = _caGstinAuth.ComputeGstinHash(gstin);
         var normalizedEmail = request.Email.Trim().ToLowerInvariant();
+
+        await CreateProspectAsync(caUserId, new(gstin, request.ClientDisplayName));
 
         // Upsert the prospect client: a CA may already be staging notices for
         // this GSTIN before ever sending an invitation.
@@ -322,15 +369,16 @@ public class CaClientService : ICaClientService
     public async Task<List<CaClientListItemDto>> GetClientsAsync(Guid caUserId)
     {
         var activeClients = await _dbContext.OrganizationMembers
-            .Where(m => m.UserId == caUserId && m.Role == "ca" && m.Status == "active" && m.Organization.DeletedAt == null)
+            .Where(m => m.UserId == caUserId && m.Role == "ca" && m.Status == "active" && m.DeletedAt == null && m.Organization.DeletedAt == null
+                && (m.AccessExpiresAt == null || m.AccessExpiresAt > DateTime.UtcNow))
             .Select(m => new
             {
                 m.OrganizationId,
                 m.Organization.Name,
                 m.ClientReference,
                 m.AccessExpiresAt,
-                NoticeCount = _dbContext.Notices.Count(n => n.OrganizationId == m.OrganizationId),
-                OverdueCount = _dbContext.Notices.Count(n => n.OrganizationId == m.OrganizationId
+                NoticeCount = _dbContext.Notices.IgnoreQueryFilters().Count(n => n.OrganizationId == m.OrganizationId && n.DeletedAt == null),
+                OverdueCount = _dbContext.Notices.IgnoreQueryFilters().Count(n => n.OrganizationId == m.OrganizationId && n.DeletedAt == null
                     && n.ResponseDeadline != null
                     && n.ResponseDeadline < DateOnly.FromDateTime(DateTime.UtcNow)
                     && n.Status != "closed" && n.Status != "resolved")
@@ -511,258 +559,68 @@ public class CaClientService : ICaClientService
         return new UploadCaStagedNoticeResult(notice.Id, notice.FileName, notice.FileSize, notice.CreatedAt);
     }
 
-    public async Task<AcceptCaClientInvitationResult> AcceptInvitationAsync(string token, Guid boUserId, AcceptCaClientInvitationRequest request)
+    public async Task<ExistingOrganizationForGstinDto> PrepareOrganizationAsync(
+        string token, Guid boUserId, AcceptCaClientInvitationRequest request)
     {
-        var tokenHash = HashToken(token);
+        var invitation = await ValidateRecipientAsync(token, boUserId);
+        var existing = await FindUserOrganizationByGstinAsync(boUserId, invitation.Gstin);
+        if (existing != null) return existing;
+        if (invitation.Status != "pending") throw new InvalidOperationException("INVITATION_ACCEPTED");
 
-        var invitation = await _dbContext.CaClientInvitations
-            .FirstOrDefaultAsync(i => i.TokenHash == tokenHash)
-            ?? throw new KeyNotFoundException("INVALID_INVITATION");
-
-        if (invitation.Status != "pending")
+        var attempt = 0;
+        return await _dbContext.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
         {
-            throw new InvalidOperationException($"INVITATION_{invitation.Status.ToUpperInvariant()}");
-        }
+            if (attempt++ > 0) _dbContext.ChangeTracker.Clear();
+            await using var transaction = await _dbContext.Database.BeginTransactionAsync();
+            await CaWorkspaceWrites.LockAsync(_dbContext, invitation.CaOrganizationId, invitation.Gstin);
+            var invitationId = invitation.Id;
+            invitation = await _dbContext.CaClientInvitations.SingleAsync(i => i.Id == invitationId);
+            await _dbContext.Entry(invitation).ReloadAsync();
+            if (invitation.Status != "pending") throw new InvalidOperationException("INVITATION_ACCEPTED");
+            var found = await FindUserOrganizationByGstinAsync(boUserId, invitation.Gstin);
+            if (found != null) return found;
+            var org = await _organizationService.CreateAsync(new CreateOrganizationRequest(
+                request.OrganizationName, request.LegalName, invitation.Gstin, request.Industry,
+                request.State, request.City, request.AnnualTurnoverRange), boUserId);
+            // Preparation does not grant access or move any work. The BO activates
+            // this organization's subscription before explicitly accepting.
+            invitation.ResultingOrganizationId = org.Id;
+            await _dbContext.SaveChangesAsync();
+            await transaction.CommitAsync();
+            return new ExistingOrganizationForGstinDto(org.Id, org.Name, "owner");
+        });
+    }
 
-        if (invitation.ExpiresAt < DateTime.UtcNow)
+    public async Task<AcceptCaClientInvitationResult> AcceptInvitationAsync(
+        string token, Guid boUserId, AcceptCaClientInvitationRequest request)
+    {
+        var invitation = await ValidateRecipientAsync(token, boUserId);
+        var existing = await FindUserOrganizationByGstinAsync(boUserId, invitation.Gstin)
+            ?? throw new InvalidOperationException("ORGANIZATION_SETUP_REQUIRED");
+        var result = await AcceptInvitationLinkAsync(token, boUserId, new(existing.OrganizationId));
+        // The client switches context explicitly using the existing auth endpoint.
+        return new(result.OrganizationId, result.OrganizationName, result.MergedNoticeCount,
+            result.NewNoticeCount, string.Empty, 0);
+    }
+
+    private async Task<CaClientInvitation> ValidateRecipientAsync(string token, Guid boUserId)
+    {
+        var hash = HashToken(token);
+        var invitation = await _dbContext.CaClientInvitations.FirstOrDefaultAsync(i => i.TokenHash == hash && i.DeletedAt == null)
+            ?? throw new KeyNotFoundException("INVALID_INVITATION");
+        var user = await _userManager.FindByIdAsync(boUserId.ToString())
+            ?? throw new KeyNotFoundException("USER_NOT_FOUND");
+        if (!string.Equals(user.NormalizedEmail, invitation.EmailNormalized, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("EMAIL_MISMATCH");
+        if (invitation.Status == "accepted" && invitation.AcceptedUserId == boUserId) return invitation;
+        if (invitation.Status != "pending") throw new InvalidOperationException($"INVITATION_{invitation.Status.ToUpperInvariant()}");
+        if (invitation.ExpiresAt <= DateTime.UtcNow)
         {
             invitation.Status = "expired";
             await _dbContext.SaveChangesAsync();
             throw new InvalidOperationException("INVITATION_EXPIRED");
         }
-
-        var boUser = await _userManager.FindByIdAsync(boUserId.ToString())
-            ?? throw new KeyNotFoundException("USER_NOT_FOUND");
-
-        if (!string.Equals(boUser.NormalizedEmail, invitation.EmailNormalized.ToUpperInvariant(), StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException("EMAIL_MISMATCH");
-        }
-
-        // Race guard: re-check that no other CA has claimed this GSTIN since the
-        // invite was sent (e.g. the BO independently accepted a different CA's
-        // invitation for the same GSTIN in the interim).
-        var authResult = await _caGstinAuth.CheckAsync(invitation.Gstin, invitation.CaUserId);
-        if (!authResult.IsAllowed)
-        {
-            throw new InvalidOperationException($"GSTIN_ALREADY_CLAIMED: {authResult.ErrorMessage}");
-        }
-
-        var prospectClient = await _dbContext.CaProspectClients
-            .Include(p => p.StagedNotices)
-            .FirstOrDefaultAsync(p => p.CaClientInvitationId == invitation.Id);
-
-        // Diagnostic logging to trace merge flow
-        var unmergedStagedNotices = prospectClient?.StagedNotices?.Count(n => !n.MergedToNotices) ?? 0;
-        _logger.LogInformation(
-            "AcceptInvitation: invitationId={InvitationId}, prospectClientFound={Found}, prospectClientId={ProspectClientId}, " +
-            "prospectClientStatus={Status}, unmergedStagedNoticeCount={Count}",
-            invitation.Id,
-            prospectClient != null,
-            prospectClient?.Id,
-            prospectClient?.Status,
-            unmergedStagedNotices);
-
-        Guid newOrganizationId = default;
-        string newOrganizationName = string.Empty;
-        string accessToken = string.Empty;
-        int expiresIn = 0;
-        var transferredCount = 0;
-        var newNoticeIds = new List<Guid>();
-        Guid caOrgIdCaptured = default;
-
-        // Execution strategy handles Npgsql's transient-failure retries; a bare
-        // BeginTransactionAsync would break that retry behavior.
-        var strategy = _dbContext.Database.CreateExecutionStrategy();
-        await strategy.ExecuteAsync(async () =>
-        {
-            await using var transaction = await _dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable);
-
-            // Re-validate inside the transaction, defending against a concurrent
-            // accept of the same invitation (e.g. a double-submitted request).
-            await _dbContext.Entry(invitation).ReloadAsync();
-            if (invitation.Status != "pending")
-            {
-                throw new InvalidOperationException($"INVITATION_{invitation.Status.ToUpperInvariant()}");
-            }
-
-            // Reuses the exact same org-creation code path as normal BO
-            // registration, so the resulting organization is indistinguishable
-            // from any other BO org (same subscription defaults, trial eligibility).
-            // GSTIN comes from the invitation, not the request - the BO never
-            // re-enters it, which prevents a mismatch with what the CA staged data for.
-            var createRequest = new CreateOrganizationRequest(
-                Name: request.OrganizationName,
-                LegalName: request.LegalName,
-                Gstin: invitation.Gstin,
-                Industry: request.Industry,
-                State: request.State,
-                City: request.City,
-                AnnualTurnoverRange: request.AnnualTurnoverRange
-            );
-
-            var orgResult = await _organizationService.CreateAsync(createRequest, boUserId);
-            newOrganizationId = orgResult.Id;
-            newOrganizationName = orgResult.Name;
-            accessToken = orgResult.AccessToken!;
-            expiresIn = orgResult.ExpiresIn!.Value;
-
-            // Create CA membership in BO's organization
-            var caMembership = new OrganizationMember
-            {
-                OrganizationId = newOrganizationId,
-                UserId = invitation.CaUserId,
-                Role = "ca",
-                IsExternal = true,
-                ClientReference = invitation.ClientDisplayName,
-                Status = "active",
-                InvitedById = invitation.CaUserId,
-                JoinedAt = DateTime.UtcNow,
-                AccessExpiresAt = invitation.AccessDurationDays.HasValue
-                    ? DateTime.UtcNow.AddDays(invitation.AccessDurationDays.Value)
-                    : null
-            };
-            _dbContext.OrganizationMembers.Add(caMembership);
-
-            // Get CA's own organization (for cross-org visibility)
-            var caOrgId = await _dbContext.OrganizationMembers
-                .Where(m => m.UserId == invitation.CaUserId && m.Role == "owner" && m.Status == "active" && m.Organization.DeletedAt == null)
-                .OrderBy(m => m.JoinedAt)
-                .Select(m => m.OrganizationId)
-                .FirstOrDefaultAsync();
-            caOrgIdCaptured = caOrgId;
-
-            // Create CaBoGstinLink for cross-organization notice visibility
-            if (caOrgId != default)
-            {
-                var gstinHash = ComputeGstinHash(invitation.Gstin);
-                _dbContext.CaBoGstinLinks.Add(new CaBoGstinLink
-                {
-                    CaOrganizationId = caOrgId,
-                    BoOrganizationId = newOrganizationId,
-                    GstinHash = gstinHash,
-                    CaUserId = invitation.CaUserId,
-                    CaMembershipId = caMembership.Id,
-                    IsActive = true
-                });
-
-                // Link all additional GSTINs that the CA has for this client
-                // This ensures cross-org visibility for all client GSTINs, not just the invitation one
-                await _caBoGstinLinkService.LinkAllClientGstinsAsync(
-                    caOrgId,
-                    newOrganizationId,
-                    invitation.CaUserId,
-                    caMembership.Id,
-                    CancellationToken.None);
-            }
-
-            invitation.Status = "accepted";
-            invitation.RespondedAt = DateTime.UtcNow;
-            invitation.AcceptedUserId = boUserId;
-            invitation.ResultingOrganizationId = newOrganizationId;
-
-            await _dbContext.SaveChangesAsync();
-
-            // Transfer notices from CA's org to BO's org
-            if (prospectClient != null)
-            {
-                var primaryGstin = await _dbContext.OrganizationGstins
-                    .FirstAsync(g => g.OrganizationId == newOrganizationId && g.IsPrimary);
-
-                // Get the notice IDs before transferring (for AI processing queue)
-                var noticesToTransfer = await _dbContext.Notices
-                    .Where(n => n.CaProspectClientId == prospectClient.Id && n.DeletedAt == null)
-                    .Select(n => new { n.Id, n.ProcessingStatus })
-                    .ToListAsync();
-
-                // Transfer notices: update OrganizationId to BO's org, clear CaProspectClientId, set GstinId
-                transferredCount = await _dbContext.Notices
-                    .Where(n => n.CaProspectClientId == prospectClient.Id && n.DeletedAt == null)
-                    .ExecuteUpdateAsync(s => s
-                        .SetProperty(n => n.OrganizationId, newOrganizationId)
-                        .SetProperty(n => n.CaProspectClientId, (Guid?)null)
-                        .SetProperty(n => n.GstinId, primaryGstin.Id));
-
-                _logger.LogInformation(
-                    "Transferred {Count} notices from CA to BO org {OrgId}",
-                    transferredCount, newOrganizationId);
-
-                // Queue AI processing for notices that haven't been processed yet
-                foreach (var notice in noticesToTransfer)
-                {
-                    if (notice.ProcessingStatus == NoticeProcessingStatus.Queued)
-                    {
-                        newNoticeIds.Add(notice.Id);
-                    }
-                }
-
-                prospectClient.Status = "merged";
-                prospectClient.MergedAt = DateTime.UtcNow;
-                prospectClient.MergedIntoOrganizationId = newOrganizationId;
-            }
-
-            await _dbContext.SaveChangesAsync();
-            await transaction.CommitAsync();
-        });
-
-        // Queue AI processing for transferred notices that need it
-        foreach (var noticeId in newNoticeIds)
-        {
-            _backgroundJobs.Enqueue<INoticeProcessingJob>(job => job.ProcessAsync(noticeId, CancellationToken.None));
-        }
-
-        // Auto-import existing GstNoticeRaw records for this GSTIN from the CA's organization
-        var autoImportedCount = 0;
-        if (caOrgIdCaptured != default)
-        {
-            try
-            {
-                var autoImportResult = await _gstNoticeRawService.AutoImportForGstinAsync(
-                    caOrgIdCaptured,
-                    newOrganizationId,
-                    invitation.Gstin,
-                    boUserId,
-                    CancellationToken.None);
-
-                autoImportedCount = autoImportResult.Imported;
-                _logger.LogInformation(
-                    "Auto-imported {Count} GST notices on acceptance for org {OrgId} (duplicates: {Duplicates})",
-                    autoImportResult.Imported, newOrganizationId, autoImportResult.SkippedAsDuplicate);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Auto-import failed for org {OrgId}, GSTIN {Gstin}",
-                    newOrganizationId, invitation.Gstin);
-            }
-        }
-
-        await _auditService.LogAsync(new AuditLogEntry
-        {
-            Action = "ca_client_invitation.accepted",
-            EntityType = "Organization",
-            EntityId = newOrganizationId,
-            UserId = boUserId,
-            OrganizationId = newOrganizationId,
-            NewValues = new
-            {
-                CaUserId = invitation.CaUserId,
-                InvitationId = invitation.Id,
-                TransferredNoticeCount = transferredCount
-            }
-        });
-
-        _logger.LogInformation(
-            "BO {BoUserId} accepted CA client invitation {InvitationId}, created organization {OrganizationId} ({TransferredCount} notices transferred)",
-            boUserId, invitation.Id, newOrganizationId, transferredCount);
-
-        return new AcceptCaClientInvitationResult(
-            OrganizationId: newOrganizationId,
-            OrganizationName: newOrganizationName,
-            MergedNoticeCount: transferredCount,
-            NewNoticeCount: 0,
-            AccessToken: accessToken,
-            ExpiresIn: expiresIn
-        );
+        return invitation;
     }
 
     public async Task DeclineInvitationAsync(string token, Guid boUserId)
@@ -799,6 +657,7 @@ public class CaClientService : ICaClientService
 
     public async Task<CaClientInvitationDetailsWithContextDto> GetInvitationWithContextAsync(string token, Guid boUserId)
     {
+        await ValidateRecipientAsync(token, boUserId);
         var tokenHash = HashToken(token);
         var invitation = await _dbContext.CaClientInvitations
             .Include(i => i.CaOrganization)
@@ -829,256 +688,123 @@ public class CaClientService : ICaClientService
     public async Task<AcceptCaClientInvitationLinkResult> AcceptInvitationLinkAsync(
         string token, Guid boUserId, AcceptCaClientInvitationLinkRequest request)
     {
-        var tokenHash = HashToken(token);
-
-        var invitation = await _dbContext.CaClientInvitations
-            .FirstOrDefaultAsync(i => i.TokenHash == tokenHash)
-            ?? throw new KeyNotFoundException("INVALID_INVITATION");
-
-        if (invitation.Status != "pending")
+        var invitation = await ValidateRecipientAsync(token, boUserId);
+        CaHandoverResult? handover = null;
+        var attempt = 0;
+        var result = await _dbContext.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
         {
-            throw new InvalidOperationException($"INVITATION_{invitation.Status.ToUpperInvariant()}");
-        }
-
-        if (invitation.ExpiresAt < DateTime.UtcNow)
-        {
-            invitation.Status = "expired";
-            await _dbContext.SaveChangesAsync();
-            throw new InvalidOperationException("INVITATION_EXPIRED");
-        }
-
-        var boUser = await _userManager.FindByIdAsync(boUserId.ToString())
-            ?? throw new KeyNotFoundException("USER_NOT_FOUND");
-
-        if (!string.Equals(boUser.NormalizedEmail, invitation.EmailNormalized.ToUpperInvariant(), StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException("EMAIL_MISMATCH");
-        }
-
-        // Verify the user owns/admins the specified organization
-        var membership = await _dbContext.OrganizationMembers
-            .Include(m => m.Organization)
-            .ThenInclude(o => o.OrganizationGstins)
-            .FirstOrDefaultAsync(m =>
-                m.UserId == boUserId &&
-                m.OrganizationId == request.ExistingOrganizationId &&
-                (m.Role == "owner" || m.Role == "admin") &&
-                m.Status == "active" &&
-                m.Organization.DeletedAt == null)
-            ?? throw new InvalidOperationException("ORGANIZATION_NOT_FOUND_OR_NOT_AUTHORIZED");
-
-        // Verify the organization has the matching GSTIN
-        var hasMatchingGstin = membership.Organization.OrganizationGstins
-            .Any(g => g.Gstin == invitation.Gstin && g.DeletedAt == null);
-
-        if (!hasMatchingGstin)
-        {
-            throw new InvalidOperationException("GSTIN_MISMATCH");
-        }
-
-        // Check if the CA is already a member
-        var existingCaMembership = await _dbContext.OrganizationMembers
-            .FirstOrDefaultAsync(m =>
-                m.OrganizationId == request.ExistingOrganizationId &&
-                m.UserId == invitation.CaUserId &&
-                m.Status == "active");
-
-        if (existingCaMembership != null)
-        {
-            throw new InvalidOperationException("CA_ALREADY_MEMBER");
-        }
-
-        var prospectClient = await _dbContext.CaProspectClients
-            .Include(p => p.StagedNotices)
-            .FirstOrDefaultAsync(p => p.CaClientInvitationId == invitation.Id);
-
-        // Diagnostic logging to trace merge flow
-        var unmergedStagedNotices = prospectClient?.StagedNotices?.Count(n => !n.MergedToNotices) ?? 0;
-        _logger.LogInformation(
-            "AcceptInvitationLink: invitationId={InvitationId}, prospectClientFound={Found}, prospectClientId={ProspectClientId}, " +
-            "prospectClientStatus={Status}, unmergedStagedNoticeCount={Count}, targetOrgId={TargetOrgId}",
-            invitation.Id,
-            prospectClient != null,
-            prospectClient?.Id,
-            prospectClient?.Status,
-            unmergedStagedNotices,
-            request.ExistingOrganizationId);
-
-        var transferredCount = 0;
-        var newNoticeIds = new List<Guid>();
-        var organizationId = request.ExistingOrganizationId;
-        var organizationName = membership.Organization.Name;
-        Guid caOrgIdCaptured = default;
-
-        var strategy = _dbContext.Database.CreateExecutionStrategy();
-        await strategy.ExecuteAsync(async () =>
-        {
-            await using var transaction = await _dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable);
-
-            // Re-validate inside the transaction
+            if (attempt++ > 0) _dbContext.ChangeTracker.Clear();
+            handover = null;
+            await using var transaction = await _dbContext.Database.BeginTransactionAsync();
+            // Same locks as every notice/sync insert; acquisition order avoids deadlocks.
+            foreach (var orgId in new[] { invitation.CaOrganizationId, request.ExistingOrganizationId }.Distinct().Order())
+                await CaWorkspaceWrites.LockAsync(_dbContext, orgId, invitation.Gstin);
+            var invitationId = invitation.Id;
+            invitation = await _dbContext.CaClientInvitations.SingleAsync(i => i.Id == invitationId);
             await _dbContext.Entry(invitation).ReloadAsync();
-            if (invitation.Status != "pending")
+            var membership = await _dbContext.OrganizationMembers.Include(m => m.Organization)
+                .FirstOrDefaultAsync(m => m.OrganizationId == request.ExistingOrganizationId
+                    && m.UserId == boUserId && (m.Role == "owner" || m.Role == "admin")
+                    && m.Status == "active" && m.DeletedAt == null
+                    && (m.AccessExpiresAt == null || m.AccessExpiresAt > DateTime.UtcNow));
+            if (membership == null) throw new InvalidOperationException("ORGANIZATION_NOT_FOUND_OR_NOT_AUTHORIZED");
+            var orgIdTarget = membership.OrganizationId;
+            if (invitation.Status == "accepted")
             {
-                throw new InvalidOperationException($"INVITATION_{invitation.Status.ToUpperInvariant()}");
+                if (invitation.AcceptedUserId != boUserId || invitation.ResultingOrganizationId != orgIdTarget)
+                    throw new InvalidOperationException("INVITATION_ACCEPTED");
+                var receipt = await _dbContext.AuditLogs.FirstOrDefaultAsync(a => a.EntityId == invitation.Id
+                    && a.OrganizationId == orgIdTarget && a.Action == "ca_client_invitation.handover");
+                if (receipt != null)
+                    return new AcceptCaClientInvitationLinkResult(orgIdTarget, membership.Organization.Name,
+                        ReadReceiptCount(receipt, "Transferred"), ReadReceiptCount(receipt, "Created"));
+                // A pre-fix acceptance can be repaired through the same recipient-
+                // authorized endpoint, without reinstating a revoked CA membership.
+
             }
+            var repairing = invitation.Status == "accepted";
+            if (!repairing && (invitation.Status != "pending" || invitation.ExpiresAt <= DateTime.UtcNow))
+                throw new InvalidOperationException("INVITATION_EXPIRED");
+            if (orgIdTarget == invitation.CaOrganizationId)
+                throw new InvalidOperationException("INVALID_HANDOVER_DESTINATION");
 
-            // Add CA as member with role="ca"
-            var caMembership = new OrganizationMember
+            var now = DateTime.UtcNow;
+            var hasPlan = await _dbContext.BillingSubscriptions.AnyAsync(s => s.OrganizationId == orgIdTarget
+                && s.DeletedAt == null && ((s.Status == "active" && s.CurrentPeriodEnd > now)
+                    || (s.Status == "trialing" && s.TrialEnd > now)));
+            if (!hasPlan || membership.Organization.SubscriptionStatus is "paused" or "past_due" or "cancelled" or "expired")
+                throw new InvalidOperationException("SUBSCRIPTION_REQUIRED");
+            var gstins = await _dbContext.OrganizationGstins.Where(g => g.OrganizationId == orgIdTarget
+                && g.DeletedAt == null).ToListAsync();
+            var destination = gstins.SingleOrDefault(g => string.Equals(g.Gstin, invitation.Gstin, StringComparison.OrdinalIgnoreCase))
+                ?? throw new InvalidOperationException("GSTIN_MISMATCH");
+            var sourceOwner = await _dbContext.OrganizationMembers.AnyAsync(m => m.OrganizationId == invitation.CaOrganizationId
+                && m.UserId == invitation.CaUserId && m.Role == "owner" && m.Status == "active" && m.DeletedAt == null);
+            if (!sourceOwner) throw new InvalidOperationException("CA_ORGANIZATION_NOT_FOUND");
+            var prospect = await _dbContext.CaProspectClients.FirstOrDefaultAsync(p => p.CaClientInvitationId == invitation.Id
+                && p.CaUserId == invitation.CaUserId && p.DeletedAt == null)
+                ?? throw new InvalidOperationException("PROSPECT_CLIENT_NOT_FOUND");
+            await _dbContext.Entry(prospect).ReloadAsync();
+            if (prospect.Status != "staging" && !(repairing && prospect.Status == "merged"
+                && prospect.MergedIntoOrganizationId == orgIdTarget))
+                throw new InvalidOperationException("PROSPECT_CLIENT_NOT_STAGING");
+
+            if (!repairing)
             {
-                OrganizationId = organizationId,
-                UserId = invitation.CaUserId,
-                Role = "ca",
-                IsExternal = true,
-                ClientReference = invitation.ClientDisplayName,
-                Status = "active",
-                InvitedById = boUserId,
-                JoinedAt = DateTime.UtcNow,
-                AccessExpiresAt = invitation.AccessDurationDays.HasValue
-                    ? DateTime.UtcNow.AddDays(invitation.AccessDurationDays.Value)
-                    : null
-            };
-            _dbContext.OrganizationMembers.Add(caMembership);
-
-            // Get CA's own organization (for cross-org visibility)
-            var caOrgId = await _dbContext.OrganizationMembers
-                .Where(m => m.UserId == invitation.CaUserId && m.Role == "owner" && m.Status == "active" && m.Organization.DeletedAt == null)
-                .OrderBy(m => m.JoinedAt)
-                .Select(m => m.OrganizationId)
-                .FirstOrDefaultAsync();
-            caOrgIdCaptured = caOrgId;
-
-            // Create CaBoGstinLink for cross-organization notice visibility
-            if (caOrgId != default)
-            {
-                var gstinHash = ComputeGstinHash(invitation.Gstin);
-                _dbContext.CaBoGstinLinks.Add(new CaBoGstinLink
+                var caMember = await _dbContext.OrganizationMembers.FirstOrDefaultAsync(m =>
+                    m.OrganizationId == orgIdTarget && m.UserId == invitation.CaUserId);
+                if (caMember == null)
                 {
-                    CaOrganizationId = caOrgId,
-                    BoOrganizationId = organizationId,
-                    GstinHash = gstinHash,
-                    CaUserId = invitation.CaUserId,
-                    CaMembershipId = caMembership.Id,
-                    IsActive = true
-                });
-
-                // Link all additional GSTINs that the CA has for this client
-                // This ensures cross-org visibility for all client GSTINs, not just the invitation one
-                await _caBoGstinLinkService.LinkAllClientGstinsAsync(
-                    caOrgId,
-                    organizationId,
-                    invitation.CaUserId,
-                    caMembership.Id,
-                    CancellationToken.None);
-            }
-
-            invitation.Status = "accepted";
-            invitation.RespondedAt = DateTime.UtcNow;
-            invitation.AcceptedUserId = boUserId;
-            invitation.ResultingOrganizationId = organizationId;
-
-            await _dbContext.SaveChangesAsync();
-
-            // Transfer notices from CA's org to BO's org
-            if (prospectClient != null)
-            {
-                var primaryGstin = await _dbContext.OrganizationGstins
-                    .FirstOrDefaultAsync(g => g.OrganizationId == organizationId && g.IsPrimary);
-
-                if (primaryGstin != null)
-                {
-                    // Get the notice IDs before transferring (for AI processing queue)
-                    var noticesToTransfer = await _dbContext.Notices
-                        .Where(n => n.CaProspectClientId == prospectClient.Id && n.DeletedAt == null)
-                        .Select(n => new { n.Id, n.ProcessingStatus })
-                        .ToListAsync();
-
-                    // Transfer notices: update OrganizationId to BO's org, clear CaProspectClientId, set GstinId
-                    transferredCount = await _dbContext.Notices
-                        .Where(n => n.CaProspectClientId == prospectClient.Id && n.DeletedAt == null)
-                        .ExecuteUpdateAsync(s => s
-                            .SetProperty(n => n.OrganizationId, organizationId)
-                            .SetProperty(n => n.CaProspectClientId, (Guid?)null)
-                            .SetProperty(n => n.GstinId, primaryGstin.Id));
-
-                    _logger.LogInformation(
-                        "Transferred {Count} notices from CA to BO org {OrgId}",
-                        transferredCount, organizationId);
-
-                    // Queue AI processing for notices that haven't been processed yet
-                    foreach (var notice in noticesToTransfer)
-                    {
-                        if (notice.ProcessingStatus == NoticeProcessingStatus.Queued)
-                        {
-                            newNoticeIds.Add(notice.Id);
-                        }
-                    }
+                    caMember = new OrganizationMember { OrganizationId = orgIdTarget, UserId = invitation.CaUserId };
+                    _dbContext.OrganizationMembers.Add(caMember);
                 }
+                else if (caMember.Role != "ca") throw new InvalidOperationException("CA_MEMBERSHIP_ROLE_CONFLICT");
+                caMember.Role = "ca";
+                caMember.IsExternal = true;
+                caMember.Status = "active";
+                caMember.DeletedAt = null;
+                caMember.InvitedById = boUserId;
+                caMember.JoinedAt = now;
+                caMember.ClientReference = invitation.ClientDisplayName;
+                caMember.AccessExpiresAt = invitation.AccessDurationDays.HasValue ? now.AddDays(invitation.AccessDurationDays.Value) : null;
 
-                prospectClient.Status = "merged";
-                prospectClient.MergedAt = DateTime.UtcNow;
-                prospectClient.MergedIntoOrganizationId = organizationId;
             }
 
+            handover = await new CaDistributorHandover(_dbContext).TransferAsync(invitation, prospect, destination);
+            invitation.Status = "accepted";
+            invitation.AcceptedUserId = boUserId;
+            invitation.RespondedAt = now;
+            invitation.ResultingOrganizationId = orgIdTarget;
+            await _dbContext.SaveChangesAsync();
+            _dbContext.AuditLogs.Add(new AuditLog
+            {
+                Action = "ca_client_invitation.handover", EntityType = "CaClientInvitation", EntityId = invitation.Id,
+                UserId = boUserId, OrganizationId = orgIdTarget,
+                NewValues = new Dictionary<string, object> {
+                    ["SourceOrganizationId"] = invitation.CaOrganizationId, ["ProspectClientId"] = prospect.Id,
+                    ["DestinationGstinId"] = destination.Id, ["Transferred"] = handover.Transferred,
+                    ["Created"] = handover.Created, ["Reconciled"] = handover.Reconciled, ["Repair"] = repairing }
+            });
             await _dbContext.SaveChangesAsync();
             await transaction.CommitAsync();
+            return new AcceptCaClientInvitationLinkResult(orgIdTarget, membership.Organization.Name,
+                handover.Transferred, handover.Created);
         });
-
-        // Queue AI processing for transferred notices that need it
-        foreach (var noticeId in newNoticeIds)
+        if (handover != null)
         {
-            _backgroundJobs.Enqueue<INoticeProcessingJob>(job => job.ProcessAsync(noticeId, CancellationToken.None));
-        }
-
-        // Auto-import existing GstNoticeRaw records for this GSTIN from the CA's organization
-        var autoImportedCount = 0;
-        if (caOrgIdCaptured != default)
-        {
-            try
+            foreach (var id in handover.ProcessingIds)
             {
-                var autoImportResult = await _gstNoticeRawService.AutoImportForGstinAsync(
-                    caOrgIdCaptured,
-                    organizationId,
-                    invitation.Gstin,
-                    boUserId,
-                    CancellationToken.None);
-
-                autoImportedCount = autoImportResult.Imported;
-                _logger.LogInformation(
-                    "Auto-imported {Count} GST notices on link for org {OrgId} (duplicates: {Duplicates})",
-                    autoImportResult.Imported, organizationId, autoImportResult.SkippedAsDuplicate);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Auto-import failed for org {OrgId}, GSTIN {Gstin}",
-                    organizationId, invitation.Gstin);
+                try { _backgroundJobs.Enqueue<INoticeProcessingJob>(j => j.ProcessAsync(id, CancellationToken.None)); }
+                catch (Exception ex) { _logger.LogError(ex, "Notice {NoticeId} remains queued after handover", id); }
             }
         }
+        return result;
+    }
 
-        await _auditService.LogAsync(new AuditLogEntry
-        {
-            Action = "ca_client_invitation.linked",
-            EntityType = "Organization",
-            EntityId = organizationId,
-            UserId = boUserId,
-            OrganizationId = organizationId,
-            NewValues = new
-            {
-                CaUserId = invitation.CaUserId,
-                InvitationId = invitation.Id,
-                TransferredNoticeCount = transferredCount
-            }
-        });
-
-        _logger.LogInformation(
-            "BO {BoUserId} linked CA {CaUserId} to existing organization {OrganizationId} ({TransferredCount} notices transferred)",
-            boUserId, invitation.CaUserId, organizationId, transferredCount);
-
-        return new AcceptCaClientInvitationLinkResult(
-            OrganizationId: organizationId,
-            OrganizationName: organizationName,
-            MergedNoticeCount: transferredCount,
-            NewNoticeCount: 0
-        );
+    private static int ReadReceiptCount(AuditLog receipt, string key)
+    {
+        if (receipt.NewValues == null || !receipt.NewValues.TryGetValue(key, out var value)) return 0;
+        return value is System.Text.Json.JsonElement element ? element.GetInt32() : Convert.ToInt32(value);
     }
 
     private async Task<ExistingOrganizationForGstinDto?> FindUserOrganizationByGstinAsync(Guid userId, string gstin)
@@ -1121,31 +847,6 @@ public class CaClientService : ICaClientService
             OrganizationName: match.Name,
             Role: match.Role
         );
-    }
-
-    private async Task<Notice?> FindMatchingNoticeAsync(Guid organizationId, CaStagedNotice staged)
-    {
-        if (!string.IsNullOrWhiteSpace(staged.SourceReferenceNumber))
-        {
-            var byReference = await _dbContext.Notices
-                .FirstOrDefaultAsync(n => n.OrganizationId == organizationId && n.NoticeNumber == staged.SourceReferenceNumber);
-            if (byReference != null)
-            {
-                return byReference;
-            }
-        }
-
-        if (!string.IsNullOrWhiteSpace(staged.FileHash))
-        {
-            var byHash = await _dbContext.Notices
-                .FirstOrDefaultAsync(n => n.OrganizationId == organizationId && n.FileHash == staged.FileHash);
-            if (byHash != null)
-            {
-                return byHash;
-            }
-        }
-
-        return null;
     }
 
     private async Task SendInvitationEmailAsync(CaClientInvitation invitation, ApplicationUser? caUser, string token)

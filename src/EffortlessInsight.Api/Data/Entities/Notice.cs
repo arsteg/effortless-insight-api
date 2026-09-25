@@ -87,7 +87,7 @@ public class Notice : BaseEntity
     /// <summary>
     /// When not null, indicates this notice was uploaded by a CA for a prospect client
     /// before the BO accepted the invitation. The notice will be transferred to BO's
-    /// organization when they accept (OrganizationId updated, this field cleared).
+    /// organization when they accept. This field is retained as handover provenance.
     /// </summary>
     public Guid? CaProspectClientId { get; set; }
 

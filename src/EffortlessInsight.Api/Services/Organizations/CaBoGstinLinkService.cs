@@ -190,12 +190,17 @@ public class CaBoGstinLinkService : ICaBoGstinLinkService
         var normalizedGstin = gstin.Trim().ToUpperInvariant();
 
         // Find all BO organizations where CA is an external member (role="ca", IsExternal=true)
+        var gstinHash = ComputeGstinHash(normalizedGstin);
         var caMemberships = await _db.OrganizationMembers
             .AsNoTracking()
             .Where(m =>
                 m.UserId == caUserId &&
                 m.Role == "ca" &&
                 m.IsExternal &&
+                // Membership alone is not consent to share the CA firm's separate
+                // data. Preserve only explicit legacy links awaiting handover.
+                _db.CaBoGstinLinks.Any(l => l.CaMembershipId == m.Id && l.GstinHash == gstinHash
+                    && l.IsActive && l.DeletedAt == null) &&
                 m.Status == "active" &&
                 m.DeletedAt == null &&
                 m.Organization.DeletedAt == null &&

@@ -23,6 +23,21 @@ public class CaClientsController : ControllerBase
     private readonly ICaClientService _caClientService;
     private readonly ILogger<CaClientsController> _logger;
 
+    [HttpPost]
+    public async Task<IActionResult> CreateProspect([FromBody] CreateCaProspectRequest request)
+    {
+        try
+        {
+            var id = await _caClientService.CreateProspectAsync(GetCurrentUserId(), request);
+            return Ok(new ApiResponse<object>(true, new { ProspectClientId = id }));
+        }
+        catch (UnauthorizedAccessException) { return Forbid(); }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new ApiErrorResponse(false, ex.Message.Split(':')[0], ex.Message));
+        }
+    }
+
     public CaClientsController(ICaClientService caClientService, ILogger<CaClientsController> logger)
     {
         _caClientService = caClientService;
@@ -96,6 +111,7 @@ public class CaClientsController : ControllerBase
     /// itself is the secret, same trust model as the existing invitation flow.
     /// </summary>
     [HttpGet("invitations/{token}")]
+    [CaInvitationOnboarding]
     [AllowAnonymous]
     [ProducesResponseType(typeof(ApiResponse<CaClientInvitationDetailsDto>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
@@ -119,6 +135,7 @@ public class CaClientsController : ControllerBase
     /// "Set up your organization".
     /// </summary>
     [HttpGet("invitations/{token}/context")]
+    [CaInvitationOnboarding]
     [ProducesResponseType(typeof(ApiResponse<CaClientInvitationDetailsWithContextDto>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetInvitationWithContext(string token)
@@ -133,6 +150,29 @@ public class CaClientsController : ControllerBase
         {
             return NotFound(new ApiErrorResponse(false, "INVALID_INVITATION", "Invitation not found or invalid"));
         }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new ApiErrorResponse(false, ex.Message.Split(':')[0], ex.Message));
+        }
+    }
+
+    [HttpPost("invitations/{token}/prepare")]
+    [CaInvitationOnboarding]
+    public async Task<IActionResult> PrepareOrganization(string token, [FromBody] AcceptCaClientInvitationRequest request)
+    {
+        try
+        {
+            var result = await _caClientService.PrepareOrganizationAsync(token, GetCurrentUserId(), request);
+            return Ok(new ApiResponse<ExistingOrganizationForGstinDto>(true, result));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(new ApiErrorResponse(false, "INVALID_INVITATION", "Invitation not found"));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new ApiErrorResponse(false, ex.Message.Split(':')[0], ex.Message));
+        }
     }
 
     /// <summary>
@@ -141,6 +181,7 @@ public class CaClientsController : ControllerBase
     /// the same GSTIN - no new organization is created, just a membership link.
     /// </summary>
     [HttpPost("invitations/{token}/link")]
+    [CaInvitationOnboarding]
     [ProducesResponseType(typeof(ApiResponse<AcceptCaClientInvitationLinkResult>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
@@ -185,6 +226,10 @@ public class CaClientsController : ControllerBase
         {
             return Conflict(new ApiErrorResponse(false, "CA_ALREADY_MEMBER", "This CA is already a member of the organization"));
         }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new ApiErrorResponse(false, ex.Message.Split(':')[0], ex.Message));
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to link CA client invitation");
@@ -201,6 +246,7 @@ public class CaClientsController : ControllerBase
     /// if they don't have an account yet, they must register/verify/login first.
     /// </summary>
     [HttpPost("invitations/{token}/accept")]
+    [CaInvitationOnboarding]
     [ProducesResponseType(typeof(ApiResponse<AcceptCaClientInvitationResult>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
@@ -253,6 +299,10 @@ public class CaClientsController : ControllerBase
         {
             return BadRequest(new ApiErrorResponse(false, "ORGANIZATION_LIMIT_EXCEEDED", ex.Message.Replace("ORGANIZATION_LIMIT_EXCEEDED: ", "")));
         }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new ApiErrorResponse(false, ex.Message.Split(':')[0], ex.Message));
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to accept CA client invitation");
@@ -266,6 +316,7 @@ public class CaClientsController : ControllerBase
     /// hold it and re-invite later.
     /// </summary>
     [HttpPost("invitations/{token}/decline")]
+    [CaInvitationOnboarding]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]

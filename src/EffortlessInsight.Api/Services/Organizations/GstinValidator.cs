@@ -121,7 +121,9 @@ public class GstinValidatorService : IGstinValidatorService
         // Check if any organization has this GSTIN as their primary GSTIN
         // Gstin is stored AES-GCM encrypted, so we materialize and compare in memory
         var primaryGstins = await _dbContext.OrganizationGstins
-            .Where(g => g.IsPrimary && g.DeletedAt == null && g.Organization.DeletedAt == null)
+                .Where(g => g.IsPrimary && g.DeletedAt == null && g.Organization.DeletedAt == null
+                    && !_dbContext.OrganizationMembers.Any(m => m.OrganizationId == g.OrganizationId
+                        && m.Role == "owner" && m.Status == "active" && m.DeletedAt == null && m.User.IsCA))
             .Select(g => g.Gstin)
             .ToListAsync();
 

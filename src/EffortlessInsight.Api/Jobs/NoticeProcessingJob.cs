@@ -83,13 +83,24 @@ public class NoticeProcessingJob : INoticeProcessingJob
             return;
         }
 
+        // A recovered handover job may already be queued. Only one worker may
+        // transition a queued/failed notice into processing (optimistic concurrency).
+        if (notice.ProcessingStatus != NoticeProcessingStatus.Queued &&
+            notice.ProcessingStatus != NoticeProcessingStatus.Retrying &&
+            notice.ProcessingStatus != NoticeProcessingStatus.Failed) return;
+
         // Update status to OCR processing (first stage)
         notice.Status = NoticeStatus.Processing;
         notice.ProcessingStatus = NoticeProcessingStatus.OcrProcessing;
         notice.ProcessingStartedAt = DateTime.UtcNow;
         notice.ProcessingAttempts++;
         notice.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync(cancellationToken);
+        try { await _db.SaveChangesAsync(cancellationToken); }
+        catch (DbUpdateConcurrencyException)
+        {
+            _logger.LogInformation("Notice {NoticeId} processing was claimed or ownership changed", noticeId);
+            return;
+        }
 
         var stopwatch = Stopwatch.StartNew();
 
@@ -147,6 +158,12 @@ public class NoticeProcessingJob : INoticeProcessingJob
 
             try
             {
+                // A failed routing transaction can leave ownership/GSTIN changes
+                // tracked in memory. Persist failure against the last committed row.
+                _db.ChangeTracker.Clear();
+                notice = await _db.Notices.IgnoreQueryFilters().FirstOrDefaultAsync(n => n.Id == noticeId && n.DeletedAt == null, cancellationToken);
+                if (notice == null || notice.ProcessingStatus == NoticeProcessingStatus.Completed
+                    || notice.ProcessingStatus == NoticeProcessingStatus.Queued) return;
                 await HandleFailureAsync(notice, ex.Message, stopwatch.ElapsedMilliseconds, cancellationToken);
             }
             catch (Exception failureEx)
@@ -183,11 +200,24 @@ public class NoticeProcessingJob : INoticeProcessingJob
     {
         var report = result.Report!;
 
+        var detectedGstin = report.Metadata.Gstin?.Trim().ToUpperInvariant();
+        var isCaWorkspace = await _db.OrganizationMembers.AnyAsync(m => m.OrganizationId == notice.OrganizationId
+            && m.Role == "owner" && m.User.IsCA && m.Status == "active" && m.DeletedAt == null, cancellationToken);
+        if (isCaWorkspace && !string.IsNullOrWhiteSpace(detectedGstin) && !new Services.Organizations.GstinValidatorService(_db).Validate(detectedGstin).IsValid)
+            throw new InvalidOperationException("GSTIN_REVIEW_REQUIRED: The detected GSTIN is invalid. Review the document and correct its GSTIN.");
+        if (isCaWorkspace && string.IsNullOrWhiteSpace(detectedGstin) && string.IsNullOrWhiteSpace(notice.Gstin))
+            throw new InvalidOperationException("GSTIN_REVIEW_REQUIRED: No GSTIN could be identified. Select the client GSTIN and retry processing.");
+
+        if (notice.CaProspectClientId != null && !string.IsNullOrWhiteSpace(notice.Gstin)
+            && !string.IsNullOrWhiteSpace(report.Metadata.Gstin)
+            && !string.Equals(notice.Gstin.Trim(), report.Metadata.Gstin.Trim(), StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("The document GSTIN does not match the selected client GSTIN. Review the document before processing it again.");
+
         // Update notice with extracted metadata
         notice.NoticeType = report.Metadata.NoticeType;
         notice.NoticeCategory = report.Metadata.NoticeCategory;
         notice.NoticeNumber = report.Metadata.NoticeNumber ?? notice.NoticeNumber;
-        notice.Gstin = report.Metadata.Gstin ?? notice.Gstin;
+        notice.Gstin = string.IsNullOrWhiteSpace(detectedGstin) ? notice.Gstin : detectedGstin;
 
         // Link notice to CA prospect client after GSTIN extraction
         if (notice.CaProspectClientId == null && !string.IsNullOrEmpty(notice.Gstin))

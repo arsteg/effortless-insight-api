@@ -180,6 +180,9 @@ public class CaClientServiceAcceptInvitationTests
             ExpiresAt = DateTime.UtcNow.AddDays(14),
             AccessDurationDays = accessDurationDays
         };
+        db.OrganizationMembers.Add(new OrganizationMember {
+            OrganizationId = caOrg.Id, UserId = caUserId, Role = "owner", Status = "active"
+        });
         db.CaClientInvitations.Add(invitation);
         db.SaveChanges();
 
@@ -187,6 +190,15 @@ public class CaClientServiceAcceptInvitationTests
         db.SaveChanges();
 
         return (invitation, prospectClient);
+    }
+
+    private static async Task PreparePaidOrganization(CaClientService service, ApplicationDbContext db, string token, Guid boUserId)
+    {
+        var org = await service.PrepareOrganizationAsync(token, boUserId, DefaultAcceptRequest());
+        db.BillingSubscriptions.Add(new EffortlessInsight.Api.Data.Entities.Billing.BillingSubscription {
+            OrganizationId = org.OrganizationId, Status = "active", CurrentPeriodEnd = DateTime.UtcNow.AddDays(30)
+        });
+        await db.SaveChangesAsync();
     }
 
     private static AcceptCaClientInvitationRequest DefaultAcceptRequest() => new(
@@ -197,6 +209,71 @@ public class CaClientServiceAcceptInvitationTests
         City: null,
         AnnualTurnoverRange: null
     );
+
+    [Fact]
+    public async Task PreparationDoesNotAcceptOrGrantCaAccess()
+    {
+        var (service, db, ca, bo, _) = CreateService();
+        var (invite, prospect) = SeedPendingInvitation(db, ca, HashTokenForTest("prepare"));
+        var destination = await service.PrepareOrganizationAsync("prepare", bo, DefaultAcceptRequest());
+        invite.Status.Should().Be("pending");
+        prospect.Status.Should().Be("staging");
+        db.OrganizationMembers.Should().NotContain(m => m.OrganizationId == destination.OrganizationId && m.UserId == ca);
+    }
+
+    [Fact]
+    public async Task AcceptanceRequiresDestinationSubscription_NotAnotherOrganizationsPlan()
+    {
+        var (service, db, ca, bo, _) = CreateService();
+        var (invite, prospect) = SeedPendingInvitation(db, ca, HashTokenForTest("unpaid"));
+        var destination = await service.PrepareOrganizationAsync("unpaid", bo, DefaultAcceptRequest());
+        db.BillingSubscriptions.Add(new EffortlessInsight.Api.Data.Entities.Billing.BillingSubscription {
+            OrganizationId = invite.CaOrganizationId, Status = "active", CurrentPeriodEnd = DateTime.UtcNow.AddDays(30)
+        });
+        await db.SaveChangesAsync();
+        var act = () => service.AcceptInvitationLinkAsync("unpaid", bo, new(destination.OrganizationId));
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("SUBSCRIPTION_REQUIRED");
+        invite.Status.Should().Be("pending");
+        prospect.Status.Should().Be("staging");
+        db.OrganizationMembers.Should().NotContain(m => m.OrganizationId == destination.OrganizationId && m.UserId == ca);
+    }
+
+    [Fact]
+    public async Task RepeatedAcceptanceReturnsReceiptWithoutDuplicatingMembership()
+    {
+        var (service, db, ca, bo, _) = CreateService();
+        var (invite, _) = SeedPendingInvitation(db, ca, HashTokenForTest("retry"));
+        db.Notices.Add(new Notice { OrganizationId = invite.CaOrganizationId, UploadedById = ca,
+            Gstin = TestGstin, FileName = "notice.pdf", FileUrl = "original", ProcessingStatus = NoticeProcessingStatus.Completed });
+        await db.SaveChangesAsync();
+        await PreparePaidOrganization(service, db, "retry", bo);
+        var first = await service.AcceptInvitationAsync("retry", bo, DefaultAcceptRequest());
+        var retry = await service.AcceptInvitationAsync("retry", bo, DefaultAcceptRequest());
+        retry.MergedNoticeCount.Should().Be(first.MergedNoticeCount).And.Be(1);
+        db.OrganizationMembers.Count(m => m.OrganizationId == first.OrganizationId && m.UserId == ca).Should().Be(1);
+        db.Notices.Count().Should().Be(1);
+        db.AuditLogs.Count(a => a.Action == "ca_client_invitation.handover").Should().Be(1);
+    }
+
+    [Fact]
+    public async Task RepairOfOldAcceptanceDoesNotRestoreRevokedCaMembership()
+    {
+        var (service, db, ca, bo, org) = CreateService();
+        var (invite, prospect) = SeedPendingInvitation(db, ca, HashTokenForTest("repair"));
+        await PreparePaidOrganization(service, db, "repair", bo);
+        invite.Status = "accepted";
+        invite.AcceptedUserId = bo;
+        invite.ResultingOrganizationId = org;
+        prospect.Status = "merged";
+        prospect.MergedIntoOrganizationId = org;
+        db.OrganizationMembers.Add(new OrganizationMember { OrganizationId = org, UserId = ca, Role = "ca", Status = "removed", IsExternal = true });
+        db.Notices.Add(new Notice { OrganizationId = invite.CaOrganizationId, UploadedById = ca,
+            Gstin = TestGstin, FileName = "legacy.pdf", FileUrl = "original", ProcessingStatus = NoticeProcessingStatus.Completed });
+        db.SaveChanges(); // simulate data left by the old implementation
+        await service.AcceptInvitationLinkAsync("repair", bo, new(org));
+        db.Notices.Single().OrganizationId.Should().Be(org);
+        db.OrganizationMembers.Single(m => m.OrganizationId == org && m.UserId == ca).Status.Should().Be("removed");
+    }
 
     [Fact]
     public async Task AcceptInvitationAsync_MergesStagedNotices_WithZeroDuplicates()
@@ -240,11 +317,12 @@ public class CaClientServiceAcceptInvitationTests
             });
         await db.SaveChangesAsync();
 
+        await PreparePaidOrganization(service, db, token, boUserId);
         var result = await service.AcceptInvitationAsync(token, boUserId, DefaultAcceptRequest());
 
         result.OrganizationId.Should().Be(orgId);
         result.NewNoticeCount.Should().Be(2, "hash-A and hash-B are distinct files");
-        result.MergedNoticeCount.Should().Be(1, "the second hash-A upload is a duplicate of the first");
+        result.MergedNoticeCount.Should().Be(0, "legacy conversions are reported as new canonical notices");
 
         var notices = db.Notices.Where(n => n.OrganizationId == orgId).ToList();
         notices.Should().HaveCount(2);
@@ -265,6 +343,7 @@ public class CaClientServiceAcceptInvitationTests
         var tokenHash = HashTokenForTest(token);
         SeedPendingInvitation(db, caUserId, tokenHash, accessDurationDays: 90);
 
+        await PreparePaidOrganization(service, db, token, boUserId);
         await service.AcceptInvitationAsync(token, boUserId, DefaultAcceptRequest());
 
         var caMembership = db.OrganizationMembers.Single(m => m.OrganizationId == orgId && m.UserId == caUserId);
@@ -283,6 +362,7 @@ public class CaClientServiceAcceptInvitationTests
         var tokenHash = HashTokenForTest(token);
         var (invitation, prospectClient) = SeedPendingInvitation(db, caUserId, tokenHash);
 
+        await PreparePaidOrganization(service, db, token, boUserId);
         await service.AcceptInvitationAsync(token, boUserId, DefaultAcceptRequest());
 
         var reloadedInvitation = db.CaClientInvitations.Single(i => i.Id == invitation.Id);

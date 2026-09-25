@@ -203,6 +203,15 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
         // Configure entities
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(ApplicationDbContext).Assembly);
 
+        // An in-flight request must not write using ownership/state read before a handover.
+        modelBuilder.Entity<Notice>().Property(n => n.OrganizationId).IsConcurrencyToken();
+        modelBuilder.Entity<Notice>().Property(n => n.ProcessingStatus).IsConcurrencyToken();
+        modelBuilder.Entity<GstClient>().Property(n => n.OrganizationId).IsConcurrencyToken();
+        modelBuilder.Entity<GstNoticeRaw>().Property(n => n.OrganizationId).IsConcurrencyToken();
+        modelBuilder.Entity<GstSyncSession>().Property(n => n.OrganizationId).IsConcurrencyToken();
+        modelBuilder.Entity<CaProspectClient>().Property(n => n.Status).IsConcurrencyToken();
+        modelBuilder.Entity<CaClientInvitation>().Property(n => n.Status).IsConcurrencyToken();
+
         // Global query filter for soft delete
         modelBuilder.Entity<Organization>().HasQueryFilter(o => o.DeletedAt == null);
         modelBuilder.Entity<ApplicationUser>().HasQueryFilter(u => u.DeletedAt == null);
@@ -3248,10 +3257,27 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
         // See migration "SeedSubscriptionPlans" for the seed data.
     }
 
-    public override Task<int> SaveChangesAsync( CancellationToken cancellationToken = default )
+    public override async Task<int> SaveChangesAsync( CancellationToken cancellationToken = default )
     {
+        if (Services.Organizations.CaWorkspaceWrites.HasWrites(this))
+        {
+            if (Database.IsRelational() && Database.CurrentTransaction == null)
+            {
+                return await Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+                {
+                    await using var transaction = await Database.BeginTransactionAsync(cancellationToken);
+                    await Services.Organizations.CaWorkspaceWrites.PrepareAsync(this, cancellationToken);
+                    UpdateTimestamps();
+                    var count = await base.SaveChangesAsync(false, cancellationToken);
+                    await transaction.CommitAsync(cancellationToken);
+                    ChangeTracker.AcceptAllChanges();
+                    return count;
+                });
+            }
+            await Services.Organizations.CaWorkspaceWrites.PrepareAsync(this, cancellationToken);
+        }
         UpdateTimestamps();
-        return base.SaveChangesAsync(cancellationToken);
+        return await base.SaveChangesAsync(cancellationToken);
     }
 
     private void UpdateTimestamps()

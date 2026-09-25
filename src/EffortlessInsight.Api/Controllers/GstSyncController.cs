@@ -13,6 +13,7 @@ namespace EffortlessInsight.Api.Controllers;
 /// </summary>
 [Authorize]
 [ApiController]
+[TypeFilter(typeof(CaGstSyncRoutingFilter))]
 [Route("api/v1/gst-sync")]
 public class GstSyncController : ControllerBase
 {
@@ -44,6 +45,8 @@ public class GstSyncController : ControllerBase
 
     private Guid GetOrganizationId()
     {
+        if (HttpContext.Items.TryGetValue(CaGstSyncRoutingFilter.OrganizationKey, out var routed) && routed is Guid destination)
+            return destination;
         var orgId = _currentOrgService.OrganizationId;
         if (!orgId.HasValue)
             throw new UnauthorizedAccessException("Organization context required");
