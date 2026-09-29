@@ -97,6 +97,18 @@ public interface IGstSyncService
 }
 
 /// <summary>
+/// Result of auto-importing GST notices from GstNoticeRaw to a BO's Notice table.
+/// </summary>
+public record AutoImportResult
+{
+    public int Imported { get; init; }
+    public int SkippedAsDuplicate { get; init; }
+    public int Failed { get; init; }
+    public bool QuotaExceeded { get; init; }
+    public string? QuotaMessage { get; init; }
+}
+
+/// <summary>
 /// Service for managing raw GST notices.
 /// </summary>
 public interface IGstNoticeRawService
@@ -135,6 +147,23 @@ public interface IGstNoticeRawService
     /// Get notices with upcoming or overdue due dates for notifications.
     /// </summary>
     Task<UpcomingDueDatesResponse> GetUpcomingDueDatesAsync(Guid organizationId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Auto-imports unimported GstNoticeRaw records from a CA's organization to a BO's Notice table.
+    /// Used when a BO accepts an invitation or when CA syncs notices for an already-linked GSTIN.
+    /// </summary>
+    /// <param name="caOrganizationId">The CA's organization ID where GstNoticeRaw records exist.</param>
+    /// <param name="boOrganizationId">The BO's organization ID to import notices into.</param>
+    /// <param name="gstin">The GSTIN to filter notices by.</param>
+    /// <param name="boUserId">The BO user ID for attribution (UploadedById).</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Result containing import counts and quota status.</returns>
+    Task<AutoImportResult> AutoImportForGstinAsync(
+        Guid caOrganizationId,
+        Guid boOrganizationId,
+        string gstin,
+        Guid boUserId,
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>

@@ -19,6 +19,7 @@ public class SubscriptionsController : ControllerBase
     private readonly ICouponService _couponService;
     private readonly IFeatureAccessService _featureAccessService;
     private readonly ICurrentOrganizationService _currentOrganization;
+    private readonly ICaAccessService _caAccessService;
     private readonly ILogger<SubscriptionsController> _logger;
 
     public SubscriptionsController(
@@ -26,12 +27,14 @@ public class SubscriptionsController : ControllerBase
         ICouponService couponService,
         IFeatureAccessService featureAccessService,
         ICurrentOrganizationService currentOrganization,
+        ICaAccessService caAccessService,
         ILogger<SubscriptionsController> logger)
     {
         _subscriptionService = subscriptionService;
         _couponService = couponService;
         _featureAccessService = featureAccessService;
         _currentOrganization = currentOrganization;
+        _caAccessService = caAccessService;
         _logger = logger;
     }
 
@@ -56,6 +59,22 @@ public class SubscriptionsController : ControllerBase
         }
 
         return Ok(new ApiResponse<CurrentSubscriptionResponse>(true, subscription));
+    }
+
+    /// <summary>
+    /// Check whether the current user has an active admin-granted Free CA Access
+    /// grant. Self-registered CAs never buy a plan for their own firm org, so
+    /// GET /subscriptions/current always 404s for them - the frontend calls this
+    /// instead to know whether to treat the CA as having access.
+    /// </summary>
+    [HttpGet("ca-access-status")]
+    [ProducesResponseType(typeof(ApiResponse<CaAccessStatusResponse>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetCaAccessStatus()
+    {
+        var userId = GetCurrentUserId();
+        var hasActiveAccess = await _caAccessService.HasActiveFreeAccessAsync(userId);
+
+        return Ok(new ApiResponse<CaAccessStatusResponse>(true, new CaAccessStatusResponse(hasActiveAccess)));
     }
 
     /// <summary>

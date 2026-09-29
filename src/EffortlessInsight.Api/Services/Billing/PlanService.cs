@@ -32,7 +32,7 @@ public class PlanService : IPlanService
 
     public async Task<PlansListResponse> GetAllPlansAsync()
     {
-        var plans = await GetActivePlansAsync();
+        var plans = await GetActivePublicPlansAsync();
 
         var planDtos = plans.Select(MapToPlanDto).ToList();
 
@@ -281,6 +281,16 @@ public class PlanService : IPlanService
         }
 
         return plans;
+    }
+
+    /// <summary>
+    /// Gets all active public plans (excludes internal plans like ca_operator).
+    /// Used for public-facing plan listings where internal plans should not be shown.
+    /// </summary>
+    private async Task<List<SubscriptionPlan>> GetActivePublicPlansAsync()
+    {
+        var allPlans = await GetActivePlansAsync();
+        return allPlans.Where(p => p.IsPublic).ToList();
     }
 
     private static PlanDto MapToPlanDto(SubscriptionPlan plan)

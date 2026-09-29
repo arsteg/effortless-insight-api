@@ -2,8 +2,11 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using EffortlessInsight.Api.Data;
+using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.Data.Entities.GstSync;
 using EffortlessInsight.Api.DTOs;
+using EffortlessInsight.Api.Services.Organizations;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 
 namespace EffortlessInsight.Api.Services.GstSync;
@@ -15,15 +18,24 @@ public class GstSyncService : IGstSyncService
 {
     private readonly ApplicationDbContext _context;
     private readonly IGstSyncNotificationService _notificationService;
+    private readonly ICaBoGstinLinkService _caBoGstinLinkService;
+    private readonly IGstNoticeRawService _gstNoticeRawService;
+    private readonly UserManager<ApplicationUser> _userManager;
     private readonly ILogger<GstSyncService> _logger;
 
     public GstSyncService(
         ApplicationDbContext context,
         IGstSyncNotificationService notificationService,
+        ICaBoGstinLinkService caBoGstinLinkService,
+        IGstNoticeRawService gstNoticeRawService,
+        UserManager<ApplicationUser> userManager,
         ILogger<GstSyncService> logger)
     {
         _context = context;
         _notificationService = notificationService;
+        _caBoGstinLinkService = caBoGstinLinkService;
+        _gstNoticeRawService = gstNoticeRawService;
+        _userManager = userManager;
         _logger = logger;
     }
 
@@ -146,6 +158,23 @@ public class GstSyncService : IGstSyncService
 
         _logger.LogInformation("Synced {Count} notices for session {SessionId}: {New} new, {Updated} updated, {Unchanged} unchanged",
             request.Notices.Count, session.Id, newCount, updatedCount, unchangedCount);
+
+        // Auto-create CaBoGstinLinks if this is a CA syncing notices for a connected client's GSTIN
+        if (newCount > 0 || updatedCount > 0)
+        {
+            await EnsureCaBoGstinLinksAsync(
+                organizationId,
+                session.GstClient.CreatedByUserId,
+                session.Gstin,
+                cancellationToken);
+
+            // Auto-import newly synced notices to connected BO organizations
+            await AutoImportToConnectedBoOrgsAsync(
+                organizationId,
+                session.GstClient.CreatedByUserId,
+                session.Gstin,
+                cancellationToken);
+        }
 
         return new SyncNoticesResult
         {
@@ -493,5 +522,146 @@ public class GstSyncService : IGstSyncService
             PdfsDownloaded = session.PdfsDownloaded,
             PdfsFailed = session.PdfsFailed
         };
+    }
+
+    /// <summary>
+    /// Ensures CaBoGstinLinks exist for cross-org notice visibility when a CA syncs notices.
+    /// </summary>
+    private async Task EnsureCaBoGstinLinksAsync(
+        Guid organizationId,
+        Guid userId,
+        string gstin,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            // Check if the user is a CA
+            var user = await _userManager.FindByIdAsync(userId.ToString());
+            if (user == null || !user.IsCA)
+            {
+                return;
+            }
+
+            // Check if this organization is the CA's own org (where they are owner)
+            var isOwnerOfOrg = await _context.OrganizationMembers
+                .AnyAsync(m =>
+                    m.UserId == userId &&
+                    m.OrganizationId == organizationId &&
+                    m.Role == "owner" &&
+                    m.Status == "active" &&
+                    m.DeletedAt == null,
+                    cancellationToken);
+
+            if (!isOwnerOfOrg)
+            {
+                // Syncing to a client's org, not their own - no cross-org link needed
+                return;
+            }
+
+            // CA is syncing from their own organization - create links to connected BO orgs
+            var linksCreated = await _caBoGstinLinkService.EnsureLinksForGstinAsync(
+                organizationId,
+                userId,
+                gstin,
+                cancellationToken);
+
+            if (linksCreated > 0)
+            {
+                _logger.LogInformation(
+                    "Created {LinkCount} CaBoGstinLinks for CA {UserId} syncing notices with GSTIN {Gstin}",
+                    linksCreated, userId, gstin);
+            }
+        }
+        catch (Exception ex)
+        {
+            // Don't fail the sync if link creation fails
+            _logger.LogWarning(ex,
+                "Failed to create CaBoGstinLinks for user {UserId}, org {OrgId}, GSTIN {Gstin}",
+                userId, organizationId, gstin);
+        }
+    }
+
+    /// <summary>
+    /// Auto-imports newly synced notices to connected BO organizations.
+    /// When a CA syncs notices from their own org and an active CaBoGstinLink exists,
+    /// the notices are automatically imported to the BO's organization.
+    /// </summary>
+    private async Task AutoImportToConnectedBoOrgsAsync(
+        Guid caOrganizationId,
+        Guid caUserId,
+        string gstin,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            // Check if the user is a CA
+            var user = await _userManager.FindByIdAsync(caUserId.ToString());
+            if (user == null || !user.IsCA)
+            {
+                return;
+            }
+
+            // Check if this organization is the CA's own org (where they are owner)
+            var isOwnerOfOrg = await _context.OrganizationMembers
+                .AnyAsync(m =>
+                    m.UserId == caUserId &&
+                    m.OrganizationId == caOrganizationId &&
+                    m.Role == "owner" &&
+                    m.Status == "active" &&
+                    m.DeletedAt == null,
+                    cancellationToken);
+
+            if (!isOwnerOfOrg)
+            {
+                // Syncing to a client's org, not their own - no auto-import needed
+                return;
+            }
+
+            // Find active link for this GSTIN
+            var link = await _caBoGstinLinkService.FindActiveLinkForGstinAsync(
+                caOrganizationId, gstin, cancellationToken);
+
+            if (link == null)
+            {
+                // No active link - BO hasn't accepted invitation yet
+                return;
+            }
+
+            // Get BO owner for attribution
+            var boOwner = await _context.OrganizationMembers
+                .Where(m => m.OrganizationId == link.BoOrganizationId && m.Role == "owner" && m.DeletedAt == null)
+                .Select(m => m.UserId)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (boOwner == default)
+            {
+                _logger.LogWarning(
+                    "No owner found for BO org {BoOrgId}, skipping auto-import for GSTIN {Gstin}",
+                    link.BoOrganizationId, gstin);
+                return;
+            }
+
+            // Auto-import
+            var result = await _gstNoticeRawService.AutoImportForGstinAsync(
+                caOrganizationId,
+                link.BoOrganizationId,
+                gstin,
+                boOwner,
+                cancellationToken);
+
+            if (result.Imported > 0)
+            {
+                _logger.LogInformation(
+                    "Auto-imported {Count} GST notices on sync from CA org {CaOrgId} to BO org {BoOrgId} for GSTIN {Gstin}",
+                    result.Imported, caOrganizationId, link.BoOrganizationId, gstin);
+            }
+        }
+        catch (Exception ex)
+        {
+            // Don't fail the sync if auto-import fails
+            _logger.LogWarning(ex,
+                "Failed to auto-import notices for CA org {CaOrgId}, GSTIN {Gstin}",
+                caOrganizationId, gstin);
+        }
     }
 }

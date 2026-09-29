@@ -1,5 +1,6 @@
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities.Billing;
+using EffortlessInsight.Api.Services.Organizations;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Distributed;
 using System.Text.Json;
@@ -13,16 +14,19 @@ public class FeatureAccessService : IFeatureAccessService
 {
     private readonly ApplicationDbContext _dbContext;
     private readonly IDistributedCache _cache;
+    private readonly ICaAccessService _caAccessService;
     private readonly ILogger<FeatureAccessService> _logger;
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
 
     public FeatureAccessService(
         ApplicationDbContext dbContext,
         IDistributedCache cache,
+        ICaAccessService caAccessService,
         ILogger<FeatureAccessService> logger)
     {
         _dbContext = dbContext;
         _cache = cache;
+        _caAccessService = caAccessService;
         _logger = logger;
     }
 
@@ -41,6 +45,23 @@ public class FeatureAccessService : IFeatureAccessService
         {
             _logger.LogDebug(
                 "Organization {OrganizationId} has CA operator plan - granting access to feature {FeatureCode}",
+                organizationId, featureCode);
+            return true;
+        }
+
+        // Admin-granted, per-CA-user "Free CA Access" (distinct from the plan-level
+        // bypass above): applies when the org's owner is a CA with an active grant.
+        // Checked even when the org has no subscription row at all, since a freshly
+        // registered CA's own firm org typically hasn't purchased any plan.
+        var ownerId = await _dbContext.OrganizationMembers
+            .Where(m => m.OrganizationId == organizationId && m.Role == "owner" && m.Status == "active")
+            .Select(m => (Guid?)m.UserId)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (ownerId.HasValue && await _caAccessService.HasActiveFreeAccessAsync(ownerId.Value, cancellationToken))
+        {
+            _logger.LogDebug(
+                "Organization {OrganizationId} owner has active Free CA Access grant - granting access to feature {FeatureCode}",
                 organizationId, featureCode);
             return true;
         }

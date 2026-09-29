@@ -92,17 +92,35 @@ public class OrganizationManagementService : IOrganizationManagementService
 
     public async Task<CreateOrganizationResponse> CreateAsync(CreateOrganizationRequest request, Guid userId)
     {
-        // Validate GSTIN
-        var gstinResult = _gstinValidator.Validate(request.Gstin);
-        if (!gstinResult.IsValid)
+        // Get user
+        var user = await _userManager.FindByIdAsync(userId.ToString())
+            ?? throw new KeyNotFoundException("USER_NOT_FOUND");
+
+        var hasGstin = !string.IsNullOrWhiteSpace(request.Gstin);
+
+        // GSTIN is required for a normal Business Owner. It's optional only for a
+        // self-registered CA creating their own firm's organization (the CA invites
+        // BOs and claims client GSTINs separately, via the CA-client invitation flow).
+        if (!hasGstin && !user.IsCA)
         {
-            throw new InvalidOperationException($"INVALID_GSTIN: {gstinResult.ErrorMessage}");
+            throw new InvalidOperationException("GSTIN_REQUIRED: GSTIN is required to create an organization");
         }
 
-        // Check if GSTIN already exists
-        if (await _gstinValidator.ExistsAsync(request.Gstin))
+        GstinValidationResult? gstinResult = null;
+        if (hasGstin)
         {
-            throw new InvalidOperationException("GSTIN_EXISTS");
+            // Validate GSTIN
+            gstinResult = _gstinValidator.Validate(request.Gstin!);
+            if (!gstinResult.IsValid)
+            {
+                throw new InvalidOperationException($"INVALID_GSTIN: {gstinResult.ErrorMessage}");
+            }
+
+            // Check if GSTIN already exists
+            if (await _gstinValidator.ExistsAsync(request.Gstin!))
+            {
+                throw new InvalidOperationException("GSTIN_EXISTS");
+            }
         }
 
         // Check if organization name already exists
@@ -111,10 +129,6 @@ public class OrganizationManagementService : IOrganizationManagementService
         {
             throw new InvalidOperationException("ORG_NAME_EXISTS");
         }
-
-        // Get user
-        var user = await _userManager.FindByIdAsync(userId.ToString())
-            ?? throw new KeyNotFoundException("USER_NOT_FOUND");
 
         // Check organization limit based on user's current subscription
         // Count organizations where the user is the owner
@@ -141,18 +155,20 @@ public class OrganizationManagementService : IOrganizationManagementService
             }
         }
 
-        // Get state name from database
-        var stateName = await _gstinValidator.GetStateNameAsync(gstinResult.StateCode!) ?? gstinResult.StateName!;
-
-        // Create GSTIN entity
-        var gstin = new OrganizationGstin
+        // Create GSTIN entity (null when a CA creates their own firm's org without one)
+        OrganizationGstin? gstin = null;
+        if (gstinResult != null)
         {
-            Gstin = gstinResult.Gstin!,
-            StateCode = gstinResult.StateCode!,
-            StateName = stateName,
-            IsPrimary = true,
-            Status = "active"
-        };
+            var stateName = await _gstinValidator.GetStateNameAsync(gstinResult.StateCode!) ?? gstinResult.StateName!;
+            gstin = new OrganizationGstin
+            {
+                Gstin = gstinResult.Gstin!,
+                StateCode = gstinResult.StateCode!,
+                StateName = stateName,
+                IsPrimary = true,
+                Status = "active"
+            };
+        }
 
         // Create owner membership entity
         var membership = new OrganizationMember
@@ -189,9 +205,13 @@ public class OrganizationManagementService : IOrganizationManagementService
                 ["date_format"] = "DD/MM/YYYY"
             },
             // Add related entities via navigation properties
-            OrganizationGstins = { gstin },
             Members = { membership }
         };
+
+        if (gstin != null)
+        {
+            organization.OrganizationGstins.Add(gstin);
+        }
 
         _dbContext.Organizations.Add(organization);
 
@@ -219,7 +239,7 @@ public class OrganizationManagementService : IOrganizationManagementService
                 organization.LegalName,
                 organization.Industry,
                 organization.State,
-                Gstin = gstin.Gstin
+                Gstin = gstin?.Gstin
             }
         });
 
@@ -231,18 +251,20 @@ public class OrganizationManagementService : IOrganizationManagementService
             Id: organization.Id,
             Name: organization.Name,
             LegalName: organization.LegalName,
-            Gstins: [new GstinDto(
-                gstin.Id,
-                gstin.Gstin,
-                gstin.TradeName,
-                gstin.StateCode,
-                gstin.StateName,
-                gstin.Status,
-                gstin.IsPrimary,
-                gstin.IsVerified,
-                gstin.VerifiedAt,
-                gstin.Source
-            )],
+            Gstins: gstin != null
+                ? [new GstinDto(
+                    gstin.Id,
+                    gstin.Gstin,
+                    gstin.TradeName,
+                    gstin.StateCode,
+                    gstin.StateName,
+                    gstin.Status,
+                    gstin.IsPrimary,
+                    gstin.IsVerified,
+                    gstin.VerifiedAt,
+                    gstin.Source
+                )]
+                : [],
             Industry: organization.Industry,
             State: organization.State,
             City: organization.City,

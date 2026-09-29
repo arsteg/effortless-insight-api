@@ -142,6 +142,13 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
     // Data Export entities
     public DbSet<DataExport> DataExports => Set<DataExport>();
 
+    // CA-as-Distributor entities
+    public DbSet<CaFreeAccessGrant> CaFreeAccessGrants => Set<CaFreeAccessGrant>();
+    public DbSet<CaClientInvitation> CaClientInvitations => Set<CaClientInvitation>();
+    public DbSet<CaProspectClient> CaProspectClients => Set<CaProspectClient>();
+    public DbSet<CaStagedNotice> CaStagedNotices => Set<CaStagedNotice>();
+    public DbSet<CaBoGstinLink> CaBoGstinLinks => Set<CaBoGstinLink>();
+
     // GSTN Integration entities
     public DbSet<GstnConnection> GstnConnections => Set<GstnConnection>();
     public DbSet<GstnOtpSession> GstnOtpSessions => Set<GstnOtpSession>();
@@ -195,6 +202,15 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
 
         // Configure entities
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(ApplicationDbContext).Assembly);
+
+        // An in-flight request must not write using ownership/state read before a handover.
+        modelBuilder.Entity<Notice>().Property(n => n.OrganizationId).IsConcurrencyToken();
+        modelBuilder.Entity<Notice>().Property(n => n.ProcessingStatus).IsConcurrencyToken();
+        modelBuilder.Entity<GstClient>().Property(n => n.OrganizationId).IsConcurrencyToken();
+        modelBuilder.Entity<GstNoticeRaw>().Property(n => n.OrganizationId).IsConcurrencyToken();
+        modelBuilder.Entity<GstSyncSession>().Property(n => n.OrganizationId).IsConcurrencyToken();
+        modelBuilder.Entity<CaProspectClient>().Property(n => n.Status).IsConcurrencyToken();
+        modelBuilder.Entity<CaClientInvitation>().Property(n => n.Status).IsConcurrencyToken();
 
         // Global query filter for soft delete
         modelBuilder.Entity<Organization>().HasQueryFilter(o => o.DeletedAt == null);
@@ -503,6 +519,161 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
         });
 
         // ============================================================================
+        // CA Free Access Grant Configuration
+        // ============================================================================
+        modelBuilder.Entity<CaFreeAccessGrant>(entity =>
+        {
+            // Only one active grant per CA user at a time; revoking sets IsActive=false
+            // and a re-grant inserts a fresh row, preserving full audit history.
+            entity.HasIndex(e => e.CaUserId)
+                .HasFilter("\"IsActive\" = true")
+                .IsUnique()
+                .HasDatabaseName("IX_CaFreeAccessGrants_ActivePerCaUser");
+
+            entity.HasOne(e => e.CaUser)
+                .WithMany()
+                .HasForeignKey(e => e.CaUserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.GrantedByAdmin)
+                .WithMany()
+                .HasForeignKey(e => e.GrantedByAdminId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.RevokedByAdmin)
+                .WithMany()
+                .HasForeignKey(e => e.RevokedByAdminId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // ============================================================================
+        // CA Client Invitation Configuration
+        // ============================================================================
+        modelBuilder.Entity<CaClientInvitation>(entity =>
+        {
+            // Same rationale as OrganizationGstin: the column is AES-GCM ciphertext
+            // with a random nonce, so uniqueness/lookup is enforced in the
+            // application layer (decrypt-and-compare), never via a DB constraint.
+            entity.Property(e => e.Gstin)
+                .HasConversion(new Services.Encryption.EncryptedStringConverter());
+
+            entity.HasIndex(e => e.EmailNormalized);
+            entity.HasIndex(e => e.TokenHash).IsUnique();
+
+            entity.HasOne(e => e.CaUser)
+                .WithMany()
+                .HasForeignKey(e => e.CaUserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.CaOrganization)
+                .WithMany()
+                .HasForeignKey(e => e.CaOrganizationId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.AcceptedUser)
+                .WithMany()
+                .HasForeignKey(e => e.AcceptedUserId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(e => e.ResultingOrganization)
+                .WithMany()
+                .HasForeignKey(e => e.ResultingOrganizationId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ============================================================================
+        // CA Prospect Client Configuration
+        // ============================================================================
+        modelBuilder.Entity<CaProspectClient>(entity =>
+        {
+            entity.Property(e => e.Gstin)
+                .HasConversion(new Services.Encryption.EncryptedStringConverter());
+
+            // One prospect-client row per (CA, GSTIN); GstinHash is a deterministic
+            // stand-in for the non-deterministically-encrypted Gstin column.
+            entity.HasIndex(e => new { e.CaUserId, e.GstinHash })
+                .IsUnique()
+                .HasDatabaseName("IX_CaProspectClients_CaUser_GstinHash");
+
+            entity.HasOne(e => e.CaUser)
+                .WithMany()
+                .HasForeignKey(e => e.CaUserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.CaClientInvitation)
+                .WithMany()
+                .HasForeignKey(e => e.CaClientInvitationId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(e => e.MergedIntoOrganization)
+                .WithMany()
+                .HasForeignKey(e => e.MergedIntoOrganizationId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ============================================================================
+        // CA Staged Notice Configuration
+        // ============================================================================
+        modelBuilder.Entity<CaStagedNotice>(entity =>
+        {
+            entity.HasIndex(e => e.CaProspectClientId);
+            entity.HasIndex(e => e.MergedToNotices);
+
+            entity.HasOne(e => e.CaProspectClient)
+                .WithMany(c => c.StagedNotices)
+                .HasForeignKey(e => e.CaProspectClientId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.UploadedByUser)
+                .WithMany()
+                .HasForeignKey(e => e.UploadedByUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // ============================================================================
+        // CA-BO GSTIN Link Configuration (Cross-Organization Notice Visibility)
+        // ============================================================================
+        modelBuilder.Entity<CaBoGstinLink>(entity =>
+        {
+            // Unique constraint: one link per CA-BO-GSTIN combination
+            entity.HasIndex(e => new { e.CaOrganizationId, e.BoOrganizationId, e.GstinHash })
+                .IsUnique()
+                .HasDatabaseName("IX_CaBoGstinLinks_Unique");
+
+            // Index for querying all links for a CA's organization
+            entity.HasIndex(e => new { e.CaOrganizationId, e.IsActive })
+                .HasDatabaseName("IX_CaBoGstinLinks_CaOrg_Active");
+
+            // Index for querying all links for a BO's organization
+            entity.HasIndex(e => new { e.BoOrganizationId, e.IsActive })
+                .HasDatabaseName("IX_CaBoGstinLinks_BoOrg_Active");
+
+            // Index for cross-org notice queries: find notices by GstinHash
+            entity.HasIndex(e => new { e.GstinHash, e.IsActive })
+                .HasDatabaseName("IX_CaBoGstinLinks_GstinHash_Active");
+
+            entity.HasOne(e => e.CaOrganization)
+                .WithMany()
+                .HasForeignKey(e => e.CaOrganizationId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.BoOrganization)
+                .WithMany()
+                .HasForeignKey(e => e.BoOrganizationId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.CaUser)
+                .WithMany()
+                .HasForeignKey(e => e.CaUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.CaMembership)
+                .WithMany()
+                .HasForeignKey(e => e.CaMembershipId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ============================================================================
         // Organization Invitation Configuration
         // ============================================================================
         modelBuilder.Entity<OrganizationInvitation>(entity =>
@@ -613,6 +784,11 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
                 .HasFilter("\"DeletedAt\" IS NULL")
                 .HasDatabaseName("IX_Notices_Number_Search");
 
+            // Index for cross-organization notice visibility queries
+            entity.HasIndex(n => new { n.GstinHash, n.OrganizationId })
+                .HasFilter("\"DeletedAt\" IS NULL AND \"GstinHash\" IS NOT NULL")
+                .HasDatabaseName("IX_Notices_GstinHash_OrganizationId");
+
             // Relationships
             entity.HasOne(n => n.AssignedBy)
                 .WithMany()
@@ -627,6 +803,15 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
             entity.HasOne(n => n.GstinNavigation)
                 .WithMany()
                 .HasForeignKey(n => n.GstinId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            // CA Prospect Client relationship (for pre-acceptance notice tracking)
+            entity.HasIndex(n => n.CaProspectClientId)
+                .HasFilter("\"DeletedAt\" IS NULL AND \"CaProspectClientId\" IS NOT NULL");
+
+            entity.HasOne(n => n.CaProspectClient)
+                .WithMany()
+                .HasForeignKey(n => n.CaProspectClientId)
                 .OnDelete(DeleteBehavior.SetNull);
 
             // TotalDemand is a PostgreSQL STORED GENERATED column
@@ -3072,10 +3257,27 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
         // See migration "SeedSubscriptionPlans" for the seed data.
     }
 
-    public override Task<int> SaveChangesAsync( CancellationToken cancellationToken = default )
+    public override async Task<int> SaveChangesAsync( CancellationToken cancellationToken = default )
     {
+        if (Services.Organizations.CaWorkspaceWrites.HasWrites(this))
+        {
+            if (Database.IsRelational() && Database.CurrentTransaction == null)
+            {
+                return await Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+                {
+                    await using var transaction = await Database.BeginTransactionAsync(cancellationToken);
+                    await Services.Organizations.CaWorkspaceWrites.PrepareAsync(this, cancellationToken);
+                    UpdateTimestamps();
+                    var count = await base.SaveChangesAsync(false, cancellationToken);
+                    await transaction.CommitAsync(cancellationToken);
+                    ChangeTracker.AcceptAllChanges();
+                    return count;
+                });
+            }
+            await Services.Organizations.CaWorkspaceWrites.PrepareAsync(this, cancellationToken);
+        }
         UpdateTimestamps();
-        return base.SaveChangesAsync(cancellationToken);
+        return await base.SaveChangesAsync(cancellationToken);
     }
 
     private void UpdateTimestamps()

@@ -13,14 +13,15 @@ namespace EffortlessInsight.Api.Tests.Helpers;
 /// </summary>
 public static class BillingTestDbContextFactory
 {
-    public static ApplicationDbContext Create()
+    public static ApplicationDbContext Create(EffortlessInsight.Api.Services.ITenantContext? tenantContext = null)
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
             .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
             .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
             .Options;
 
-        var context = new TestableApplicationDbContext(options);
+        var context = tenantContext == null ? new TestableApplicationDbContext(options)
+            : new TestableApplicationDbContext(options, tenantContext);
         context.Database.EnsureCreated();
 
         // Clear seeded subscription plans to allow tests to control their data
@@ -37,6 +38,9 @@ public static class BillingTestDbContextFactory
 /// </summary>
 public class TestableApplicationDbContext : ApplicationDbContext
 {
+    public TestableApplicationDbContext(DbContextOptions<ApplicationDbContext> options,
+        EffortlessInsight.Api.Services.ITenantContext tenantContext) : base(options, tenantContext) { }
+
     public TestableApplicationDbContext(DbContextOptions<ApplicationDbContext> options)
         : base(options)
     {

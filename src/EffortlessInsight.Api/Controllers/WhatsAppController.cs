@@ -12,12 +12,12 @@ namespace EffortlessInsight.Api.Controllers;
 
 /// <summary>
 /// API endpoints for WhatsApp integration.
-/// Requires the whatsapp_integration feature in the organization's plan.
+/// Requires the whatsapp_assistant feature in the organization's plan.
 /// </summary>
 [ApiController]
 [Route("api/v1/whatsapp")]
 [Authorize]
-[RequiresFeature(FeatureCodes.WhatsAppIntegration)]
+[RequiresFeature(FeatureCodes.WhatsAppAssistant)]
 public class WhatsAppController : ControllerBase
 {
     private readonly ApplicationDbContext _db;

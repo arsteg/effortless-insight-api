@@ -152,6 +152,7 @@ public static class AdminPermissions
     public const string UsersDelete = "users:delete";
     public const string UsersImpersonate = "users:impersonate";
     public const string UsersResetPassword = "users:reset_password";
+    public const string CaAccessManage = "users:ca_access_manage";
 
     // Organizations
     public const string OrganizationsView = "organizations:view";
@@ -196,7 +197,7 @@ public static class AdminPermissions
     {
         AdminRoles.SuperAdmin => [
             DashboardView, DashboardExport,
-            UsersView, UsersSuspend, UsersDelete, UsersImpersonate, UsersResetPassword,
+            UsersView, UsersSuspend, UsersDelete, UsersImpersonate, UsersResetPassword, CaAccessManage,
             OrganizationsView, OrganizationsUpdate, OrganizationsDelete, OrganizationsCredits,
             BillingView, BillingRefund, BillingOverride, BillingCredits, PlansManage,
             AiOpsView, AiOpsRetry, AiOpsPrompts,
@@ -207,7 +208,7 @@ public static class AdminPermissions
         ],
         AdminRoles.OperationsAdmin => [
             DashboardView,
-            UsersView, UsersSuspend, UsersImpersonate,
+            UsersView, UsersSuspend, UsersImpersonate, CaAccessManage,
             OrganizationsView, OrganizationsUpdate,
             AiOpsView, AiOpsRetry,
             AuditView,

@@ -13,6 +13,17 @@ public record FeatureCheckResponse(
     bool HasAccess
 );
 
+/// <summary>
+/// Whether the current user has an active admin-granted "Free CA Access" grant
+/// (self-registered CAs only - see CaFreeAccessGrant). Self-registered CAs never
+/// have a row in BillingSubscriptions for their own firm org, so /subscriptions/current
+/// always 404s for them; the frontend uses this endpoint instead to decide whether
+/// to treat the CA as having access.
+/// </summary>
+public record CaAccessStatusResponse(
+    bool HasActiveAccess
+);
+
 // ============================================================================
 // Plan DTOs
 // ============================================================================
@@ -121,7 +132,16 @@ public record SubscriptionDto(
     /// Whether the subscription grants access to the application.
     /// False when: cancelled, expired, or trialing without valid trial period/dates.
     /// </summary>
-    bool HasAccess
+    bool HasAccess,
+    /// <summary>
+    /// Whether this subscription was granted by an admin (e.g., CA free access).
+    /// Admin-granted subscriptions cannot be modified by the user.
+    /// </summary>
+    bool IsAdminGranted = false,
+    /// <summary>
+    /// Whether this subscription is for the CA operator plan.
+    /// </summary>
+    bool IsCaOperatorPlan = false
 );
 
 public record SeatsDto(

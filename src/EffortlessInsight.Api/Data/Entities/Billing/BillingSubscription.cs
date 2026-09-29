@@ -191,6 +191,22 @@ public class BillingSubscription : BaseEntity
     public Dictionary<string, object>? Metadata { get; set; }
 
     /// <summary>
+    /// Whether this subscription was granted by an admin (e.g., CA free access).
+    /// Admin-granted subscriptions cannot be modified by the user and do not expire.
+    /// </summary>
+    public bool IsAdminGranted { get; set; }
+
+    /// <summary>
+    /// Admin user ID who granted this subscription (if IsAdminGranted is true).
+    /// </summary>
+    public Guid? GrantedByAdminId { get; set; }
+
+    /// <summary>
+    /// Timestamp when admin granted this subscription.
+    /// </summary>
+    public DateTime? AdminGrantedAt { get; set; }
+
+    /// <summary>
     /// When the subscription was paused.
     /// </summary>
     public DateTime? PausedAt { get; set; }

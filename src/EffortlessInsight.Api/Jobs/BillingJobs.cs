@@ -1159,4 +1159,90 @@ public class BillingJobs
         public string? ErrorMessage { get; init; }
         public string? InvoiceNumber { get; init; }
     }
+
+    /// <summary>
+    /// One-time migration job to convert existing CA free access grants to subscriptions.
+    /// This should be run once after deploying the CA subscription integration feature.
+    /// </summary>
+    public async Task MigrateCaGrantsToSubscriptionsAsync()
+    {
+        _logger.LogInformation("Starting migration of CA free access grants to subscriptions...");
+
+        // Find all active CA free access grants that don't have a corresponding subscription
+        var activeGrants = await _dbContext.CaFreeAccessGrants
+            .Where(g => g.IsActive)
+            .ToListAsync();
+
+        if (activeGrants.Count == 0)
+        {
+            _logger.LogInformation("No active CA free access grants found to migrate");
+            return;
+        }
+
+        var migratedCount = 0;
+        var skippedCount = 0;
+        var errorCount = 0;
+
+        foreach (var grant in activeGrants)
+        {
+            try
+            {
+                // Check if CA already has a subscription
+                var ownedOrgIds = await _dbContext.OrganizationMembers
+                    .Where(m => m.UserId == grant.CaUserId &&
+                               m.Role == "owner" &&
+                               m.Status == "active" &&
+                               m.DeletedAt == null)
+                    .Select(m => m.OrganizationId)
+                    .ToListAsync();
+
+                if (ownedOrgIds.Count == 0)
+                {
+                    _logger.LogWarning(
+                        "CA user {CaUserId} from grant {GrantId} does not own any organizations, skipping",
+                        grant.CaUserId, grant.Id);
+                    skippedCount++;
+                    continue;
+                }
+
+                // Check if any org already has an active ca_operator subscription
+                var hasExistingSubscription = await _dbContext.BillingSubscriptions
+                    .AnyAsync(s => ownedOrgIds.Contains(s.OrganizationId) &&
+                                  s.IsAdminGranted &&
+                                  s.Status == SubscriptionStatus.Active &&
+                                  s.DeletedAt == null);
+
+                if (hasExistingSubscription)
+                {
+                    _logger.LogInformation(
+                        "CA user {CaUserId} already has admin-granted subscription, skipping",
+                        grant.CaUserId);
+                    skippedCount++;
+                    continue;
+                }
+
+                // Create subscription using the service
+                await _subscriptionService.GrantCaAccessSubscriptionAsync(
+                    grant.CaUserId,
+                    grant.GrantedByAdminId,
+                    $"Migrated from CaFreeAccessGrant {grant.Id}");
+
+                _logger.LogInformation(
+                    "Successfully migrated CA grant {GrantId} for user {CaUserId}",
+                    grant.Id, grant.CaUserId);
+                migratedCount++;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "Failed to migrate CA grant {GrantId} for user {CaUserId}",
+                    grant.Id, grant.CaUserId);
+                errorCount++;
+            }
+        }
+
+        _logger.LogInformation(
+            "CA grant migration completed. Migrated: {Migrated}, Skipped: {Skipped}, Errors: {Errors}",
+            migratedCount, skippedCount, errorCount);
+    }
 }

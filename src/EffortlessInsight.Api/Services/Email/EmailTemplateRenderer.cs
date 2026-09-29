@@ -119,6 +119,49 @@ public sealed class EmailTemplateRenderer : IEmailTemplateRenderer
                 </html>
                 """
             ),
+            "ca_client_invitation" => new EmailTemplateContent(
+                "You've been invited to manage your GST notices on EffortlessInsight",
+                $"""
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta charset="utf-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                </head>
+                <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+                    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 10px 10px 0 0;">
+                        <h1 style="color: white; margin: 0; font-size: 24px;">EffortlessInsight</h1>
+                    </div>
+                    <div style="background: #ffffff; padding: 30px; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 10px 10px;">
+                        <h2 style="color: #333; margin-top: 0;">Your Chartered Accountant is ready to help</h2>
+                        <p>Hi there,</p>
+                        <p><strong>{data.GetValueOrDefault("ca_name", "A Chartered Accountant")}</strong> has invited you to
+                           set up your organization on EffortlessInsight for GSTIN <strong>{data.GetValueOrDefault("gstin", "")}</strong>
+                           so they can manage your GST notices on your behalf.</p>
+                        {(string.IsNullOrWhiteSpace(data.GetValueOrDefault("message", "")?.ToString()) ? "" : $"""
+                        <div style="background: #f8f9fa; border-left: 4px solid #667eea; padding: 12px 16px; margin: 20px 0; border-radius: 0 5px 5px 0;">
+                            <p style="margin: 0; color: #555; font-style: italic;">"{data["message"]}"</p>
+                        </div>
+                        """)}
+                        <div style="text-align: center; margin: 30px 0;">
+                            <a href="{data.GetValueOrDefault("invitation_url", "#")}"
+                               style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 14px 30px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">
+                                Set Up My Organization
+                            </a>
+                        </div>
+                        <p style="color: #666; font-size: 14px;">You'll remain the owner of your organization, data, and subscription - your CA gets permission-based access to help manage notices, nothing more.</p>
+                        <p style="color: #666; font-size: 14px;">This invitation will expire in {data.GetValueOrDefault("expires_in_days", "14")} days.</p>
+                        <p style="color: #666; font-size: 14px;">If you weren't expecting this invitation, you can safely ignore this email.</p>
+                        <hr style="border: none; border-top: 1px solid #e0e0e0; margin: 30px 0;">
+                        <p style="color: #999; font-size: 12px; margin: 0;">
+                            If the button doesn't work, copy and paste this link into your browser:<br>
+                            <a href="{data.GetValueOrDefault("invitation_url", "#")}" style="color: #667eea;">{data.GetValueOrDefault("invitation_url", "#")}</a>
+                        </p>
+                    </div>
+                </body>
+                </html>
+                """
+            ),
             "admin-password-reset" => new EmailTemplateContent(
                 "Reset your admin password - EffortlessInsight",
                 $"""

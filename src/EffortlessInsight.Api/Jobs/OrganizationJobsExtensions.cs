@@ -12,6 +12,9 @@ public static class OrganizationJobsExtensions
     /// </summary>
     public static void ConfigureOrganizationJobs(this IApplicationBuilder app)
     {
+        RecurringJob.AddOrUpdate<CaHandoverProcessingJob>("ca-handover-processing-recovery",
+            job => job.RecoverAsync(), "*/5 * * * *", new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
+
         // Hourly check for expired suspensions to unsuspend
         RecurringJob.AddOrUpdate<OrganizationJobs>(
             "organization-unsuspend-expired",

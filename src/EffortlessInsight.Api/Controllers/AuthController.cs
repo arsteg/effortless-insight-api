@@ -513,7 +513,8 @@ public class AuthController : ControllerBase
                 Organizations: organizations,
                 Preferences: user.Preferences,
                 CreatedAt: user.CreatedAt,
-                LastLogin: user.LastLoginAt
+                LastLogin: user.LastLoginAt,
+                IsCA: user.IsCA
             );
 
             return Ok(new ApiResponse<UserProfileDto>(true, profile));

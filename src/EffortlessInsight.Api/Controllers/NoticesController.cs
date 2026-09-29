@@ -490,19 +490,27 @@ public class NoticesController : ControllerBase
     /// <summary>
     /// Get notices with filtering and pagination
     /// </summary>
+    /// <param name="filter">Filter criteria for notices.</param>
+    /// <param name="includeAggregations">Whether to include status/priority aggregations.</param>
+    /// <param name="includeCrossOrgNotices">Whether to include notices from linked organizations (CA-BO relationships).</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
     [HttpGet]
     [ProducesResponseType(typeof(ApiResponse<NoticeListResponse>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetAll(
         [FromQuery] NoticeFilterDto filter,
         [FromQuery] bool includeAggregations = false,
+        [FromQuery] bool includeCrossOrgNotices = true,
         CancellationToken cancellationToken = default)
     {
         try
         {
             var orgId = GetCurrentOrganizationId();
-            var result = await _noticeService.GetListAsync(orgId, filter, cancellationToken);
+            var userId = GetCurrentUserId();
 
-            var notices = result.Items.Select(MapToDto).ToList();
+            var result = await _noticeService.GetListWithCrossOrgAsync(
+                orgId, userId, filter, includeCrossOrgNotices, cancellationToken);
+
+            var notices = result.Items.Select(MapToDtoWithCrossOrg).ToList();
 
             NoticeAggregationsDto? aggregations = null;
             if (includeAggregations)
@@ -534,6 +542,10 @@ public class NoticesController : ControllerBase
     /// <summary>
     /// Get notice by ID
     /// </summary>
+    /// <remarks>
+    /// Supports cross-organization visibility: can return notices from linked organizations
+    /// (CA-BO relationships) based on shared GSTINs. Cross-org notices are read-only.
+    /// </remarks>
     [HttpGet("{noticeId:guid}")]
     [ProducesResponseType(typeof(ApiResponse<NoticeDetailDto>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
@@ -542,14 +554,17 @@ public class NoticesController : ControllerBase
         try
         {
             var orgId = GetCurrentOrganizationId();
-            var notice = await _noticeService.GetByIdAsync(noticeId, orgId, cancellationToken);
+            var userId = GetCurrentUserId();
 
-            if (notice == null)
+            var noticeWithCrossOrg = await _noticeService.GetByIdWithCrossOrgAsync(
+                noticeId, orgId, userId, cancellationToken);
+
+            if (noticeWithCrossOrg == null)
             {
                 return NotFound(new ApiErrorResponse(false, "NOT_FOUND", "Notice not found"));
             }
 
-            return Ok(new ApiResponse<NoticeDetailDto>(true, MapToDetailDto(notice)));
+            return Ok(new ApiResponse<NoticeDetailDto>(true, MapToDetailDtoWithCrossOrg(noticeWithCrossOrg)));
         }
         catch (Exception ex)
         {
@@ -2167,7 +2182,40 @@ public class NoticesController : ControllerBase
             SummaryEn: notice.AiReport?.SummaryEn,
             AssignedToId: notice.AssignedToId,
             AssignedToName: notice.AssignedTo?.Name,
-            CreatedAt: notice.CreatedAt);
+            CreatedAt: notice.CreatedAt,
+            OrganizationId: notice.OrganizationId);
+    }
+
+    private static NoticeDto MapToDtoWithCrossOrg(NoticeWithCrossOrgInfo noticeInfo)
+    {
+        var notice = noticeInfo.Notice;
+        var daysRemaining = notice.GetDaysRemaining();
+
+        return new NoticeDto(
+            Id: notice.Id,
+            NoticeType: notice.NoticeType,
+            NoticeCategory: notice.NoticeCategory,
+            NoticeNumber: notice.NoticeNumber,
+            Gstin: notice.Gstin,
+            IssueDate: notice.IssueDate,
+            ResponseDeadline: notice.ResponseDeadline,
+            DaysRemaining: daysRemaining,
+            TaxAmount: notice.TaxAmount,
+            PenaltyAmount: notice.PenaltyAmount,
+            Status: notice.Status,
+            Priority: notice.Priority,
+            ProcessingStatus: notice.ProcessingStatus,
+            RiskScore: notice.AiReport?.RiskScore,
+            RiskLevel: notice.AiReport?.RiskLevel,
+            SummaryEn: notice.AiReport?.SummaryEn,
+            AssignedToId: notice.AssignedToId,
+            AssignedToName: notice.AssignedTo?.Name,
+            CreatedAt: notice.CreatedAt,
+            OrganizationId: noticeInfo.OrganizationId,
+            OrganizationName: noticeInfo.OrganizationName,
+            IsFromLinkedOrganization: noticeInfo.IsFromLinkedOrganization,
+            LinkedOrganizationType: noticeInfo.LinkedOrganizationType,
+            IsReadOnly: noticeInfo.IsReadOnly);
     }
 
     private static NoticeDetailDto MapToDetailDto(Notice notice)
@@ -2199,7 +2247,46 @@ public class NoticesController : ControllerBase
             AssignedToId: notice.AssignedToId,
             AssignedToName: notice.AssignedTo?.Name,
             CreatedAt: notice.CreatedAt,
-            UpdatedAt: notice.UpdatedAt);
+            UpdatedAt: notice.UpdatedAt,
+            OrganizationId: notice.OrganizationId);
+    }
+
+    private static NoticeDetailDto MapToDetailDtoWithCrossOrg(NoticeWithCrossOrgInfo noticeInfo)
+    {
+        var notice = noticeInfo.Notice;
+        var daysRemaining = notice.GetDaysRemaining();
+
+        return new NoticeDetailDto(
+            Id: notice.Id,
+            NoticeType: notice.NoticeType,
+            NoticeCategory: notice.NoticeCategory,
+            NoticeNumber: notice.NoticeNumber,
+            Gstin: notice.Gstin,
+            IssueDate: notice.IssueDate,
+            ResponseDeadline: notice.ResponseDeadline,
+            ExtendedDeadline: notice.ExtendedDeadline,
+            DaysRemaining: daysRemaining,
+            TaxAmount: notice.TaxAmount,
+            PenaltyAmount: notice.PenaltyAmount,
+            InterestAmount: notice.InterestAmount,
+            PeriodFrom: notice.PeriodFrom,
+            PeriodTo: notice.PeriodTo,
+            IssuingAuthority: notice.IssuingAuthority,
+            Status: notice.Status,
+            Priority: notice.Priority,
+            FileUrl: notice.FileUrl,
+            ProcessingStatus: notice.ProcessingStatus,
+            Tags: notice.Tags,
+            AiReport: notice.AiReport != null ? MapReportToDto(notice.AiReport) : null,
+            AssignedToId: notice.AssignedToId,
+            AssignedToName: notice.AssignedTo?.Name,
+            CreatedAt: notice.CreatedAt,
+            UpdatedAt: notice.UpdatedAt,
+            OrganizationId: noticeInfo.OrganizationId,
+            OrganizationName: noticeInfo.OrganizationName,
+            IsFromLinkedOrganization: noticeInfo.IsFromLinkedOrganization,
+            LinkedOrganizationType: noticeInfo.LinkedOrganizationType,
+            IsReadOnly: noticeInfo.IsReadOnly);
     }
 
     private static NoticeAiReportDto MapReportToDto(NoticeAiReport report)

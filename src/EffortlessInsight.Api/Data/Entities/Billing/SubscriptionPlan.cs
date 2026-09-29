@@ -63,7 +63,7 @@ public class SubscriptionPlan : BaseEntity
     public PlanLimits Limits { get; set; } = new();
 
     /// <summary>
-    /// Feature flags stored as JSONB. Array of feature codes like: full_ai_analysis, priority_processing, etc.
+    /// Feature flags stored as JSONB. Array of feature codes like: ai_explanation, workflows, etc.
     /// </summary>
     public List<string> Features { get; set; } = [];
 
@@ -129,6 +129,12 @@ public class SubscriptionPlan : BaseEntity
     /// CA operators are manually assigned this plan by admin after verification.
     /// </summary>
     public bool IsCaOperatorPlan { get; set; }
+
+    /// <summary>
+    /// Whether this plan is publicly visible on plan selection pages.
+    /// Internal plans (e.g., CA operator, staff) should be set to false.
+    /// </summary>
+    public bool IsPublic { get; set; } = true;
 
     /// <summary>
     /// Additional metadata for the plan.

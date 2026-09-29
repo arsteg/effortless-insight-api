@@ -1251,6 +1251,9 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
 
+                    b.Property<bool>("IsCA")
+                        .HasColumnType("boolean");
+
                     b.Property<bool>("IsEmailVerified")
                         .HasColumnType("boolean");
 
@@ -1914,6 +1917,9 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Property<decimal>("AdditionalSeatsAmount")
                         .HasColumnType("numeric");
 
+                    b.Property<DateTime?>("AdminGrantedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<decimal>("BaseAmount")
                         .HasColumnType("numeric");
 
@@ -1960,6 +1966,12 @@ namespace EffortlessInsight.Api.Data.Migrations
 
                     b.Property<DateTime?>("GracePeriodEndAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("GrantedByAdminId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("IsAdminGranted")
+                        .HasColumnType("boolean");
 
                     b.Property<DateTime?>("LastPaymentFailedAt")
                         .HasColumnType("timestamp with time zone");
@@ -2700,6 +2712,9 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Property<bool>("IsPopular")
                         .HasColumnType("boolean");
 
+                    b.Property<bool>("IsPublic")
+                        .HasColumnType("boolean");
+
                     b.Property<Dictionary<string, object>>("Metadata")
                         .HasColumnType("jsonb");
 
@@ -2926,6 +2941,397 @@ namespace EffortlessInsight.Api.Data.Migrations
                         .HasFilter("\"Status\" = 'failed' AND \"AttemptCount\" < 5");
 
                     b.ToTable("WebhookEvents");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.CaBoGstinLink", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("BoOrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CaMembershipId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CaOrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CaUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DeactivatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DeactivationReason")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("GstinHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CaMembershipId");
+
+                    b.HasIndex("CaUserId");
+
+                    b.HasIndex("BoOrganizationId", "IsActive")
+                        .HasDatabaseName("IX_CaBoGstinLinks_BoOrg_Active");
+
+                    b.HasIndex("CaOrganizationId", "IsActive")
+                        .HasDatabaseName("IX_CaBoGstinLinks_CaOrg_Active");
+
+                    b.HasIndex("GstinHash", "IsActive")
+                        .HasDatabaseName("IX_CaBoGstinLinks_GstinHash_Active");
+
+                    b.HasIndex("CaOrganizationId", "BoOrganizationId", "GstinHash")
+                        .IsUnique()
+                        .HasDatabaseName("IX_CaBoGstinLinks_Unique");
+
+                    b.ToTable("CaBoGstinLinks");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.CaClientInvitation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("AcceptedUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int?>("AccessDurationDays")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("CaOrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CaUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ClientDisplayName")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Email")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<string>("EmailNormalized")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Gstin")
+                        .IsRequired()
+                        .HasMaxLength(225)
+                        .HasColumnType("character varying(225)");
+
+                    b.Property<DateTime>("LastSentAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Message")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTime?>("RespondedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ResultingOrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("SendCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Status")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AcceptedUserId");
+
+                    b.HasIndex("CaOrganizationId");
+
+                    b.HasIndex("CaUserId");
+
+                    b.HasIndex("EmailNormalized");
+
+                    b.HasIndex("ResultingOrganizationId");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
+
+                    b.ToTable("CaClientInvitations");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.CaFreeAccessGrant", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CaUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("GrantReason")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTime>("GrantedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("GrantedByAdminId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("RevokeReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTime?>("RevokedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("RevokedByAdminId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CaUserId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_CaFreeAccessGrants_ActivePerCaUser")
+                        .HasFilter("\"IsActive\" = true");
+
+                    b.HasIndex("GrantedByAdminId");
+
+                    b.HasIndex("RevokedByAdminId");
+
+                    b.ToTable("CaFreeAccessGrants");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.CaProspectClient", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("CaClientInvitationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CaUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ClientDisplayName")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Gstin")
+                        .IsRequired()
+                        .HasMaxLength(225)
+                        .HasColumnType("character varying(225)");
+
+                    b.Property<string>("GstinHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime?>("MergedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("MergedIntoOrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Status")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CaClientInvitationId");
+
+                    b.HasIndex("MergedIntoOrganizationId");
+
+                    b.HasIndex("CaUserId", "GstinHash")
+                        .IsUnique()
+                        .HasDatabaseName("IX_CaProspectClients_CaUser_GstinHash");
+
+                    b.ToTable("CaProspectClients");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.CaStagedNotice", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CaProspectClientId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("FileHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("FileMimeType")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("FileName")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<int?>("FileSize")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("FileUrl")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("FinancialYear")
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<string>("Gstin")
+                        .HasMaxLength(15)
+                        .HasColumnType("character varying(15)");
+
+                    b.Property<decimal?>("InterestAmount")
+                        .HasColumnType("decimal(15,2)");
+
+                    b.Property<DateOnly?>("IssueDate")
+                        .HasColumnType("date");
+
+                    b.Property<DateTime?>("MergedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("MergedNoticeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("MergedToNotices")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("NoticeCategory")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("NoticeNumber")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("NoticeType")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<decimal?>("PenaltyAmount")
+                        .HasColumnType("decimal(15,2)");
+
+                    b.Property<DateOnly?>("PeriodFrom")
+                        .HasColumnType("date");
+
+                    b.Property<DateOnly?>("PeriodTo")
+                        .HasColumnType("date");
+
+                    b.Property<DateOnly?>("ResponseDeadline")
+                        .HasColumnType("date");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<string>("SourceReferenceNumber")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("Summary")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<decimal?>("TaxAmount")
+                        .HasColumnType("decimal(15,2)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("UploadedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UploadedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CaProspectClientId");
+
+                    b.HasIndex("MergedToNotices");
+
+                    b.HasIndex("UploadedByUserId");
+
+                    b.ToTable("CaStagedNotices");
                 });
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.ChannelUnsubscribe", b =>
@@ -3825,6 +4231,7 @@ namespace EffortlessInsight.Api.Data.Migrations
                         .HasColumnType("uuid");
 
                     b.Property<Guid>("OrganizationId")
+                        .IsConcurrencyToken()
                         .HasColumnType("uuid");
 
                     b.Property<string>("StateCode")
@@ -4034,6 +4441,7 @@ namespace EffortlessInsight.Api.Data.Migrations
                         .HasColumnType("character varying(255)");
 
                     b.Property<Guid>("OrganizationId")
+                        .IsConcurrencyToken()
                         .HasColumnType("uuid");
 
                     b.Property<bool>("PdfAvailable")
@@ -4234,6 +4642,7 @@ namespace EffortlessInsight.Api.Data.Migrations
                         .HasColumnType("integer");
 
                     b.Property<Guid>("OrganizationId")
+                        .IsConcurrencyToken()
                         .HasColumnType("uuid");
 
                     b.Property<int>("PdfsDownloaded")
@@ -4969,6 +5378,9 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Property<Guid?>("AssignedToId")
                         .HasColumnType("uuid");
 
+                    b.Property<Guid?>("CaProspectClientId")
+                        .HasColumnType("uuid");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -5027,6 +5439,10 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Property<string>("Gstin")
                         .HasMaxLength(15)
                         .HasColumnType("character varying(15)");
+
+                    b.Property<string>("GstinHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
 
                     b.Property<Guid?>("GstinId")
                         .HasColumnType("uuid");
@@ -5103,6 +5519,7 @@ namespace EffortlessInsight.Api.Data.Migrations
                         .HasColumnType("character varying(100)");
 
                     b.Property<Guid>("OrganizationId")
+                        .IsConcurrencyToken()
                         .HasColumnType("uuid");
 
                     b.Property<int?>("PageCount")
@@ -5135,6 +5552,7 @@ namespace EffortlessInsight.Api.Data.Migrations
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("ProcessingStatus")
+                        .IsConcurrencyToken()
                         .IsRequired()
                         .HasMaxLength(30)
                         .HasColumnType("character varying(30)");
@@ -5184,6 +5602,9 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.HasIndex("AssignedToId")
                         .HasFilter("\"DeletedAt\" IS NULL");
 
+                    b.HasIndex("CaProspectClientId")
+                        .HasFilter("\"DeletedAt\" IS NULL AND \"CaProspectClientId\" IS NOT NULL");
+
                     b.HasIndex("CreatedAt")
                         .HasFilter("\"DeletedAt\" IS NULL");
 
@@ -5214,6 +5635,10 @@ namespace EffortlessInsight.Api.Data.Migrations
                         .HasFilter("\"DeletedAt\" IS NULL");
 
                     b.HasIndex("UploadedById");
+
+                    b.HasIndex("GstinHash", "OrganizationId")
+                        .HasDatabaseName("IX_Notices_GstinHash_OrganizationId")
+                        .HasFilter("\"DeletedAt\" IS NULL AND \"GstinHash\" IS NOT NULL");
 
                     b.HasIndex("OrganizationId", "GstnNoticeId")
                         .HasDatabaseName("IX_Notices_Org_GstnNoticeId")
@@ -9545,6 +9970,144 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Navigation("Organization");
                 });
 
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.CaBoGstinLink", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Organization", "BoOrganization")
+                        .WithMany()
+                        .HasForeignKey("BoOrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.OrganizationMember", "CaMembership")
+                        .WithMany()
+                        .HasForeignKey("CaMembershipId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Organization", "CaOrganization")
+                        .WithMany()
+                        .HasForeignKey("CaOrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "CaUser")
+                        .WithMany()
+                        .HasForeignKey("CaUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("BoOrganization");
+
+                    b.Navigation("CaMembership");
+
+                    b.Navigation("CaOrganization");
+
+                    b.Navigation("CaUser");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.CaClientInvitation", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "AcceptedUser")
+                        .WithMany()
+                        .HasForeignKey("AcceptedUserId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Organization", "CaOrganization")
+                        .WithMany()
+                        .HasForeignKey("CaOrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "CaUser")
+                        .WithMany()
+                        .HasForeignKey("CaUserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Organization", "ResultingOrganization")
+                        .WithMany()
+                        .HasForeignKey("ResultingOrganizationId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("AcceptedUser");
+
+                    b.Navigation("CaOrganization");
+
+                    b.Navigation("CaUser");
+
+                    b.Navigation("ResultingOrganization");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.CaFreeAccessGrant", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "CaUser")
+                        .WithMany()
+                        .HasForeignKey("CaUserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Admin.AdminUser", "GrantedByAdmin")
+                        .WithMany()
+                        .HasForeignKey("GrantedByAdminId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Admin.AdminUser", "RevokedByAdmin")
+                        .WithMany()
+                        .HasForeignKey("RevokedByAdminId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("CaUser");
+
+                    b.Navigation("GrantedByAdmin");
+
+                    b.Navigation("RevokedByAdmin");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.CaProspectClient", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.CaClientInvitation", "CaClientInvitation")
+                        .WithMany()
+                        .HasForeignKey("CaClientInvitationId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "CaUser")
+                        .WithMany()
+                        .HasForeignKey("CaUserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Organization", "MergedIntoOrganization")
+                        .WithMany()
+                        .HasForeignKey("MergedIntoOrganizationId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("CaClientInvitation");
+
+                    b.Navigation("CaUser");
+
+                    b.Navigation("MergedIntoOrganization");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.CaStagedNotice", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.CaProspectClient", "CaProspectClient")
+                        .WithMany("StagedNotices")
+                        .HasForeignKey("CaProspectClientId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "UploadedByUser")
+                        .WithMany()
+                        .HasForeignKey("UploadedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("CaProspectClient");
+
+                    b.Navigation("UploadedByUser");
+                });
+
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.ChannelUnsubscribe", b =>
                 {
                     b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "User")
@@ -10012,6 +10575,11 @@ namespace EffortlessInsight.Api.Data.Migrations
                         .WithMany("AssignedNotices")
                         .HasForeignKey("AssignedToId");
 
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.CaProspectClient", "CaProspectClient")
+                        .WithMany()
+                        .HasForeignKey("CaProspectClientId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "DeletedBy")
                         .WithMany()
                         .HasForeignKey("DeletedById")
@@ -10037,6 +10605,8 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Navigation("AssignedBy");
 
                     b.Navigation("AssignedTo");
+
+                    b.Navigation("CaProspectClient");
 
                     b.Navigation("DeletedBy");
 
@@ -11037,6 +11607,11 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Navigation("LineItems");
 
                     b.Navigation("Payments");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.CaProspectClient", b =>
+                {
+                    b.Navigation("StagedNotices");
                 });
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Comment", b =>

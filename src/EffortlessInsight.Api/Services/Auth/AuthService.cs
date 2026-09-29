@@ -106,6 +106,7 @@ public class AuthService : IAuthService
             IsMobileVerified = requireMobileVerification,
             MobileVerifiedAt = requireMobileVerification ? DateTime.UtcNow : null,
             Role = "owner", // First user becomes owner
+            IsCA = request.IsCA,
             TermsAccepted = request.AcceptTerms,
             TermsAcceptedAt = DateTime.UtcNow,
             CreatedAt = DateTime.UtcNow
@@ -1952,7 +1953,8 @@ public class AuthService : IAuthService
                 AvatarUrl: user.AvatarUrl,
                 Role: roleOverride ?? user.Role ?? "member",
                 Organization: currentOrg,
-                Organizations: orgs
+                Organizations: orgs,
+                IsCA: user.IsCA
             )
         );
     }

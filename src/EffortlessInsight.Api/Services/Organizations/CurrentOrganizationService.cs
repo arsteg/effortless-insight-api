@@ -185,6 +185,19 @@ public class CurrentOrganizationService : ICurrentOrganizationService
             .ToListAsync();
     }
 
+    // NOTE ON KEEPING THIS IN SYNC WITH Permissions.GetDefaultPermissionsForRole:
+    // There are two parallel, independently-maintained authorization systems in
+    // this codebase - this hardcoded claims-driven switch (what NoticesController
+    // and most other controllers actually call), and the DB-driven
+    // Permissions.GetDefaultPermissionsForRole/CustomRole.Permissions system
+    // (consulted by RoleService for custom-role assignment/checks). They use
+    // different permission-name vocabularies (this one has gstins.*/settings.*/
+    // organization.* entries that Permissions.All does not) and can silently
+    // disagree - e.g. a "ca" member granted a broader CustomRole would still be
+    // blocked here, since this method never loads CustomRole.Permissions. Full
+    // unification (making this delegate to RoleService) is a larger refactor
+    // than any single feature justifies; until then, any change to what the
+    // "ca" role can do must be applied in BOTH places by hand.
     public bool HasPermission(string permission)
     {
         var role = Role?.ToLowerInvariant();
@@ -203,12 +216,17 @@ public class CurrentOrganizationService : ICurrentOrganizationService
             "organization.transfer" => role == "owner",
 
             // Member permissions
-            "members.view" => role is not "ca", // CA cannot see members
+            // CA can view the team (needed to work alongside a BO's members) but
+            // never invite/remove/change roles - the BO remains the owner of
+            // their organization's membership and governance.
+            "members.view" => true,
             "members.invite" => role is "owner" or "admin",
             "members.remove" => role is "owner" or "admin",
             "members.change_role" => role is "owner" or "admin",
 
             // GSTIN permissions
+            // Deliberately owner/admin-only for add/remove even for CA: the BO
+            // owns their GSTIN registrations, not the CA managing their notices.
             "gstins.view" => true,
             "gstins.add" => role is "owner" or "admin",
             "gstins.remove" => role is "owner" or "admin",
@@ -219,6 +237,9 @@ public class CurrentOrganizationService : ICurrentOrganizationService
             "notices.upload" => role is not "viewer",
             "notices.edit" => role is not "viewer",
             "notices.delete" => role is "owner" or "admin",
+            // Deliberately left owner/admin/manager-only (not opened to "ca"):
+            // assignment and approval are BO-governance concerns, not something
+            // the CA-as-distributor requirements ask a CA to do.
             "notices.assign" => role is "owner" or "admin" or "manager",
             "notices.comment" => role is not "viewer",
             "notices.draft_response" => role is not "viewer",
@@ -231,7 +252,10 @@ public class CurrentOrganizationService : ICurrentOrganizationService
             "audit.view" => role is "owner" or "admin",
 
             // Settings permissions
-            "settings.view" => role is not "ca" || !IsExternal,
+            // CA can view organization settings (needed context to work the
+            // client's notices) but never edit them - editing remains
+            // owner/admin-only, consistent with "BO owns their organization."
+            "settings.view" => true,
             "settings.edit" => role is "owner" or "admin",
 
             // Task permissions
@@ -241,6 +265,8 @@ public class CurrentOrganizationService : ICurrentOrganizationService
             "tasks.delete" => role is not "viewer",
 
             // Workflow permissions
+            // Deliberately left owner/admin/manager-only: workflow administration
+            // is a BO-governance concern, same rationale as notices.assign above.
             "workflow.view" => true,
             "workflow.transition" => role is not "viewer",
             "workflow.admin" => role is "owner" or "admin" or "manager",

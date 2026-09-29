@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities.Billing;
 using EffortlessInsight.Api.Services.Organizations;
@@ -27,6 +28,7 @@ public class SubscriptionEnforcementMiddleware
         "/api/v1/auth/refresh",
         "/api/v1/auth/logout",
         "/api/v1/auth/me",
+        "/api/v1/auth/switch-organization",
         "/api/v1/auth/oauth",
 
         // Billing/subscription endpoints - specific paths only (not broad prefix)
@@ -43,6 +45,7 @@ public class SubscriptionEnforcementMiddleware
         "/api/v1/coupons/validate",
         "/api/v1/invoices",
         "/api/v1/payment-methods",
+        "/api/v1/subscriptions/ca-access-status",  // CA free access check - must bypass subscription enforcement
 
         // Organization list/create endpoints - needed during onboarding
         "/api/v1/organizations",
@@ -97,7 +100,7 @@ public class SubscriptionEnforcementMiddleware
 
         // Skip public paths
         var path = context.Request.Path.Value ?? string.Empty;
-        if (IsPublicPath(path))
+        if (IsPublicPath(path) || context.GetEndpoint()?.Metadata.GetMetadata<CaInvitationOnboardingAttribute>() != null)
         {
             await _next(context);
             return;
@@ -133,6 +136,25 @@ public class SubscriptionEnforcementMiddleware
                 message = "Organization not found"
             });
             return;
+        }
+
+        // CA Free Access bypass: Self-registered CAs with an active admin grant bypass subscription checks
+        // Note: JWT uses "sub" claim, not ClaimTypes.NameIdentifier
+        var userIdClaim = context.User.FindFirstValue(ClaimTypes.NameIdentifier)
+            ?? context.User.FindFirstValue("sub");
+        if (!string.IsNullOrEmpty(userIdClaim) && Guid.TryParse(userIdClaim, out var userId))
+        {
+            var caAccessService = context.RequestServices.GetRequiredService<ICaAccessService>();
+            if (await caAccessService.HasActiveFreeAccessAsync(userId)
+                && await dbContext.OrganizationMembers.AnyAsync(m => m.OrganizationId == orgId.Value
+                    && m.UserId == userId && m.Role == "owner" && m.Status == "active" && m.DeletedAt == null))
+            {
+                _logger.LogDebug(
+                    "CA Free Access bypass: User {UserId} has active free access grant, skipping subscription check",
+                    userId);
+                await _next(context);
+                return;
+            }
         }
 
         // SECURITY FIX #1: Block paused subscriptions immediately

@@ -2924,6 +2924,174 @@ public class SubscriptionService : ISubscriptionService
         _logger.LogInformation("Successfully expired {Count} subscriptions", expiredGracePeriods.Count);
     }
 
+    public async Task<BillingSubscription> GrantCaAccessSubscriptionAsync(
+        Guid caUserId, Guid adminId, string reason, CancellationToken ct = default)
+    {
+        // Get CA's owned organization IDs
+        var ownedOrgIds = await _dbContext.OrganizationMembers
+            .Where(m => m.UserId == caUserId && m.Role == "owner" && m.Status == "active" && m.DeletedAt == null)
+            .Select(m => m.OrganizationId)
+            .ToListAsync(ct);
+
+        if (ownedOrgIds.Count == 0)
+        {
+            throw new InvalidOperationException("CA user does not own any organizations");
+        }
+
+        // Get the ca_operator plan
+        var caOperatorPlan = await _dbContext.SubscriptionPlans
+            .FirstOrDefaultAsync(p => p.IsCaOperatorPlan && p.IsActive && p.DeletedAt == null, ct)
+            ?? throw new InvalidOperationException("CA operator plan not found. Please configure a plan with IsCaOperatorPlan = true.");
+
+        BillingSubscription? resultSubscription = null;
+
+        foreach (var orgId in ownedOrgIds)
+        {
+            var existingSubscription = await GetSubscriptionEntityAsync(orgId);
+
+            if (existingSubscription != null)
+            {
+                // If already on ca_operator with IsAdminGranted = true, return existing (idempotent)
+                if (existingSubscription.PlanCode == caOperatorPlan.Code &&
+                    existingSubscription.IsAdminGranted &&
+                    existingSubscription.Status == SubscriptionStatus.Active)
+                {
+                    _logger.LogInformation(
+                        "CA user {CaUserId} already has active admin-granted subscription for org {OrgId}",
+                        caUserId, orgId);
+                    resultSubscription ??= existingSubscription;
+                    continue;
+                }
+
+                // If cancelled/expired ca_operator with IsAdminGranted, reactivate
+                if (existingSubscription.PlanCode == caOperatorPlan.Code &&
+                    existingSubscription.IsAdminGranted &&
+                    (existingSubscription.Status == SubscriptionStatus.Cancelled ||
+                     existingSubscription.Status == SubscriptionStatus.Expired))
+                {
+                    existingSubscription.Status = SubscriptionStatus.Active;
+                    existingSubscription.CancelledAt = null;
+                    existingSubscription.EndedAt = null;
+                    existingSubscription.CancellationReason = null;
+                    existingSubscription.AdminGrantedAt = DateTime.UtcNow;
+                    existingSubscription.GrantedByAdminId = adminId;
+                    existingSubscription.CurrentPeriodEnd = new DateTime(2099, 12, 31, 23, 59, 59, DateTimeKind.Utc);
+
+                    _logger.LogInformation(
+                        "Reactivated CA subscription for org {OrgId} by admin {AdminId}",
+                        orgId, adminId);
+
+                    resultSubscription ??= existingSubscription;
+                }
+                else
+                {
+                    // Different plan or not admin-granted - remove existing and create new
+                    _dbContext.BillingSubscriptions.Remove(existingSubscription);
+                    existingSubscription = null;
+                }
+            }
+
+            if (existingSubscription == null)
+            {
+                // Create new ca_operator subscription
+                var now = DateTime.UtcNow;
+                var newSubscription = new BillingSubscription
+                {
+                    OrganizationId = orgId,
+                    PlanCode = caOperatorPlan.Code,
+                    PlanId = caOperatorPlan.Id,
+                    Status = SubscriptionStatus.Active,
+                    BillingCycle = BillingCycle.Monthly,
+                    SeatsIncluded = caOperatorPlan.Limits.Users,
+                    SeatsAdditional = 0,
+                    CurrentPeriodStart = now,
+                    CurrentPeriodEnd = new DateTime(2099, 12, 31, 23, 59, 59, DateTimeKind.Utc),
+                    BaseAmount = 0,
+                    AdditionalSeatsAmount = 0,
+                    TaxAmount = 0,
+                    TotalAmount = 0,
+                    Currency = caOperatorPlan.Currency,
+                    IsAdminGranted = true,
+                    GrantedByAdminId = adminId,
+                    AdminGrantedAt = now
+                };
+
+                _dbContext.BillingSubscriptions.Add(newSubscription);
+
+                _logger.LogInformation(
+                    "Created CA subscription for org {OrgId} by admin {AdminId}. Reason: {Reason}",
+                    orgId, adminId, reason);
+
+                resultSubscription ??= newSubscription;
+            }
+
+            // Update organization subscription status
+            var org = await _dbContext.Organizations.FindAsync(new object[] { orgId }, ct);
+            if (org != null)
+            {
+                org.SubscriptionStatus = SubscriptionStatus.Active;
+            }
+        }
+
+        await _dbContext.SaveChangesAsync(ct);
+
+        // Invalidate feature cache for all owned orgs
+        foreach (var orgId in ownedOrgIds)
+        {
+            await InvalidateFeatureCacheAsync(orgId);
+        }
+
+        return resultSubscription!;
+    }
+
+    public async Task RevokeCaAccessSubscriptionAsync(
+        Guid caUserId, Guid adminId, string reason, CancellationToken ct = default)
+    {
+        // Get CA's owned organization IDs
+        var ownedOrgIds = await _dbContext.OrganizationMembers
+            .Where(m => m.UserId == caUserId && m.Role == "owner" && m.Status == "active" && m.DeletedAt == null)
+            .Select(m => m.OrganizationId)
+            .ToListAsync(ct);
+
+        var now = DateTime.UtcNow;
+
+        foreach (var orgId in ownedOrgIds)
+        {
+            var subscription = await _dbContext.BillingSubscriptions
+                .FirstOrDefaultAsync(s => s.OrganizationId == orgId &&
+                                         s.IsAdminGranted &&
+                                         s.Status == SubscriptionStatus.Active &&
+                                         s.DeletedAt == null, ct);
+
+            if (subscription != null)
+            {
+                subscription.Status = SubscriptionStatus.Cancelled;
+                subscription.CancelledAt = now;
+                subscription.EndedAt = now;
+                subscription.CancellationReason = "admin_revoked";
+
+                _logger.LogInformation(
+                    "Revoked CA subscription for org {OrgId} by admin {AdminId}. Reason: {Reason}",
+                    orgId, adminId, reason);
+
+                // Update organization subscription status
+                var org = await _dbContext.Organizations.FindAsync(new object[] { orgId }, ct);
+                if (org != null)
+                {
+                    org.SubscriptionStatus = SubscriptionStatus.Cancelled;
+                }
+            }
+        }
+
+        await _dbContext.SaveChangesAsync(ct);
+
+        // Invalidate feature cache for all owned orgs
+        foreach (var orgId in ownedOrgIds)
+        {
+            await InvalidateFeatureCacheAsync(orgId);
+        }
+    }
+
     #region Private Methods
 
     private async Task SaveBillingDetailsAsync(Guid organizationId, BillingDetailsRequest request)
@@ -3552,7 +3720,9 @@ public class SubscriptionService : ISubscriptionService
                 EffectiveDate: subscription.ScheduledChangeDate ?? subscription.CurrentPeriodEnd
             ),
             HasUsedTrial: hasUsedTrial,
-            HasAccess: hasAccess
+            HasAccess: hasAccess,
+            IsAdminGranted: subscription.IsAdminGranted,
+            IsCaOperatorPlan: plan.IsCaOperatorPlan
         );
     }
 
