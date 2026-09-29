@@ -115,8 +115,10 @@ public class NoticeResponseDraftService : INoticeResponseDraftService
                 return AutoDraftResult.Failure("EMPTY_RESPONSE", "The AI failed to generate a valid response. Please try again.");
             }
 
-            // Log audit (fire and forget)
-            _ = LogAuditAsync(noticeId, organizationId, userId, result, (int)stopwatch.ElapsedMilliseconds, CancellationToken.None);
+            // The audit uses this request's DbContext. Complete it before the
+            // metadata query below; EF Core does not support concurrent operations
+            // on one context. LogAuditAsync keeps audit failures non-fatal.
+            await LogAuditAsync(noticeId, organizationId, userId, result, (int)stopwatch.ElapsedMilliseconds, CancellationToken.None);
 
             _logger.LogInformation(
                 "Auto-draft generated successfully for notice {NoticeId}. " +
