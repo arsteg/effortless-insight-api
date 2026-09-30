@@ -13,10 +13,10 @@ public class AiServiceOptions
     public string BaseUrl { get; set; } = "http://localhost:8000";
 
     /// <summary>
-    /// Timeout in seconds for processing requests (default: 120 seconds).
+    /// Timeout in seconds for processing requests (default: 600 seconds).
     /// AI processing can take significant time for large documents.
     /// </summary>
-    public int TimeoutSeconds { get; set; } = 120;
+    public int TimeoutSeconds { get; set; } = 600;
 
     /// <summary>
     /// Maximum number of retry attempts for transient failures.
