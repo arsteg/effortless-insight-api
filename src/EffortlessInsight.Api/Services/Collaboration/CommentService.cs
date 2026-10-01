@@ -481,7 +481,6 @@ public partial class CommentService : ICommentService
 
         // Extract @mentions using regex - format: @[Display Name](user-id-guid)
         var mentionPattern = MentionRegex();
-        var processedContent = content;
 
         var matches = mentionPattern.Matches(content);
         foreach (Match match in matches)
@@ -514,20 +513,11 @@ public partial class CommentService : ICommentService
                         Name: user.Name
                     ));
 
-                    // Replace @[Name](UserId) with mention span
-                    processedContent = processedContent.Replace(
-                        match.Value,
-                        $"<span class=\"mention\" data-user-id=\"{user.Id}\">@{user.Name}</span>"
-                    );
                 }
             }
         }
 
-        // Convert markdown to HTML
-        var html = Markdown.ToHtml(processedContent, _markdownPipeline);
-
-        // Sanitize HTML to prevent XSS
-        var sanitizedHtml = _htmlSanitizer.Sanitize(html);
+        var sanitizedHtml = CommentContentRenderer.Render(content, _markdownPipeline, _htmlSanitizer);
 
         return (sanitizedHtml, mentions);
     }
@@ -639,7 +629,7 @@ public partial class CommentService : ICommentService
         return new ReactionResponseDto(commentId, reactionSummaries);
     }
 
-    private static CommentResponseDto MapToResponseDto(
+    private CommentResponseDto MapToResponseDto(
         Comment comment,
         Guid currentUserId,
         bool canViewInternal,
@@ -679,7 +669,7 @@ public partial class CommentService : ICommentService
             Id: comment.Id,
             NoticeId: comment.NoticeId,
             Content: comment.Content,
-            ContentHtml: comment.ContentHtml,
+            ContentHtml: CommentContentRenderer.Render(comment.Content, _markdownPipeline, _htmlSanitizer),
             Visibility: comment.Visibility,
             Mentions: mentions,
             AttachmentUrls: comment.AttachmentUrls,

@@ -344,28 +344,36 @@ public class AuthService : IAuthService
             throw new UnauthorizedAccessException("ACCOUNT_DISABLED");
         }
 
-        // Revoke old session
+        // Older sessions have no organization context. Use the saved selection once,
+        // never the newest membership, and bind the rotated session to that selection.
+        var organizationId = session.OrganizationId ?? user.OrganizationId;
+        OrganizationMember? membership = null;
+        if (organizationId.HasValue)
+        {
+            membership = await _dbContext.OrganizationMembers
+                .Include(m => m.Organization)
+                .FirstOrDefaultAsync(m => m.UserId == user.Id &&
+                    m.OrganizationId == organizationId.Value && m.Status == "active" &&
+                    m.Organization.DeletedAt == null &&
+                    (m.AccessExpiresAt == null || m.AccessExpiresAt > DateTime.UtcNow));
+            if (membership == null)
+                throw new UnauthorizedAccessException("NOT_A_MEMBER");
+        }
+
+        var organization = membership?.Organization;
+
+        // Revoke only after the selected membership has been validated.
         session.RevokedAt = DateTime.UtcNow;
         session.RevokedReason = "token_refresh";
 
-        // Get user's organization from memberships first (multi-org support), then fallback to legacy field
-        var membership = await _dbContext.OrganizationMembers
-            .Include(m => m.Organization)
-            .Where(m => m.UserId == user.Id && m.Status == "active" && m.Organization.DeletedAt == null)
-            .OrderByDescending(m => m.JoinedAt)
-            .FirstOrDefaultAsync();
-
-        var organization = membership?.Organization ?? user.Organization;
-        var roleOverride = membership?.Role;
-
-        // Generate new tokens
         var (newRefreshToken, newJti, expiresAt) = _jwtService.GenerateRefreshToken(session.ExpiresAt > DateTime.UtcNow.AddDays(7));
-        var accessToken = _jwtService.GenerateAccessToken(user, organization, roleOverride);
+        var accessToken = _jwtService.GenerateAccessToken(user, organization, membership?.Role, membership?.IsExternal ?? false);
 
         // Create new session
         var newSession = new UserSession
         {
             UserId = user.Id,
+            OrganizationId = organization?.Id,
             RefreshTokenHash = ComputeSha256Hash(newRefreshToken),
             RefreshTokenJti = newJti,
             DeviceId = session.DeviceId,
@@ -979,6 +987,7 @@ public class AuthService : IAuthService
         var session = new UserSession
         {
             UserId = user.Id,
+            OrganizationId = organization?.Id,
             RefreshTokenHash = ComputeSha256Hash(refreshToken),
             RefreshTokenJti = refreshToken.Split(':')[0],
             DeviceId = partialTokenData.DeviceInfo?.DeviceId,
@@ -1903,6 +1912,7 @@ public class AuthService : IAuthService
         var session = new UserSession
         {
             UserId = user.Id,
+            OrganizationId = organization?.Id,
             RefreshTokenHash = ComputeSha256Hash(refreshToken),
             RefreshTokenJti = jti,
             DeviceId = deviceInfo?.DeviceId,
