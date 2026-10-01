@@ -29,7 +29,7 @@ public class AssistantController : ControllerBase
     };
 
     private const string FeatureNotAvailableMessage =
-        "The AI assistant is not available in your current plan. Upgrade to chat with the assistant.";
+        "Ask AI is not enabled for your current plan.";
 
     private readonly IAssistantService _assistantService;
     private readonly IAssistantRateLimiter _rateLimiter;
@@ -66,6 +66,9 @@ public class AssistantController : ControllerBase
         CancellationToken cancellationToken = default)
     {
         if (!TryGetIdentity(out var orgId, out var userId, out var error)) return error!;
+        if (!await _featureAccess.HasFeatureAccessAsync(orgId, FeatureCodes.AskAi, cancellationToken))
+            return StatusCode(StatusCodes.Status403Forbidden,
+                new ApiErrorResponse(false, "FEATURE_NOT_AVAILABLE", FeatureNotAvailableMessage));
 
         var result = await _assistantService.GetConversationsAsync(orgId, userId, page, pageSize, cancellationToken);
         return Ok(new ApiResponse<AssistantConversationListDto>(true, result));
@@ -79,6 +82,9 @@ public class AssistantController : ControllerBase
     {
         if (!AssistantEnabled(out var disabled)) return disabled!;
         if (!TryGetIdentity(out var orgId, out var userId, out var error)) return error!;
+        if (!await _featureAccess.HasFeatureAccessAsync(orgId, FeatureCodes.AskAi, cancellationToken))
+            return StatusCode(StatusCodes.Status403Forbidden,
+                new ApiErrorResponse(false, "FEATURE_NOT_AVAILABLE", FeatureNotAvailableMessage));
 
         var result = await _assistantService.CreateConversationAsync(orgId, userId, request, cancellationToken);
         return CreatedAtAction(
@@ -96,6 +102,9 @@ public class AssistantController : ControllerBase
         CancellationToken cancellationToken = default)
     {
         if (!TryGetIdentity(out var orgId, out var userId, out var error)) return error!;
+        if (!await _featureAccess.HasFeatureAccessAsync(orgId, FeatureCodes.AskAi, cancellationToken))
+            return StatusCode(StatusCodes.Status403Forbidden,
+                new ApiErrorResponse(false, "FEATURE_NOT_AVAILABLE", FeatureNotAvailableMessage));
 
         var result = await _assistantService.GetConversationAsync(
             conversationId, orgId, userId, messageLimit, cancellationToken);
@@ -114,6 +123,9 @@ public class AssistantController : ControllerBase
         CancellationToken cancellationToken = default)
     {
         if (!TryGetIdentity(out var orgId, out var userId, out var error)) return error!;
+        if (!await _featureAccess.HasFeatureAccessAsync(orgId, FeatureCodes.AskAi, cancellationToken))
+            return StatusCode(StatusCodes.Status403Forbidden,
+                new ApiErrorResponse(false, "FEATURE_NOT_AVAILABLE", FeatureNotAvailableMessage));
 
         var renamed = await _assistantService.RenameConversationAsync(
             conversationId, orgId, userId, request.Title, cancellationToken);
@@ -130,6 +142,9 @@ public class AssistantController : ControllerBase
         CancellationToken cancellationToken = default)
     {
         if (!TryGetIdentity(out var orgId, out var userId, out var error)) return error!;
+        if (!await _featureAccess.HasFeatureAccessAsync(orgId, FeatureCodes.AskAi, cancellationToken))
+            return StatusCode(StatusCodes.Status403Forbidden,
+                new ApiErrorResponse(false, "FEATURE_NOT_AVAILABLE", FeatureNotAvailableMessage));
 
         var deleted = await _assistantService.DeleteConversationAsync(
             conversationId, orgId, userId, cancellationToken);
@@ -153,8 +168,8 @@ public class AssistantController : ControllerBase
         if (!AssistantEnabled(out var disabled)) return disabled!;
         if (!TryGetIdentity(out var orgId, out var userId, out var error)) return error!;
 
-        // AI turns cost real money — paid plans only (free "Notify Only" is excluded).
-        if (!await _featureAccess.HasFeatureAccessAsync(orgId, FeatureCodes.AiExplanation, cancellationToken))
+        // Ask AI requires explicit permission in the current organization plan.
+        if (!await _featureAccess.HasFeatureAccessAsync(orgId, FeatureCodes.AskAi, cancellationToken))
         {
             return StatusCode(StatusCodes.Status403Forbidden,
                 new ApiErrorResponse(false, "FEATURE_NOT_AVAILABLE", FeatureNotAvailableMessage));
@@ -206,7 +221,7 @@ public class AssistantController : ControllerBase
                 cancellationToken);
             return;
         }
-        if (!await _featureAccess.HasFeatureAccessAsync(orgId, FeatureCodes.AiExplanation, cancellationToken))
+        if (!await _featureAccess.HasFeatureAccessAsync(orgId, FeatureCodes.AskAi, cancellationToken))
         {
             Response.StatusCode = StatusCodes.Status403Forbidden;
             await Response.WriteAsJsonAsync(
@@ -268,7 +283,7 @@ public class AssistantController : ControllerBase
         if (!AssistantEnabled(out var disabled)) return disabled!;
         if (!TryGetIdentity(out var orgId, out var userId, out var error)) return error!;
 
-        if (!await _featureAccess.HasFeatureAccessAsync(orgId, FeatureCodes.AiExplanation, cancellationToken))
+        if (!await _featureAccess.HasFeatureAccessAsync(orgId, FeatureCodes.AskAi, cancellationToken))
         {
             return StatusCode(StatusCodes.Status403Forbidden,
                 new ApiErrorResponse(false, "FEATURE_NOT_AVAILABLE", FeatureNotAvailableMessage));

@@ -591,6 +591,15 @@ public class PlanService : IPlanService
         await _dbContext.SaveChangesAsync();
         await InvalidatePlansCacheAsync();
 
+        // Organizations cache their feature lists separately from the plan catalog.
+        var organizationIds = await _dbContext.BillingSubscriptions
+            .Where(s => s.PlanId == planId && s.DeletedAt == null)
+            .Select(s => s.OrganizationId)
+            .Distinct()
+            .ToListAsync();
+        foreach (var organizationId in organizationIds)
+            await _cache.RemoveAsync($"org_features:{organizationId}");
+
         _logger.LogInformation("Plan {PlanCode} updated by admin {AdminId}", plan.Code, adminId);
 
         return plan;

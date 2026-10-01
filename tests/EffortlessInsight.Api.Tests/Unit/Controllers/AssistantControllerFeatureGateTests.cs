@@ -28,7 +28,7 @@ public class AssistantControllerFeatureGateTests
     private AssistantController CreateController(bool hasAiFeature)
     {
         _featureAccess
-            .Setup(f => f.HasFeatureAccessAsync(_orgId, FeatureCodes.AiExplanation, It.IsAny<CancellationToken>()))
+            .Setup(f => f.HasFeatureAccessAsync(_orgId, FeatureCodes.AskAi, It.IsAny<CancellationToken>()))
             .ReturnsAsync(hasAiFeature);
 
         var currentOrg = new Mock<ICurrentOrganizationService>();
@@ -98,5 +98,26 @@ public class AssistantControllerFeatureGateTests
         _assistantService.Verify(
             s => s.StreamMessageAsync(It.IsAny<AssistantTurnContext>(), It.IsAny<SendAssistantMessageRequest>(), It.IsAny<CancellationToken>()),
             Times.Never);
+    }
+    [Fact]
+    public async Task All_conversation_endpoints_and_voice_require_AskAi()
+    {
+        var controller = CreateController(hasAiFeature: false);
+        // A separate AI entitlement must not unlock Ask AI.
+        _featureAccess.Setup(f => f.HasFeatureAccessAsync(
+            _orgId, FeatureCodes.AiExplanation, It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        var id = Guid.NewGuid();
+        IActionResult[] results =
+        [
+            await controller.GetConversations(),
+            await controller.CreateConversation(null!),
+            await controller.GetConversation(id),
+            await controller.RenameConversation(id, null!),
+            await controller.DeleteConversation(id),
+            await controller.Transcribe(null!),
+        ];
+        foreach (var result in results)
+            result.Should().BeOfType<ObjectResult>().Which.StatusCode.Should().Be(403);
+        _assistantService.Invocations.Should().BeEmpty();
     }
 }

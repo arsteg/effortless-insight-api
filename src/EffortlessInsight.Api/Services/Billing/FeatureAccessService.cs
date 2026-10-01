@@ -35,6 +35,13 @@ public class FeatureAccessService : IFeatureAccessService
         string featureCode,
         CancellationToken cancellationToken = default)
     {
+        // Ask AI is opt-in for every plan, including CA plans and free-access grants.
+        if (string.Equals(featureCode, FeatureCodes.AskAi, StringComparison.OrdinalIgnoreCase))
+        {
+            var planFeatures = await GetAvailableFeaturesAsync(organizationId, cancellationToken);
+            return planFeatures.Contains(FeatureCodes.AskAi, StringComparer.OrdinalIgnoreCase);
+        }
+
         // Check if organization has CA operator plan - they get full access to all features
         var subscription = await _dbContext.BillingSubscriptions
             .Include(s => s.Plan)

@@ -88,6 +88,7 @@ public static class FeatureCodes
     /// AI-powered explanation of notices in plain language.
     /// </summary>
     public const string AiExplanation = "ai_explanation";
+    public const string AskAi = "ask_ai";
 
     /// <summary>
     /// AI-generated draft reply for notices.
