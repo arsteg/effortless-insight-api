@@ -185,6 +185,10 @@ public static class ServiceExtensions
         services.AddScoped<Services.AIChat.IChatRateLimiter, Services.AIChat.ChatRateLimiter>();
         services.AddScoped<Services.AIChat.Providers.IAIProvider, Services.AIChat.Providers.OpenAIProvider>();
 
+        // Register app-wide assistant gateway services
+        services.AddScoped<Services.Assistant.IAssistantService, Services.Assistant.AssistantService>();
+        services.AddScoped<Services.Assistant.IAssistantRateLimiter, Services.Assistant.AssistantRateLimiter>();
+
         return services;
     }
 
@@ -202,6 +206,9 @@ public static class ServiceExtensions
 
         // Configure AI Chat options
         services.Configure<AIChatOptions>(configuration.GetSection(AIChatOptions.SectionName));
+
+        // Configure app-wide Assistant options
+        services.Configure<AssistantOptions>(configuration.GetSection(AssistantOptions.SectionName));
 
         return services;
     }
@@ -466,6 +473,23 @@ public static class ServiceExtensions
         })
         .AddPolicyHandler(GetRetryPolicy(aiOptions))
         .AddPolicyHandler(GetCircuitBreakerPolicy());
+
+        // Assistant gateway client: same AI service, but NO retry policy —
+        // chat turns are user-interactive and streaming; retrying a half-read
+        // SSE stream or re-sending a chat turn would duplicate LLM cost.
+        var assistantOptions = configuration.GetSection(AssistantOptions.SectionName).Get<AssistantOptions>()
+            ?? new AssistantOptions();
+        services.AddHttpClient(Services.Assistant.AssistantService.HttpClientName, client =>
+        {
+            var baseUrl = string.IsNullOrEmpty(aiOptions.BaseUrl) ? "http://localhost:8000" : aiOptions.BaseUrl;
+            client.BaseAddress = new Uri(baseUrl);
+            client.Timeout = TimeSpan.FromSeconds(assistantOptions.AiServiceTimeoutSeconds);
+            client.DefaultRequestHeaders.Add("User-Agent", "EffortlessInsight-API/1.0");
+        })
+        .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+        {
+            ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+        });
 
         // GeoLocation HTTP Client for IP geolocation lookups
         services.AddHttpClient("GeoLocation", client =>

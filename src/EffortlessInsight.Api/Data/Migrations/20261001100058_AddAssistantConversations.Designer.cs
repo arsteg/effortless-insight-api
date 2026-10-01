@@ -6,6 +6,7 @@ using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.Data.Entities.Billing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using Pgvector;
@@ -15,9 +16,11 @@ using Pgvector;
 namespace EffortlessInsight.Api.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261001100058_AddAssistantConversations")]
+    partial class AddAssistantConversations
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -8312,9 +8315,6 @@ namespace EffortlessInsight.Api.Data.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
 
-                    b.Property<Guid?>("OrganizationId")
-                        .HasColumnType("uuid");
-
                     b.Property<string>("Platform")
                         .IsRequired()
                         .HasMaxLength(20)
@@ -9841,6 +9841,36 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Navigation("Approver");
 
                     b.Navigation("EscalationUser");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.AssistantConversation", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.Organization", "Organization")
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.ApplicationUser", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Organization");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.AssistantMessage", b =>
+                {
+                    b.HasOne("EffortlessInsight.Api.Data.Entities.AssistantConversation", "Conversation")
+                        .WithMany("Messages")
+                        .HasForeignKey("ConversationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Conversation");
                 });
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Attachment", b =>
@@ -11700,6 +11730,11 @@ namespace EffortlessInsight.Api.Data.Migrations
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.ApprovalRequest", b =>
                 {
                     b.Navigation("Actions");
+                });
+
+            modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.AssistantConversation", b =>
+                {
+                    b.Navigation("Messages");
                 });
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Billing.BillingSubscription", b =>
