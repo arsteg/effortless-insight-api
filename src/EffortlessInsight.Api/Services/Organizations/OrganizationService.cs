@@ -1472,6 +1472,7 @@ public class OrganizationManagementService : IOrganizationManagementService
         var session = new UserSession
         {
             UserId = user.Id,
+            OrganizationId = membership.OrganizationId,
             RefreshTokenHash = HashToken(refreshToken),
             RefreshTokenJti = jti,
             IpAddress = ipAddress,
@@ -1602,6 +1603,7 @@ public class OrganizationManagementService : IOrganizationManagementService
         var session = new UserSession
         {
             UserId = user.Id,
+            OrganizationId = membership.OrganizationId,
             RefreshTokenHash = HashToken(refreshToken),
             RefreshTokenJti = jti,
             IpAddress = ipAddress,

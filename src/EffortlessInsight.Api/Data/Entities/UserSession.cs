@@ -9,6 +9,9 @@ public class UserSession
     public Guid UserId { get; set; }
     public ApplicationUser User { get; set; } = null!;
 
+    // Organization selected when these tokens were issued; retained across refreshes.
+    public Guid? OrganizationId { get; set; }
+
     [Required]
     [MaxLength(64)]
     public string RefreshTokenHash { get; set; } = string.Empty;

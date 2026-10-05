@@ -442,4 +442,21 @@ public class PlanServiceTests : IDisposable
     }
 
     #endregion
+    [Fact]
+    public async Task UpdatePlan_invalidates_subscriber_feature_cache()
+    {
+        var plan = BillingTestFixture.CreateStarterPlan();
+        var subscription = BillingTestFixture.CreateSubscription(planId: plan.Id);
+        _dbContext.SubscriptionPlans.Add(plan);
+        _dbContext.BillingSubscriptions.Add(subscription);
+        await _dbContext.SaveChangesAsync();
+        var request = System.Text.Json.JsonSerializer.Deserialize<EffortlessInsight.Api.DTOs.UpdatePlanRequest>(
+            "{\"Features\":[\"ask_ai\"]}")!;
+
+        await _sut.UpdatePlanAsync(plan.Id, request, Guid.NewGuid());
+
+        plan.Features.Should().Contain("ask_ai");
+        await _cache.Received(1).RemoveAsync(
+            $"org_features:{subscription.OrganizationId}", Arg.Any<CancellationToken>());
+    }
 }

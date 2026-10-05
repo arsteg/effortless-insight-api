@@ -168,6 +168,8 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
     // AI Chat entities
     public DbSet<NoticeConversation> NoticeConversations => Set<NoticeConversation>();
     public DbSet<NoticeMessage> NoticeMessages => Set<NoticeMessage>();
+    public DbSet<AssistantConversation> AssistantConversations => Set<AssistantConversation>();
+    public DbSet<AssistantMessage> AssistantMessages => Set<AssistantMessage>();
     public DbSet<ConversationSummary> ConversationSummaries => Set<ConversationSummary>();
     public DbSet<MessageFeedback> MessageFeedbacks => Set<MessageFeedback>();
     public DbSet<AIAuditLog> AIAuditLogs => Set<AIAuditLog>();
@@ -421,6 +423,46 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
         modelBuilder.Entity<NoticeMessage>()
             .Property(m => m.Citations)
             .HasColumnType("jsonb");
+
+        // ============================================================================
+        // App-wide Assistant Configuration
+        // ============================================================================
+        modelBuilder.Entity<AssistantConversation>(entity =>
+        {
+            // Tenant-scoped like Notice: the conversation list is per org + user
+            entity.HasQueryFilter(c =>
+                c.DeletedAt == null &&
+                (BypassTenantFilter || CurrentOrganizationId == null || c.OrganizationId == CurrentOrganizationId));
+
+            entity.HasIndex(e => new { e.OrganizationId, e.UserId, e.LastMessageAt });
+
+            entity.HasOne(e => e.Organization)
+                .WithMany()
+                .HasForeignKey(e => e.OrganizationId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<AssistantMessage>(entity =>
+        {
+            // Scoped through AssistantConversation; soft-delete only here
+            entity.HasQueryFilter(m => m.DeletedAt == null);
+
+            entity.HasIndex(e => new { e.ConversationId, e.CreatedAt });
+
+            entity.Property(e => e.Citations).HasColumnType("jsonb");
+            entity.Property(e => e.ActionsJson).HasColumnType("jsonb");
+            entity.Property(e => e.ToolCallsJson).HasColumnType("jsonb");
+
+            entity.HasOne(e => e.Conversation)
+                .WithMany(c => c.Messages)
+                .HasForeignKey(e => e.ConversationId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
 
         // Configure vector column for text-embedding-ada-002 (1536 dimensions)
         // Note: text-embedding-3-large uses 3072, but ada-002 is more cost-effective

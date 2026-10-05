@@ -795,6 +795,7 @@ public record NoticeDto(
     int? DaysRemaining,
     decimal? TaxAmount,
     decimal? PenaltyAmount,
+    decimal? InterestAmount,
     string Status,
     string Priority,
     string ProcessingStatus,
