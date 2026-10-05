@@ -814,7 +814,8 @@ public record NoticeDto(
     /// <summary>Type of linked organization: "ca_org" (notice from CA's org) or "bo_org" (notice from BO's org), null if not linked.</summary>
     string? LinkedOrganizationType = null,
     /// <summary>True if this notice is read-only (cross-org notices cannot be edited).</summary>
-    bool IsReadOnly = false
+    bool IsReadOnly = false,
+    DateOnly? ExtendedDeadline = null
 );
 
 public record NoticeDetailDto(
