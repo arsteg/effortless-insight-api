@@ -107,6 +107,26 @@ public class AnalyticsController : ControllerBase
         return Ok(new ApiResponse<DashboardMetrics>(true, metrics));
     }
 
+    /// <summary>
+    /// Get all deadlines (notice response, notice extended, tasks) for the calendar view.
+    /// </summary>
+    [HttpGet("calendar")]
+    [ProducesResponseType(typeof(List<DeadlineItem>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> GetCalendarDeadlines(
+        [FromQuery] DateOnly startDate,
+        [FromQuery] DateOnly endDate,
+        CancellationToken ct = default)
+    {
+        if (startDate > endDate)
+            return BadRequest(new { error = "Start date cannot be after end date" });
+        if (endDate.DayNumber - startDate.DayNumber > 100)
+            return BadRequest(new { error = "Date range cannot exceed 100 days" });
+
+        var items = await _dashboardService.GetCalendarDeadlinesAsync(GetOrganizationId(), startDate, endDate, ct);
+        return Ok(new ApiResponse<List<DeadlineItem>>(true, items));
+    }
+
     // ==========================================================================
     // GAP-RPT-001: Notice Analytics Endpoints
     // ==========================================================================

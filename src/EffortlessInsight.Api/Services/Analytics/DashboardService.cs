@@ -21,6 +21,15 @@ public interface IDashboardService
         DateOnly? startDate = null,
         DateOnly? endDate = null,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Get all notice (response + extended) and task deadlines between two dates, for the calendar.
+    /// </summary>
+    Task<List<DeadlineItem>> GetCalendarDeadlinesAsync(
+        Guid orgId,
+        DateOnly startDate,
+        DateOnly endDate,
+        CancellationToken ct = default);
 }
 
 /// <summary>
@@ -114,6 +123,7 @@ public record DeadlineItem
     public string Priority { get; init; } = string.Empty;
     public Guid? NoticeId { get; init; }
     public string? NoticeNumber { get; init; }
+    public string Kind { get; init; } = "response"; // "response", "extended" or "task"
 }
 
 /// <summary>
@@ -471,6 +481,98 @@ public class DashboardService : IDashboardService
             DueTomorrow = allDeadlines.Count(d => d.DueDate == tomorrow),
             DueThisWeek = allDeadlines.Count(d => d.DueDate <= thisWeekEnd && !d.IsOverdue)
         };
+    }
+
+    public async Task<List<DeadlineItem>> GetCalendarDeadlinesAsync(
+        Guid orgId,
+        DateOnly startDate,
+        DateOnly endDate,
+        CancellationToken ct = default)
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+
+        // Notices with a response OR extended deadline inside the range
+        var notices = await _dbContext.Notices
+            .Where(n => n.OrganizationId == orgId &&
+                n.DeletedAt == null &&
+                n.Status != NoticeStatus.Closed &&
+                n.Status != NoticeStatus.Archived &&
+                ((n.ResponseDeadline >= startDate && n.ResponseDeadline <= endDate) ||
+                 (n.ExtendedDeadline >= startDate && n.ExtendedDeadline <= endDate)))
+            .Select(n => new { n.Id, n.NoticeNumber, n.Priority, n.ResponseDeadline, n.ExtendedDeadline })
+            .ToListAsync(ct);
+
+        var items = new List<DeadlineItem>();
+        foreach (var n in notices)
+        {
+            var name = n.NoticeNumber ?? "Notice #" + n.Id.ToString()[..8];
+
+            if (n.ResponseDeadline is { } response && response >= startDate && response <= endDate)
+            {
+                items.Add(new DeadlineItem
+                {
+                    Id = n.Id,
+                    Type = "notice",
+                    Kind = "response",
+                    Title = name,
+                    DueDate = response,
+                    DaysRemaining = response.DayNumber - today.DayNumber,
+                    // Not overdue if an extension was granted
+                    IsOverdue = response < today && n.ExtendedDeadline == null,
+                    Priority = n.Priority,
+                    NoticeId = n.Id,
+                    NoticeNumber = n.NoticeNumber
+                });
+            }
+
+            if (n.ExtendedDeadline is { } extended && extended >= startDate && extended <= endDate)
+            {
+                items.Add(new DeadlineItem
+                {
+                    Id = n.Id,
+                    Type = "notice",
+                    Kind = "extended",
+                    Title = name,
+                    DueDate = extended,
+                    DaysRemaining = extended.DayNumber - today.DayNumber,
+                    IsOverdue = extended < today,
+                    Priority = n.Priority,
+                    NoticeId = n.Id,
+                    NoticeNumber = n.NoticeNumber
+                });
+            }
+        }
+
+        // Task due dates inside the range
+        var todayDateTime = DateTime.UtcNow.Date;
+        var rangeStart = startDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+        var rangeEnd = endDate.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+
+        var tasks = await _dbContext.Tasks
+            .Where(t => t.Notice.OrganizationId == orgId &&
+                t.DeletedAt == null &&
+                t.DueDate.HasValue &&
+                t.DueDate.Value >= rangeStart &&
+                t.DueDate.Value < rangeEnd &&
+                TaskStatusValues.ActiveStatuses.Contains(t.Status))
+            .Select(t => new { t.Id, t.Title, t.DueDate, t.Priority, t.NoticeId, NoticeNumber = t.Notice.NoticeNumber })
+            .ToListAsync(ct);
+
+        items.AddRange(tasks.Select(t => new DeadlineItem
+        {
+            Id = t.Id,
+            Type = "task",
+            Kind = "task",
+            Title = t.Title,
+            DueDate = DateOnly.FromDateTime(t.DueDate!.Value),
+            DaysRemaining = (int)(t.DueDate!.Value.Date - todayDateTime).TotalDays,
+            IsOverdue = t.DueDate.Value < todayDateTime,
+            Priority = t.Priority,
+            NoticeId = t.NoticeId,
+            NoticeNumber = t.NoticeNumber
+        }));
+
+        return items.OrderBy(d => d.DueDate).ToList();
     }
 
     private async Task<RecentActivity> GetRecentActivityAsync(
