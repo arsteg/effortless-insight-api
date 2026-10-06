@@ -627,7 +627,9 @@ public record UpdateNoticeDetailsDto(
     DateOnly? PeriodTo = null,
     string? IssuingAuthority = null,
     string? Priority = null,
-    List<string>? Tags = null);
+    List<string>? Tags = null,
+    bool? ClearExtendedDeadline = null,
+    bool? ClearIssueDate = null);
 
 
 /// <summary>
@@ -1368,15 +1370,25 @@ public class NoticeServiceImpl : INoticeServiceExtended
         // Apply sorting
         query = filter.SortBy?.ToLowerInvariant() switch
         {
-            "deadline" => filter.SortDesc
+            "deadline" or "responsedeadline" => filter.SortDesc
                 ? query.OrderByDescending(n => n.ResponseDeadline)
                 : query.OrderBy(n => n.ResponseDeadline),
-            "amount" => filter.SortDesc
+            "extendeddeadline" => filter.SortDesc
+                ? query.OrderBy(n => n.ExtendedDeadline == null).ThenByDescending(n => n.ExtendedDeadline)
+                : query.OrderBy(n => n.ExtendedDeadline == null).ThenBy(n => n.ExtendedDeadline),
+            "amount" or "taxamount" => filter.SortDesc
                 ? query.OrderByDescending(n => n.TaxAmount)
                 : query.OrderBy(n => n.TaxAmount),
+            "noticenumber" => filter.SortDesc
+                ? query.OrderByDescending(n => n.NoticeNumber)
+                : query.OrderBy(n => n.NoticeNumber),
+            "noticetype" => filter.SortDesc
+                ? query.OrderByDescending(n => n.NoticeType)
+                : query.OrderBy(n => n.NoticeType),
+            // Sort by severity (low < medium < high < critical), not alphabetically; inlined so EF can translate it
             "priority" => filter.SortDesc
-                ? query.OrderByDescending(n => n.Priority)
-                : query.OrderBy(n => n.Priority),
+                ? query.OrderByDescending(n => n.Priority == "critical" ? 3 : n.Priority == "high" ? 2 : n.Priority == "medium" ? 1 : 0)
+                : query.OrderBy(n => n.Priority == "critical" ? 3 : n.Priority == "high" ? 2 : n.Priority == "medium" ? 1 : 0),
             "status" => filter.SortDesc
                 ? query.OrderByDescending(n => n.Status)
                 : query.OrderBy(n => n.Status),
@@ -1688,15 +1700,29 @@ public class NoticeServiceImpl : INoticeServiceExtended
     {
         return filter.SortBy?.ToLowerInvariant() switch
         {
-            "deadline" => filter.SortDesc
+            // The web grid sends the field name ("responseDeadline"); "deadline" is kept for older callers
+            "deadline" or "responsedeadline" => filter.SortDesc
                 ? notices.OrderByDescending(n => n.Notice.ResponseDeadline).ToList()
                 : notices.OrderBy(n => n.Notice.ResponseDeadline).ToList(),
-            "amount" => filter.SortDesc
+            // Most notices have no extension, so keep those last in both directions
+            "extendeddeadline" => filter.SortDesc
+                ? notices.OrderBy(n => n.Notice.ExtendedDeadline == null)
+                    .ThenByDescending(n => n.Notice.ExtendedDeadline).ToList()
+                : notices.OrderBy(n => n.Notice.ExtendedDeadline == null)
+                    .ThenBy(n => n.Notice.ExtendedDeadline).ToList(),
+            "amount" or "taxamount" => filter.SortDesc
                 ? notices.OrderByDescending(n => n.Notice.TaxAmount).ToList()
                 : notices.OrderBy(n => n.Notice.TaxAmount).ToList(),
+            "noticenumber" => filter.SortDesc
+                ? notices.OrderByDescending(n => n.Notice.NoticeNumber, StringComparer.OrdinalIgnoreCase).ToList()
+                : notices.OrderBy(n => n.Notice.NoticeNumber, StringComparer.OrdinalIgnoreCase).ToList(),
+            "noticetype" => filter.SortDesc
+                ? notices.OrderByDescending(n => n.Notice.NoticeType, StringComparer.OrdinalIgnoreCase).ToList()
+                : notices.OrderBy(n => n.Notice.NoticeType, StringComparer.OrdinalIgnoreCase).ToList(),
+            // Sort by severity (low < medium < high < critical), not alphabetically
             "priority" => filter.SortDesc
-                ? notices.OrderByDescending(n => n.Notice.Priority).ToList()
-                : notices.OrderBy(n => n.Notice.Priority).ToList(),
+                ? notices.OrderByDescending(n => PriorityRank(n.Notice.Priority)).ToList()
+                : notices.OrderBy(n => PriorityRank(n.Notice.Priority)).ToList(),
             "status" => filter.SortDesc
                 ? notices.OrderByDescending(n => n.Notice.Status).ToList()
                 : notices.OrderBy(n => n.Notice.Status).ToList(),
@@ -1705,6 +1731,14 @@ public class NoticeServiceImpl : INoticeServiceExtended
                 : notices.OrderBy(n => n.Notice.CreatedAt).ToList()
         };
     }
+
+    private static int PriorityRank(string? priority) => priority?.ToLowerInvariant() switch
+    {
+        NoticePriority.Critical => 3,
+        NoticePriority.High => 2,
+        NoticePriority.Medium => 1,
+        _ => 0
+    };
 
     /// <inheritdoc />
     public async Task<Notice> UpdateStatusAsync(
@@ -2045,7 +2079,17 @@ public class NoticeServiceImpl : INoticeServiceExtended
             newValues["gstin"] = update.Gstin;
         }
 
-        if (update.IssueDate.HasValue && update.IssueDate != notice.IssueDate)
+        // A null IssueDate means "unchanged", so removing it needs an explicit flag
+        if (update.ClearIssueDate == true)
+        {
+            if (notice.IssueDate.HasValue)
+            {
+                oldValues["issue_date"] = notice.IssueDate.Value.ToString();
+                notice.IssueDate = null;
+                newValues["issue_date"] = "";
+            }
+        }
+        else if (update.IssueDate.HasValue && update.IssueDate != notice.IssueDate)
         {
             oldValues["issue_date"] = notice.IssueDate?.ToString() ?? "";
             notice.IssueDate = update.IssueDate;
@@ -2064,11 +2108,38 @@ public class NoticeServiceImpl : INoticeServiceExtended
                 notice.TaxAmount + notice.PenaltyAmount + notice.InterestAmount);
         }
 
-        if (update.ExtendedDeadline.HasValue)
+        // A null ExtendedDeadline means "unchanged", so removing it needs an explicit flag
+        if (update.ClearExtendedDeadline == true)
+        {
+            if (notice.ExtendedDeadline.HasValue)
+            {
+                oldValues["extended_deadline"] = notice.ExtendedDeadline.Value.ToString();
+                notice.ExtendedDeadline = null;
+                newValues["extended_deadline"] = "";
+            }
+        }
+        else if (update.ExtendedDeadline.HasValue)
         {
             oldValues["extended_deadline"] = notice.ExtendedDeadline?.ToString() ?? "";
             notice.ExtendedDeadline = update.ExtendedDeadline;
             newValues["extended_deadline"] = update.ExtendedDeadline.Value.ToString();
+        }
+
+        if (update.IssueDate.HasValue || update.ResponseDeadline.HasValue || update.ExtendedDeadline.HasValue
+            || update.ClearIssueDate == true || update.ClearExtendedDeadline == true)
+        {
+            if (notice.ResponseDeadline.HasValue)
+            {
+                if (notice.IssueDate.HasValue && notice.IssueDate > notice.ResponseDeadline)
+                    throw new InvalidOperationException("Issue date cannot be after the response deadline");
+                if (notice.ExtendedDeadline.HasValue && notice.ExtendedDeadline < notice.ResponseDeadline)
+                    throw new InvalidOperationException("Extended deadline cannot be before the response deadline");
+            }
+            else if (notice.IssueDate.HasValue && notice.ExtendedDeadline.HasValue
+                && notice.ExtendedDeadline < notice.IssueDate)
+            {
+                throw new InvalidOperationException("Extended deadline cannot be before the issue date");
+            }
         }
 
         if (update.TaxAmount.HasValue && update.TaxAmount != notice.TaxAmount)

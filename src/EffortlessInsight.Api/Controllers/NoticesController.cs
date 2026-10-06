@@ -716,7 +716,9 @@ public class NoticesController : ControllerBase
                 PeriodTo: request.PeriodTo,
                 IssuingAuthority: request.IssuingAuthority,
                 Priority: request.Priority,
-                Tags: request.Tags);
+                Tags: request.Tags,
+                ClearExtendedDeadline: request.ClearExtendedDeadline,
+                ClearIssueDate: request.ClearIssueDate);
 
             var notice = await _noticeService.UpdateAsync(
                 noticeId, orgId, userId, updateDto, cancellationToken);
@@ -2184,7 +2186,8 @@ public class NoticesController : ControllerBase
             AssignedToId: notice.AssignedToId,
             AssignedToName: notice.AssignedTo?.Name,
             CreatedAt: notice.CreatedAt,
-            OrganizationId: notice.OrganizationId);
+            OrganizationId: notice.OrganizationId,
+            ExtendedDeadline: notice.ExtendedDeadline);
     }
 
     private static NoticeDto MapToDtoWithCrossOrg(NoticeWithCrossOrgInfo noticeInfo)
@@ -2217,7 +2220,8 @@ public class NoticesController : ControllerBase
             OrganizationName: noticeInfo.OrganizationName,
             IsFromLinkedOrganization: noticeInfo.IsFromLinkedOrganization,
             LinkedOrganizationType: noticeInfo.LinkedOrganizationType,
-            IsReadOnly: noticeInfo.IsReadOnly);
+            IsReadOnly: noticeInfo.IsReadOnly,
+            ExtendedDeadline: notice.ExtendedDeadline);
     }
 
     private static NoticeDetailDto MapToDetailDto(Notice notice)
@@ -2672,7 +2676,9 @@ public record UpdateNoticeDetailsRequest(
     DateOnly? PeriodTo = null,
     string? IssuingAuthority = null,
     string? Priority = null,
-    List<string>? Tags = null);
+    List<string>? Tags = null,
+    bool? ClearExtendedDeadline = null,
+    bool? ClearIssueDate = null);
 
 public record AddAttachmentRequest
 {
