@@ -1,5 +1,6 @@
 using System.Data;
 using System.Security.Cryptography;
+using EffortlessInsight.Api.Constants;
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.DTOs;
@@ -533,46 +534,67 @@ public class CaClientService : ICaClientService
             throw new InvalidOperationException("CA_NO_ORGANIZATION");
         }
 
-        using var hashBuffer = new MemoryStream();
-        await fileStream.CopyToAsync(hashBuffer, cancellationToken);
-        hashBuffer.Position = 0;
-        var fileHash = Convert.ToHexString(await SHA256.HashDataAsync(hashBuffer, cancellationToken)).ToLowerInvariant();
-        hashBuffer.Position = 0;
-
-        var fileUrl = await _fileStorageService.UploadAsync(hashBuffer, fileName, contentType);
-
-        // Create a Notice (not CaStagedNotice) with CaProspectClientId set
-        // This notice will be transferred to BO's org when they accept the invitation
-        var notice = new Notice
+        // Atomically reserve a notice slot against CA's quota (staged notices count against CA's limit)
+        var reservationResult = await _usageService.TryReserveNoticeSlotAsync(caOrgId);
+        if (!reservationResult.Success)
         {
-            OrganizationId = caOrgId,
-            UploadedById = caUserId,
-            FileName = fileName,
-            FileSize = (int)hashBuffer.Length,
-            FileMimeType = contentType,
-            FileHash = fileHash,
-            FileUrl = fileUrl,
-            Status = NoticeStatus.Uploaded,
-            ProcessingStatus = NoticeProcessingStatus.Queued,
-            Priority = NoticePriority.Medium,
-            Gstin = prospectClient.Gstin,
-            GstinHash = ComputeGstinHash(prospectClient.Gstin),
-            GstinId = null, // GSTIN not registered in CA's org
-            CaProspectClientId = prospectClientId,
-            Source = NoticeSource.Upload
-        };
+            throw new InvalidOperationException(
+                $"{reservationResult.ErrorCode}: {reservationResult.ErrorMessage}");
+        }
 
-        _dbContext.Notices.Add(notice);
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        await using var reservation = reservationResult.Reservation!;
 
-        // Queue AI processing
-        _backgroundJobs.Enqueue<INoticeProcessingJob>(job => job.ProcessAsync(notice.Id, cancellationToken));
+        try
+        {
+            using var hashBuffer = new MemoryStream();
+            await fileStream.CopyToAsync(hashBuffer, cancellationToken);
+            hashBuffer.Position = 0;
+            var fileHash = Convert.ToHexString(await SHA256.HashDataAsync(hashBuffer, cancellationToken)).ToLowerInvariant();
+            hashBuffer.Position = 0;
 
-        _logger.LogInformation(
-            "CA {CaUserId} uploaded notice {NoticeId} for prospect client {ProspectClientId}",
-            caUserId, notice.Id, prospectClientId);
+            var fileUrl = await _fileStorageService.UploadAsync(hashBuffer, fileName, contentType);
 
-        return new UploadCaStagedNoticeResult(notice.Id, notice.FileName, notice.FileSize, notice.CreatedAt);
+            // Create a Notice (not CaStagedNotice) with CaProspectClientId set
+            // This notice will be transferred to BO's org when they accept the invitation
+            var notice = new Notice
+            {
+                OrganizationId = caOrgId,
+                UploadedById = caUserId,
+                FileName = fileName,
+                FileSize = (int)hashBuffer.Length,
+                FileMimeType = contentType,
+                FileHash = fileHash,
+                FileUrl = fileUrl,
+                Status = NoticeStatus.Uploaded,
+                ProcessingStatus = NoticeProcessingStatus.Queued,
+                Priority = NoticePriority.Medium,
+                Gstin = prospectClient.Gstin,
+                GstinHash = ComputeGstinHash(prospectClient.Gstin),
+                GstinId = null, // GSTIN not registered in CA's org
+                CaProspectClientId = prospectClientId,
+                Source = NoticeSource.Upload
+            };
+
+            _dbContext.Notices.Add(notice);
+            await _dbContext.SaveChangesAsync(cancellationToken);
+
+            // Confirm reservation after successful save (prevents rollback on dispose)
+            await _usageService.ConfirmNoticeReservationAsync(reservation);
+
+            // Queue AI processing
+            _backgroundJobs.Enqueue<INoticeProcessingJob>(job => job.ProcessAsync(notice.Id, cancellationToken));
+
+            _logger.LogInformation(
+                "CA {CaUserId} uploaded notice {NoticeId} for prospect client {ProspectClientId}",
+                caUserId, notice.Id, prospectClientId);
+
+            return new UploadCaStagedNoticeResult(notice.Id, notice.FileName, notice.FileSize, notice.CreatedAt);
+        }
+        catch
+        {
+            // Reservation auto-rollbacks on dispose if not confirmed
+            throw;
+        }
     }
 
     public async Task<ExistingOrganizationForGstinDto> PrepareOrganizationAsync(

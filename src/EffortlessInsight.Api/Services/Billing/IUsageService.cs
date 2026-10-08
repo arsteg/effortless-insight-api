@@ -3,6 +3,15 @@ using EffortlessInsight.Api.Data.Entities.Billing;
 namespace EffortlessInsight.Api.Services.Billing;
 
 /// <summary>
+/// Result of attempting to reserve a notice slot.
+/// </summary>
+public record NoticeReservationResult(
+    bool Success,
+    string? ErrorCode,
+    string? ErrorMessage,
+    NoticeReservation? Reservation);
+
+/// <summary>
 /// Service for tracking and enforcing usage limits.
 /// </summary>
 public interface IUsageService
@@ -99,4 +108,21 @@ public interface IUsageService
     /// <returns>Tuple with validation result, reason, current count, and new limit</returns>
     Task<(bool CanDowngrade, string? Reason, int CurrentCount, int NewLimit)> ValidateGstinLimitForPlanChangeAsync(
         Guid organizationId, string newPlanCode);
+
+    /// <summary>
+    /// Atomically reserves a notice slot for an organization.
+    /// Uses Redis distributed lock to prevent race conditions.
+    /// The reservation auto-rollbacks on dispose if not confirmed.
+    /// </summary>
+    /// <param name="organizationId">The organization ID</param>
+    /// <param name="timeout">Lock acquisition timeout (default 10 seconds)</param>
+    /// <returns>Reservation result with handle if successful</returns>
+    Task<NoticeReservationResult> TryReserveNoticeSlotAsync(Guid organizationId, TimeSpan? timeout = null);
+
+    /// <summary>
+    /// Confirms a notice reservation, preventing rollback on dispose.
+    /// Call this after successfully creating the notice.
+    /// </summary>
+    /// <param name="reservation">The reservation to confirm</param>
+    Task ConfirmNoticeReservationAsync(NoticeReservation reservation);
 }

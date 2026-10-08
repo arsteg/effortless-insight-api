@@ -1,3 +1,4 @@
+using EffortlessInsight.Api.Constants;
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities.Billing;
 using EffortlessInsight.Api.Services.Billing;
@@ -8,6 +9,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
+using StackExchange.Redis;
 
 namespace EffortlessInsight.Api.Tests.Unit.Services.Billing;
 
@@ -15,6 +17,8 @@ public class UsageServiceTests : IDisposable
 {
     private readonly ApplicationDbContext _dbContext;
     private readonly IDistributedCache _cache;
+    private readonly IConnectionMultiplexer _redis;
+    private readonly IDatabase _redisDb;
     private readonly ILogger<UsageService> _logger;
     private readonly UsageService _sut;
 
@@ -22,9 +26,12 @@ public class UsageServiceTests : IDisposable
     {
         _dbContext = BillingTestDbContextFactory.Create();
         _cache = Substitute.For<IDistributedCache>();
+        _redis = Substitute.For<IConnectionMultiplexer>();
+        _redisDb = Substitute.For<IDatabase>();
+        _redis.GetDatabase(Arg.Any<int>(), Arg.Any<object>()).Returns(_redisDb);
         _logger = Substitute.For<ILogger<UsageService>>();
 
-        _sut = new UsageService(_dbContext, _cache, _logger);
+        _sut = new UsageService(_dbContext, _cache, _redis, _logger);
     }
 
     public void Dispose()
@@ -440,4 +447,313 @@ public class UsageServiceTests : IDisposable
         var updatedUsage = await _dbContext.UsageRecords.FirstAsync(u => u.OrganizationId == org.Id);
         updatedUsage.ApiCalls.Should().Be(101);
     }
+
+    #region TryReserveNoticeSlotAsync Tests
+
+    [Fact]
+    public async Task TryReserveNoticeSlotAsync_WithinLimit_ShouldReturnSuccessAndIncrement()
+    {
+        // Arrange
+        var org = BillingTestFixture.CreateOrganization();
+        var plan = BillingTestFixture.CreateStarterPlan();
+        plan.Limits.NoticesPerMonth = 100;
+        var subscription = BillingTestFixture.CreateSubscription(org.Id, plan.Id, plan.Code);
+        var usage = BillingTestFixture.CreateUsageRecord(org.Id, noticesCount: 50);
+
+        _dbContext.Organizations.Add(org);
+        _dbContext.SubscriptionPlans.Add(plan);
+        _dbContext.BillingSubscriptions.Add(subscription);
+        _dbContext.UsageRecords.Add(usage);
+        await _dbContext.SaveChangesAsync();
+
+        // Mock Redis lock acquisition
+        _redisDb.StringSetAsync(
+            Arg.Any<RedisKey>(),
+            Arg.Any<RedisValue>(),
+            Arg.Any<TimeSpan?>(),
+            Arg.Any<bool>(),
+            Arg.Any<When>(),
+            Arg.Any<CommandFlags>()
+        ).Returns(true);
+
+        // Act
+        var result = await _sut.TryReserveNoticeSlotAsync(org.Id);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.Reservation.Should().NotBeNull();
+        result.ErrorCode.Should().BeNull();
+
+        var updatedUsage = await _dbContext.UsageRecords.FirstAsync(u => u.OrganizationId == org.Id);
+        updatedUsage.NoticesCount.Should().Be(51); // Incremented atomically
+    }
+
+    [Fact]
+    public async Task TryReserveNoticeSlotAsync_AtLimit_ShouldReturnFalse()
+    {
+        // Arrange
+        var org = BillingTestFixture.CreateOrganization();
+        var plan = BillingTestFixture.CreateStarterPlan();
+        plan.Limits.NoticesPerMonth = 100;
+        var subscription = BillingTestFixture.CreateSubscription(org.Id, plan.Id, plan.Code);
+        var usage = BillingTestFixture.CreateUsageRecord(org.Id, noticesCount: 100);
+
+        _dbContext.Organizations.Add(org);
+        _dbContext.SubscriptionPlans.Add(plan);
+        _dbContext.BillingSubscriptions.Add(subscription);
+        _dbContext.UsageRecords.Add(usage);
+        await _dbContext.SaveChangesAsync();
+
+        // Mock Redis lock acquisition
+        _redisDb.StringSetAsync(
+            Arg.Any<RedisKey>(),
+            Arg.Any<RedisValue>(),
+            Arg.Any<TimeSpan?>(),
+            Arg.Any<bool>(),
+            Arg.Any<When>(),
+            Arg.Any<CommandFlags>()
+        ).Returns(true);
+
+        // Act
+        var result = await _sut.TryReserveNoticeSlotAsync(org.Id);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.Reservation.Should().BeNull();
+        result.ErrorCode.Should().Be(ErrorCodes.NoticeLimitExceeded);
+    }
+
+    [Fact]
+    public async Task TryReserveNoticeSlotAsync_OverLimit_ShouldReturnFalse()
+    {
+        // Arrange
+        var org = BillingTestFixture.CreateOrganization();
+        var plan = BillingTestFixture.CreateStarterPlan();
+        plan.Limits.NoticesPerMonth = 100;
+        var subscription = BillingTestFixture.CreateSubscription(org.Id, plan.Id, plan.Code);
+        var usage = BillingTestFixture.CreateUsageRecord(org.Id, noticesCount: 150);
+
+        _dbContext.Organizations.Add(org);
+        _dbContext.SubscriptionPlans.Add(plan);
+        _dbContext.BillingSubscriptions.Add(subscription);
+        _dbContext.UsageRecords.Add(usage);
+        await _dbContext.SaveChangesAsync();
+
+        // Mock Redis lock acquisition
+        _redisDb.StringSetAsync(
+            Arg.Any<RedisKey>(),
+            Arg.Any<RedisValue>(),
+            Arg.Any<TimeSpan?>(),
+            Arg.Any<bool>(),
+            Arg.Any<When>(),
+            Arg.Any<CommandFlags>()
+        ).Returns(true);
+
+        // Act
+        var result = await _sut.TryReserveNoticeSlotAsync(org.Id);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(ErrorCodes.NoticeLimitExceeded);
+    }
+
+    [Fact]
+    public async Task TryReserveNoticeSlotAsync_ZeroLimit_ShouldReturnFalse()
+    {
+        // Arrange
+        var org = BillingTestFixture.CreateOrganization();
+        var plan = BillingTestFixture.CreateStarterPlan();
+        plan.Limits.NoticesPerMonth = 0;
+        var subscription = BillingTestFixture.CreateSubscription(org.Id, plan.Id, plan.Code);
+        var usage = BillingTestFixture.CreateUsageRecord(org.Id, noticesCount: 0);
+
+        _dbContext.Organizations.Add(org);
+        _dbContext.SubscriptionPlans.Add(plan);
+        _dbContext.BillingSubscriptions.Add(subscription);
+        _dbContext.UsageRecords.Add(usage);
+        await _dbContext.SaveChangesAsync();
+
+        // Mock Redis lock acquisition
+        _redisDb.StringSetAsync(
+            Arg.Any<RedisKey>(),
+            Arg.Any<RedisValue>(),
+            Arg.Any<TimeSpan?>(),
+            Arg.Any<bool>(),
+            Arg.Any<When>(),
+            Arg.Any<CommandFlags>()
+        ).Returns(true);
+
+        // Act
+        var result = await _sut.TryReserveNoticeSlotAsync(org.Id);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(ErrorCodes.NoticeLimitExceeded);
+    }
+
+    [Fact]
+    public async Task TryReserveNoticeSlotAsync_UnlimitedPlan_ShouldReturnSuccess()
+    {
+        // Arrange
+        var org = BillingTestFixture.CreateOrganization();
+        var plan = BillingTestFixture.CreateEnterprisePlan();
+        plan.Limits.NoticesPerMonth = -1; // Unlimited
+        var subscription = BillingTestFixture.CreateSubscription(org.Id, plan.Id, plan.Code);
+        var usage = BillingTestFixture.CreateUsageRecord(org.Id, noticesCount: 10000);
+
+        _dbContext.Organizations.Add(org);
+        _dbContext.SubscriptionPlans.Add(plan);
+        _dbContext.BillingSubscriptions.Add(subscription);
+        _dbContext.UsageRecords.Add(usage);
+        await _dbContext.SaveChangesAsync();
+
+        // Mock Redis lock acquisition
+        _redisDb.StringSetAsync(
+            Arg.Any<RedisKey>(),
+            Arg.Any<RedisValue>(),
+            Arg.Any<TimeSpan?>(),
+            Arg.Any<bool>(),
+            Arg.Any<When>(),
+            Arg.Any<CommandFlags>()
+        ).Returns(true);
+
+        // Act
+        var result = await _sut.TryReserveNoticeSlotAsync(org.Id);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.Reservation.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task TryReserveNoticeSlotAsync_LockAcquisitionFails_ShouldReturnConcurrentOperation()
+    {
+        // Arrange
+        var org = BillingTestFixture.CreateOrganization();
+        var plan = BillingTestFixture.CreateStarterPlan();
+        plan.Limits.NoticesPerMonth = 100;
+        var subscription = BillingTestFixture.CreateSubscription(org.Id, plan.Id, plan.Code);
+        var usage = BillingTestFixture.CreateUsageRecord(org.Id, noticesCount: 50);
+
+        _dbContext.Organizations.Add(org);
+        _dbContext.SubscriptionPlans.Add(plan);
+        _dbContext.BillingSubscriptions.Add(subscription);
+        _dbContext.UsageRecords.Add(usage);
+        await _dbContext.SaveChangesAsync();
+
+        // Mock Redis lock acquisition failure (lock already held)
+        _redisDb.StringSetAsync(
+            Arg.Any<RedisKey>(),
+            Arg.Any<RedisValue>(),
+            Arg.Any<TimeSpan?>(),
+            Arg.Any<bool>(),
+            Arg.Any<When>(),
+            Arg.Any<CommandFlags>()
+        ).Returns(false);
+
+        // Act
+        var result = await _sut.TryReserveNoticeSlotAsync(org.Id);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(ErrorCodes.ConcurrentOperation);
+        result.ErrorMessage.Should().Contain("concurrent");
+    }
+
+    [Fact]
+    public async Task TryReserveNoticeSlotAsync_OneMinus_ShouldSucceed()
+    {
+        // Boundary test: L-1 notices, should succeed
+        var org = BillingTestFixture.CreateOrganization();
+        var plan = BillingTestFixture.CreateStarterPlan();
+        plan.Limits.NoticesPerMonth = 10;
+        var subscription = BillingTestFixture.CreateSubscription(org.Id, plan.Id, plan.Code);
+        var usage = BillingTestFixture.CreateUsageRecord(org.Id, noticesCount: 9);
+
+        _dbContext.Organizations.Add(org);
+        _dbContext.SubscriptionPlans.Add(plan);
+        _dbContext.BillingSubscriptions.Add(subscription);
+        _dbContext.UsageRecords.Add(usage);
+        await _dbContext.SaveChangesAsync();
+
+        _redisDb.StringSetAsync(
+            Arg.Any<RedisKey>(),
+            Arg.Any<RedisValue>(),
+            Arg.Any<TimeSpan?>(),
+            Arg.Any<bool>(),
+            Arg.Any<When>(),
+            Arg.Any<CommandFlags>()
+        ).Returns(true);
+
+        // Act
+        var result = await _sut.TryReserveNoticeSlotAsync(org.Id);
+
+        // Assert
+        result.Success.Should().BeTrue("at L-1 notices, one more should be allowed");
+    }
+
+    [Fact]
+    public async Task ConfirmNoticeReservationAsync_ShouldMarkConfirmed()
+    {
+        // Arrange
+        var org = BillingTestFixture.CreateOrganization();
+        var plan = BillingTestFixture.CreateStarterPlan();
+        plan.Limits.NoticesPerMonth = 100;
+        var subscription = BillingTestFixture.CreateSubscription(org.Id, plan.Id, plan.Code);
+        var usage = BillingTestFixture.CreateUsageRecord(org.Id, noticesCount: 50);
+
+        _dbContext.Organizations.Add(org);
+        _dbContext.SubscriptionPlans.Add(plan);
+        _dbContext.BillingSubscriptions.Add(subscription);
+        _dbContext.UsageRecords.Add(usage);
+        await _dbContext.SaveChangesAsync();
+
+        _redisDb.StringSetAsync(
+            Arg.Any<RedisKey>(),
+            Arg.Any<RedisValue>(),
+            Arg.Any<TimeSpan?>(),
+            Arg.Any<bool>(),
+            Arg.Any<When>(),
+            Arg.Any<CommandFlags>()
+        ).Returns(true);
+
+        var result = await _sut.TryReserveNoticeSlotAsync(org.Id);
+        var reservation = result.Reservation!;
+
+        // Act
+        await _sut.ConfirmNoticeReservationAsync(reservation);
+
+        // Assert
+        reservation.IsConfirmed.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task TryReserveNoticeSlotAsync_RedisUnavailable_FallsBackToNonAtomic()
+    {
+        // Arrange
+        var org = BillingTestFixture.CreateOrganization();
+        var plan = BillingTestFixture.CreateStarterPlan();
+        plan.Limits.NoticesPerMonth = 100;
+        var subscription = BillingTestFixture.CreateSubscription(org.Id, plan.Id, plan.Code);
+        var usage = BillingTestFixture.CreateUsageRecord(org.Id, noticesCount: 50);
+
+        _dbContext.Organizations.Add(org);
+        _dbContext.SubscriptionPlans.Add(plan);
+        _dbContext.BillingSubscriptions.Add(subscription);
+        _dbContext.UsageRecords.Add(usage);
+        await _dbContext.SaveChangesAsync();
+
+        // Mock Redis connection failure
+        _redis.GetDatabase(Arg.Any<int>(), Arg.Any<object>())
+            .Returns(x => throw new RedisConnectionException(ConnectionFailureType.UnableToConnect, "Test failure"));
+
+        // Act
+        var result = await _sut.TryReserveNoticeSlotAsync(org.Id);
+
+        // Assert - should fall back to non-atomic and succeed
+        result.Success.Should().BeTrue();
+        result.Reservation.Should().NotBeNull();
+    }
+
+    #endregion
 }

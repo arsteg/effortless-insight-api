@@ -1,7 +1,9 @@
+using EffortlessInsight.Api.Constants;
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.Data.Entities.GstSync;
 using EffortlessInsight.Api.DTOs;
+using EffortlessInsight.Api.Services.Billing;
 using EffortlessInsight.Api.Services.Notices;
 using EffortlessInsight.Api.Services.Organizations;
 using EffortlessInsight.Api.Services.Storage;
@@ -123,107 +125,118 @@ public class GstNoticeRawService : IGstNoticeRawService
                     continue;
                 }
 
-                // Authoritative per-plan notice quota — same gate as manual
-                // upload (NoticeService.UploadAsync). Checked per notice so a
-                // batch stops cleanly when the monthly allowance runs out.
-                var (canCreate, quotaReason) = await _usageService.CanCreateNoticeAsync(organizationId);
-                if (!canCreate)
+                // Atomically reserve a notice slot (check + increment with lock).
+                // Checked per notice so a batch stops cleanly when the monthly
+                // allowance runs out.
+                var reservationResult = await _usageService.TryReserveNoticeSlotAsync(organizationId);
+                if (!reservationResult.Success)
                 {
                     var remaining = request.NoticeIds.Count - imported.Count - alreadyImportedCount - failedCount;
-                    errors.Add($"NOTICE_LIMIT_EXCEEDED: {quotaReason} {imported.Count} of {request.NoticeIds.Count} notices imported; the remaining {remaining} were skipped.");
+                    errors.Add($"{reservationResult.ErrorCode}: {reservationResult.ErrorMessage} {imported.Count} of {request.NoticeIds.Count} notices imported; the remaining {remaining} were skipped.");
                     failedCount += remaining;
                     break;
                 }
 
-                // Resolve the org GSTIN registry entry for this client so the
-                // imported notice is linked (self-heals clients that predate
-                // the OrganizationGstinId column).
-                if (rawNotice.GstClient.OrganizationGstinId == null)
-                {
-                    var registryEntry = await _gstinLink.FindOrCreateAsync(
-                        rawNotice.GstClient.OrganizationId,
-                        rawNotice.GstClient.Gstin,
-                        rawNotice.GstClient.TradeName,
-                        rawNotice.GstClient.LegalName,
-                        cancellationToken);
-                    rawNotice.GstClient.OrganizationGstinId = registryEntry.Id;
-                }
+                await using var reservation = reservationResult.Reservation!;
 
-                // Create a new Notice in the main Notices table
-                var notice = new Data.Entities.Notice
+                try
                 {
-                    OrganizationId = organizationId,
-                    UploadedById = userId,
-                    NoticeType = rawNotice.NoticeType,
-                    NoticeCategory = rawNotice.NoticeCategory,
-                    NoticeNumber = rawNotice.ReferenceNumber ?? rawNotice.PortalNoticeId,
-                    Gstin = rawNotice.Gstin,
-                    // GstinHash is essential for cross-org notice visibility (CA-BO linking)
-                    GstinHash = !string.IsNullOrEmpty(rawNotice.Gstin)
-                        ? ICrossOrgNoticeVisibilityService.ComputeGstinHash(rawNotice.Gstin)
-                        : null,
-                    GstinId = rawNotice.GstClient.OrganizationGstinId,
-                    IssueDate = rawNotice.IssueDate,
-                    ResponseDeadline = rawNotice.DueDate,
-                    TaxAmount = rawNotice.TaxAmount,
-                    InterestAmount = rawNotice.InterestAmount,
-                    PenaltyAmount = rawNotice.PenaltyAmount,
-                    FinancialYear = rawNotice.FinancialYear,
-                    Section = rawNotice.SectionRule,
-                    IssuingOfficer = rawNotice.OfficerName,
-                    OfficerDesignation = rawNotice.OfficerDesignation,
-                    Jurisdiction = rawNotice.Jurisdiction,
-                    Status = Data.Entities.NoticeStatus.Uploaded,
-                    // With a captured PDF the notice goes through the full AI
-                    // pipeline (OCR → extraction → analysis); metadata-only
-                    // notices have nothing to process.
-                    ProcessingStatus = rawNotice.PdfS3Key != null
-                        ? Data.Entities.NoticeProcessingStatus.Queued
-                        : Data.Entities.NoticeProcessingStatus.Completed,
-                    Priority = DeterminePriority(rawNotice),
-                    Source = Data.Entities.NoticeSource.GstnPortal,
-                    GstnNoticeId = rawNotice.PortalNoticeId,
-                    // Assignment
-                    AssignedToId = request.AssignToUserId,
-                    AssignedById = request.AssignToUserId.HasValue ? userId : null,
-                    AssignedAt = request.AssignToUserId.HasValue ? DateTime.UtcNow : null,
-                    // Set required file fields with placeholders (no actual file from sync)
-                    FileUrl = rawNotice.PdfS3Key ?? $"gst-sync-import/{rawNotice.Id}",
-                    FileName = $"GST_Notice_{rawNotice.NoticeType}_{rawNotice.PortalNoticeId}.pdf",
-                    FileSize = rawNotice.PdfSizeBytes ?? 0,
-                    FileMimeType = "application/pdf",
-                    Metadata = new Dictionary<string, object>
+                    // Resolve the org GSTIN registry entry for this client so the
+                    // imported notice is linked (self-heals clients that predate
+                    // the OrganizationGstinId column).
+                    if (rawNotice.GstClient.OrganizationGstinId == null)
                     {
-                        ["gst_sync_notice_id"] = rawNotice.Id.ToString(),
-                        ["portal_status"] = rawNotice.StatusOnPortal ?? "",
-                        ["tax_period"] = rawNotice.TaxPeriod ?? "",
-                        ["demand_amount"] = rawNotice.DemandAmount?.ToString() ?? ""
+                        var registryEntry = await _gstinLink.FindOrCreateAsync(
+                            rawNotice.GstClient.OrganizationId,
+                            rawNotice.GstClient.Gstin,
+                            rawNotice.GstClient.TradeName,
+                            rawNotice.GstClient.LegalName,
+                            cancellationToken);
+                        rawNotice.GstClient.OrganizationGstinId = registryEntry.Id;
                     }
-                };
 
-                _context.Notices.Add(notice);
+                    // Create a new Notice in the main Notices table
+                    var notice = new Data.Entities.Notice
+                    {
+                        OrganizationId = organizationId,
+                        UploadedById = userId,
+                        NoticeType = rawNotice.NoticeType,
+                        NoticeCategory = rawNotice.NoticeCategory,
+                        NoticeNumber = rawNotice.ReferenceNumber ?? rawNotice.PortalNoticeId,
+                        Gstin = rawNotice.Gstin,
+                        // GstinHash is essential for cross-org notice visibility (CA-BO linking)
+                        GstinHash = !string.IsNullOrEmpty(rawNotice.Gstin)
+                            ? ICrossOrgNoticeVisibilityService.ComputeGstinHash(rawNotice.Gstin)
+                            : null,
+                        GstinId = rawNotice.GstClient.OrganizationGstinId,
+                        IssueDate = rawNotice.IssueDate,
+                        ResponseDeadline = rawNotice.DueDate,
+                        TaxAmount = rawNotice.TaxAmount,
+                        InterestAmount = rawNotice.InterestAmount,
+                        PenaltyAmount = rawNotice.PenaltyAmount,
+                        FinancialYear = rawNotice.FinancialYear,
+                        Section = rawNotice.SectionRule,
+                        IssuingOfficer = rawNotice.OfficerName,
+                        OfficerDesignation = rawNotice.OfficerDesignation,
+                        Jurisdiction = rawNotice.Jurisdiction,
+                        Status = Data.Entities.NoticeStatus.Uploaded,
+                        // With a captured PDF the notice goes through the full AI
+                        // pipeline (OCR → extraction → analysis); metadata-only
+                        // notices have nothing to process.
+                        ProcessingStatus = rawNotice.PdfS3Key != null
+                            ? Data.Entities.NoticeProcessingStatus.Queued
+                            : Data.Entities.NoticeProcessingStatus.Completed,
+                        Priority = DeterminePriority(rawNotice),
+                        Source = Data.Entities.NoticeSource.GstnPortal,
+                        GstnNoticeId = rawNotice.PortalNoticeId,
+                        // Assignment
+                        AssignedToId = request.AssignToUserId,
+                        AssignedById = request.AssignToUserId.HasValue ? userId : null,
+                        AssignedAt = request.AssignToUserId.HasValue ? DateTime.UtcNow : null,
+                        // Set required file fields with placeholders (no actual file from sync)
+                        FileUrl = rawNotice.PdfS3Key ?? $"gst-sync-import/{rawNotice.Id}",
+                        FileName = $"GST_Notice_{rawNotice.NoticeType}_{rawNotice.PortalNoticeId}.pdf",
+                        FileSize = rawNotice.PdfSizeBytes ?? 0,
+                        FileMimeType = "application/pdf",
+                        Metadata = new Dictionary<string, object>
+                        {
+                            ["gst_sync_notice_id"] = rawNotice.Id.ToString(),
+                            ["portal_status"] = rawNotice.StatusOnPortal ?? "",
+                            ["tax_period"] = rawNotice.TaxPeriod ?? "",
+                            ["demand_amount"] = rawNotice.DemandAmount?.ToString() ?? ""
+                        }
+                    };
 
-                // Advance the per-plan usage counter (also flushes the pending
-                // notice via its SaveChanges, keeping the quota check accurate
-                // for the rest of the batch).
-                await _usageService.IncrementNoticeCountAsync(organizationId);
+                    _context.Notices.Add(notice);
 
-                // Update raw notice with import info
-                rawNotice.ImportedToNotices = true;
-                rawNotice.ImportedNoticeId = notice.Id;
-                rawNotice.ImportedAt = DateTime.UtcNow;
+                    // Update raw notice with import info
+                    rawNotice.ImportedToNotices = true;
+                    rawNotice.ImportedNoticeId = notice.Id;
+                    rawNotice.ImportedAt = DateTime.UtcNow;
 
-                if (rawNotice.PdfS3Key != null)
-                {
-                    noticesToProcess.Add(notice.Id);
+                    // Save to persist the notice (keeps quota check accurate for the rest of the batch)
+                    await _context.SaveChangesAsync(cancellationToken);
+
+                    // Confirm reservation after successful save (prevents rollback on dispose)
+                    await _usageService.ConfirmNoticeReservationAsync(reservation);
+
+                    if (rawNotice.PdfS3Key != null)
+                    {
+                        noticesToProcess.Add(notice.Id);
+                    }
+
+                    imported.Add(new ImportedNoticeInfo(rawNotice.Id, notice.Id));
+
+                    // Track GSTIN for auto-linking
+                    if (!string.IsNullOrEmpty(rawNotice.Gstin))
+                    {
+                        importedGstins.Add(rawNotice.Gstin);
+                    }
                 }
-
-                imported.Add(new ImportedNoticeInfo(rawNotice.Id, notice.Id));
-
-                // Track GSTIN for auto-linking
-                if (!string.IsNullOrEmpty(rawNotice.Gstin))
+                catch
                 {
-                    importedGstins.Add(rawNotice.Gstin);
+                    // Reservation auto-rollbacks on dispose if not confirmed
+                    throw;
                 }
             }
             catch (Exception ex)
@@ -234,6 +247,7 @@ public class GstNoticeRawService : IGstNoticeRawService
             }
         }
 
+        // Final save for any remaining tracked changes
         await _context.SaveChangesAsync(cancellationToken);
 
         // Queue AI analysis for notices that came with a captured PDF —

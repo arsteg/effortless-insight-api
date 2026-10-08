@@ -1,10 +1,129 @@
+using EffortlessInsight.Api.Constants;
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities.Billing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Distributed;
+using StackExchange.Redis;
 using System.Text.Json;
 
 namespace EffortlessInsight.Api.Services.Billing;
+
+/// <summary>
+/// Represents a reserved notice slot that auto-rollbacks on dispose if not confirmed.
+/// </summary>
+public class NoticeReservation : IAsyncDisposable
+{
+    private readonly IDatabase _redisDb;
+    private readonly ApplicationDbContext _dbContext;
+    private readonly IDistributedCache _cache;
+    private readonly string _lockKey;
+    private readonly string _lockValue;
+    private readonly ILogger _logger;
+    private bool _disposed;
+
+    public Guid OrganizationId { get; }
+    public Guid ReservationId { get; }
+    internal bool IsConfirmed { get; set; }
+
+    internal NoticeReservation(
+        Guid organizationId,
+        IDatabase redisDb,
+        ApplicationDbContext dbContext,
+        IDistributedCache cache,
+        string lockKey,
+        string lockValue,
+        ILogger logger)
+    {
+        OrganizationId = organizationId;
+        ReservationId = Guid.NewGuid();
+        _redisDb = redisDb;
+        _dbContext = dbContext;
+        _cache = cache;
+        _lockKey = lockKey;
+        _lockValue = lockValue;
+        _logger = logger;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_disposed) return;
+        _disposed = true;
+
+        try
+        {
+            // Rollback: decrement the counter if not confirmed
+            if (!IsConfirmed)
+            {
+                await RollbackAsync();
+            }
+        }
+        finally
+        {
+            // Always release the lock
+            await ReleaseLockAsync();
+        }
+    }
+
+    private async Task RollbackAsync()
+    {
+        try
+        {
+            _logger.LogInformation(
+                "Rolling back notice reservation {ReservationId} for organization {OrganizationId}",
+                ReservationId, OrganizationId);
+
+            var today = DateOnly.FromDateTime(DateTime.UtcNow);
+            var usage = await _dbContext.UsageRecords
+                .FirstOrDefaultAsync(u =>
+                    u.OrganizationId == OrganizationId &&
+                    u.PeriodStart <= today &&
+                    u.PeriodEnd >= today);
+
+            if (usage != null && usage.NoticesCount > 0)
+            {
+                usage.NoticesCount--;
+                usage.LastCalculatedAt = DateTime.UtcNow;
+                await _dbContext.SaveChangesAsync();
+
+                // Invalidate cache
+                try
+                {
+                    await _cache.RemoveAsync($"billing:usage:{OrganizationId}");
+                }
+                catch
+                {
+                    // Ignore cache errors
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Failed to rollback notice reservation {ReservationId} for organization {OrganizationId}",
+                ReservationId, OrganizationId);
+        }
+    }
+
+    private async Task ReleaseLockAsync()
+    {
+        try
+        {
+            // Only delete if we still own the lock (using Lua script for atomicity)
+            var script = @"
+                if redis.call('get', KEYS[1]) == ARGV[1] then
+                    return redis.call('del', KEYS[1])
+                else
+                    return 0
+                end";
+
+            await _redisDb.ScriptEvaluateAsync(script, new RedisKey[] { _lockKey }, new RedisValue[] { _lockValue });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to release notice quota lock for organization {OrganizationId}", OrganizationId);
+        }
+    }
+}
 
 /// <summary>
 /// Implementation of the usage service.
@@ -13,18 +132,23 @@ public class UsageService : IUsageService
 {
     private readonly ApplicationDbContext _dbContext;
     private readonly IDistributedCache _cache;
+    private readonly IConnectionMultiplexer _redis;
     private readonly ILogger<UsageService> _logger;
 
     private const string UsageCacheKeyPrefix = "billing:usage:";
+    private const string NoticeQuotaLockKeyPrefix = "notice_quota_lock:";
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan DefaultLockTimeout = TimeSpan.FromSeconds(10);
 
     public UsageService(
         ApplicationDbContext dbContext,
         IDistributedCache cache,
+        IConnectionMultiplexer redis,
         ILogger<UsageService> logger)
     {
         _dbContext = dbContext;
         _cache = cache;
+        _redis = redis;
         _logger = logger;
     }
 
@@ -390,5 +514,142 @@ public class UsageService : IUsageService
         }
 
         return (true, null, currentCount, newLimit);
+    }
+
+    public async Task<NoticeReservationResult> TryReserveNoticeSlotAsync(Guid organizationId, TimeSpan? timeout = null)
+    {
+        var lockTimeout = timeout ?? DefaultLockTimeout;
+        var lockKey = $"{NoticeQuotaLockKeyPrefix}{organizationId}";
+        var lockValue = Guid.NewGuid().ToString();
+
+        try
+        {
+            var db = _redis.GetDatabase();
+
+            // Acquire distributed lock
+            var acquired = await db.StringSetAsync(lockKey, lockValue, lockTimeout, When.NotExists);
+            if (!acquired)
+            {
+                _logger.LogWarning(
+                    "Failed to acquire notice quota lock for organization {OrganizationId} - concurrent operation in progress",
+                    organizationId);
+                return new NoticeReservationResult(
+                    Success: false,
+                    ErrorCode: ErrorCodes.ConcurrentOperation,
+                    ErrorMessage: "Another notice creation is in progress. Please try again.",
+                    Reservation: null);
+            }
+
+            try
+            {
+                // Check quota inside lock
+                var (canCreate, quotaReason) = await CanCreateNoticeAsync(organizationId);
+                if (!canCreate)
+                {
+                    // Release lock immediately on quota failure
+                    await db.KeyDeleteAsync(lockKey);
+                    return new NoticeReservationResult(
+                        Success: false,
+                        ErrorCode: ErrorCodes.NoticeLimitExceeded,
+                        ErrorMessage: quotaReason ?? "Monthly notice limit reached. Please upgrade your plan.",
+                        Reservation: null);
+                }
+
+                // Pre-increment counter (pessimistic reservation)
+                await IncrementNoticeCountAsync(organizationId);
+
+                // Create reservation handle
+                var reservation = new NoticeReservation(
+                    organizationId,
+                    db,
+                    _dbContext,
+                    _cache,
+                    lockKey,
+                    lockValue,
+                    _logger);
+
+                _logger.LogInformation(
+                    "Notice slot reserved {ReservationId} for organization {OrganizationId}",
+                    reservation.ReservationId, organizationId);
+
+                return new NoticeReservationResult(
+                    Success: true,
+                    ErrorCode: null,
+                    ErrorMessage: null,
+                    Reservation: reservation);
+            }
+            catch (Exception ex)
+            {
+                // On any error, release the lock
+                try
+                {
+                    await db.KeyDeleteAsync(lockKey);
+                }
+                catch
+                {
+                    // Ignore lock release errors
+                }
+                throw;
+            }
+        }
+        catch (RedisConnectionException ex)
+        {
+            _logger.LogError(ex,
+                "Redis connection error during notice reservation for organization {OrganizationId}. " +
+                "Falling back to non-atomic check.",
+                organizationId);
+
+            // Fallback: perform non-atomic check (same as before)
+            // This maintains availability when Redis is down
+            var (canCreate, quotaReason) = await CanCreateNoticeAsync(organizationId);
+            if (!canCreate)
+            {
+                return new NoticeReservationResult(
+                    Success: false,
+                    ErrorCode: ErrorCodes.NoticeLimitExceeded,
+                    ErrorMessage: quotaReason ?? "Monthly notice limit reached. Please upgrade your plan.",
+                    Reservation: null);
+            }
+
+            // Increment counter
+            await IncrementNoticeCountAsync(organizationId);
+
+            // Create a no-op reservation (no lock to release, no rollback possible)
+            var fallbackReservation = new NoOpNoticeReservation(organizationId, _logger);
+
+            return new NoticeReservationResult(
+                Success: true,
+                ErrorCode: null,
+                ErrorMessage: null,
+                Reservation: fallbackReservation);
+        }
+    }
+
+    public Task ConfirmNoticeReservationAsync(NoticeReservation reservation)
+    {
+        if (reservation == null)
+            throw new ArgumentNullException(nameof(reservation));
+
+        reservation.IsConfirmed = true;
+
+        _logger.LogInformation(
+            "Notice reservation {ReservationId} confirmed for organization {OrganizationId}",
+            reservation.ReservationId, reservation.OrganizationId);
+
+        return Task.CompletedTask;
+    }
+}
+
+/// <summary>
+/// No-op reservation used when Redis is unavailable.
+/// Does not support rollback - marked as confirmed immediately.
+/// </summary>
+internal sealed class NoOpNoticeReservation : NoticeReservation
+{
+    internal NoOpNoticeReservation(Guid organizationId, ILogger logger)
+        : base(organizationId, null!, null!, null!, "", "", logger)
+    {
+        // Mark as confirmed immediately since we can't rollback without Redis
+        IsConfirmed = true;
     }
 }

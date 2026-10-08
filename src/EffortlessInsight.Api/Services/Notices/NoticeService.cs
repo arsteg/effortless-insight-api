@@ -1,6 +1,8 @@
+using EffortlessInsight.Api.Constants;
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.DTOs;
+using EffortlessInsight.Api.Services.Billing;
 using EffortlessInsight.Api.Services.Organizations;
 using EffortlessInsight.Api.Services.Storage;
 using Hangfire;
@@ -712,156 +714,165 @@ public class NoticeServiceImpl : INoticeServiceExtended
                 storageReason ?? "Storage limit reached. Please upgrade your plan or delete some files.");
         }
 
-        // Check the monthly notice quota BEFORE creating the notice or dispatching
-        // AI processing — this is the primary per-plan usage gate that protects
-        // AI spend for organizations over their plan limit.
-        var (canCreate, quotaReason) = await _usageService.CanCreateNoticeAsync(organizationId);
-        if (!canCreate)
+        // Atomically reserve a notice slot (check + increment with lock)
+        // This is the primary per-plan usage gate that protects AI spend for
+        // organizations over their plan limit.
+        var reservationResult = await _usageService.TryReserveNoticeSlotAsync(organizationId);
+        if (!reservationResult.Success)
         {
             return NoticeUploadResult.Failed(
-                "NOTICE_LIMIT_EXCEEDED",
-                quotaReason ?? "Monthly notice limit reached. Please upgrade your plan to process more notices.");
+                reservationResult.ErrorCode ?? ErrorCodes.NoticeLimitExceeded,
+                reservationResult.ErrorMessage ?? "Monthly notice limit reached. Please upgrade your plan to process more notices.");
         }
 
-        // Reset stream position for upload
-        if (fileStream.CanSeek)
-        {
-            fileStream.Position = 0;
-        }
-
-        // Check for duplicates
-        var duplicateCheck = await CheckDuplicateAsync(
-            validationResult.FileHash!, organizationId, cancellationToken);
-
-        // Validate GSTIN if provided
-        Guid? gstinId = null;
-        Guid? caProspectClientId = null;
-        if (!string.IsNullOrEmpty(gstin))
-        {
-            var orgGstin = await FindOrgGstinAsync(organizationId, gstin, cancellationToken);
-
-            if (orgGstin == null)
-            {
-                return NoticeUploadResult.Failed(
-                    "INVALID_GSTIN",
-                    $"GSTIN {gstin} not found in organization");
-            }
-
-            gstinId = orgGstin.Id;
-
-            // Check if CA is uploading for a prospect client's GSTIN that's in staging
-            // If so, set CaProspectClientId on the Notice so it can be transferred on acceptance
-            var user = await _userManager.FindByIdAsync(userId.ToString());
-            if (user?.IsCA == true)
-            {
-                var gstinHash = ICrossOrgNoticeVisibilityService.ComputeGstinHash(gstin);
-                var stagingClient = await _db.CaProspectClients
-                    .FirstOrDefaultAsync(p =>
-                        p.CaUserId == userId &&
-                        p.GstinHash == gstinHash &&
-                        p.Status == "staging" &&
-                        p.DeletedAt == null,
-                        cancellationToken);
-
-                if (stagingClient != null)
-                {
-                    caProspectClientId = stagingClient.Id;
-                    _logger.LogInformation(
-                        "CA {UserId} uploading notice for prospect client {ProspectClientId}, GSTIN {Gstin}",
-                        userId, stagingClient.Id, gstin);
-                }
-            }
-        }
-
-        // Create notice record
-        var notice = new Notice
-        {
-            OrganizationId = organizationId,
-            UploadedById = userId,
-            FileName = validationResult.SanitizedFileName!,
-            FileSize = (int)validationResult.FileSize,
-            FileMimeType = validationResult.DetectedMimeType,
-            FileHash = validationResult.FileHash,
-            FileUrl = string.Empty, // Will be set after upload
-            Status = _workflowService.GetInitialStatus(),
-            ProcessingStatus = NoticeProcessingStatus.Queued,
-            Priority = NoticePriority.Medium,
-            Gstin = gstin?.ToUpperInvariant(),
-            GstinHash = !string.IsNullOrEmpty(gstin) ? ICrossOrgNoticeVisibilityService.ComputeGstinHash(gstin) : null,
-            GstinId = gstinId,
-            CaProspectClientId = caProspectClientId,
-            Tags = tags
-        };
-
-        // Upload to S3
-        var extension = Path.GetExtension(fileName).ToLowerInvariant();
-        var s3Key = _storageService.GetNoticeKey(organizationId, notice.Id, extension);
+        await using var reservation = reservationResult.Reservation!;
 
         try
         {
-            var uploadedKey = await _storageService.UploadAsync(
-                fileStream, s3Key, validationResult.DetectedMimeType!);
-            notice.FileUrl = uploadedKey;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to upload notice file to S3");
-            return NoticeUploadResult.Failed(
-                "UPLOAD_FAILED",
-                "Failed to upload file to storage");
-        }
-
-        // Save notice to database
-        _db.Notices.Add(notice);
-        await _db.SaveChangesAsync(cancellationToken);
-
-        // Count this notice toward the organization's monthly quota (the gate
-        // above reads this counter, so it must be advanced on each creation).
-        await _usageService.IncrementNoticeCountAsync(organizationId);
-
-        // Queue AI processing
-        var jobId = _backgroundJobs.Enqueue<INoticeProcessingJob>(
-            job => job.ProcessAsync(notice.Id, cancellationToken));
-
-        // Update notice with job ID (optional tracking)
-        notice.Metadata ??= [];
-        notice.Metadata["processing_job_id"] = jobId;
-        await _db.SaveChangesAsync(cancellationToken);
-
-        // Audit log
-        await _auditService.LogAsync(new AuditLogEntry
-        {
-            Action = "notice.uploaded",
-            EntityType = "Notice",
-            EntityId = notice.Id,
-            UserId = userId,
-            OrganizationId = organizationId,
-            NewValues = new Dictionary<string, object>
+            // Reset stream position for upload
+            if (fileStream.CanSeek)
             {
-                ["file_name"] = notice.FileName,
-                ["file_size"] = notice.FileSize,
-                ["gstin"] = gstin ?? "not_specified"
+                fileStream.Position = 0;
             }
-        });
 
-        _logger.LogInformation(
-            "Notice {NoticeId} uploaded by user {UserId} in org {OrgId}, file: {FileName}",
-            notice.Id, userId, organizationId, notice.FileName);
+            // Check for duplicates
+            var duplicateCheck = await CheckDuplicateAsync(
+                validationResult.FileHash!, organizationId, cancellationToken);
 
-        // Auto-create CaBoGstinLinks if a CA is uploading for a connected client's GSTIN
-        // This enables cross-org visibility for the Business Owner
-        if (!string.IsNullOrEmpty(gstin))
-        {
-            await EnsureCaBoGstinLinksAsync(organizationId, userId, gstin, cancellationToken);
+            // Validate GSTIN if provided
+            Guid? gstinId = null;
+            Guid? caProspectClientId = null;
+            if (!string.IsNullOrEmpty(gstin))
+            {
+                var orgGstin = await FindOrgGstinAsync(organizationId, gstin, cancellationToken);
+
+                if (orgGstin == null)
+                {
+                    return NoticeUploadResult.Failed(
+                        "INVALID_GSTIN",
+                        $"GSTIN {gstin} not found in organization");
+                }
+
+                gstinId = orgGstin.Id;
+
+                // Check if CA is uploading for a prospect client's GSTIN that's in staging
+                // If so, set CaProspectClientId on the Notice so it can be transferred on acceptance
+                var user = await _userManager.FindByIdAsync(userId.ToString());
+                if (user?.IsCA == true)
+                {
+                    var gstinHash = ICrossOrgNoticeVisibilityService.ComputeGstinHash(gstin);
+                    var stagingClient = await _db.CaProspectClients
+                        .FirstOrDefaultAsync(p =>
+                            p.CaUserId == userId &&
+                            p.GstinHash == gstinHash &&
+                            p.Status == "staging" &&
+                            p.DeletedAt == null,
+                            cancellationToken);
+
+                    if (stagingClient != null)
+                    {
+                        caProspectClientId = stagingClient.Id;
+                        _logger.LogInformation(
+                            "CA {UserId} uploading notice for prospect client {ProspectClientId}, GSTIN {Gstin}",
+                            userId, stagingClient.Id, gstin);
+                    }
+                }
+            }
+
+            // Create notice record
+            var notice = new Notice
+            {
+                OrganizationId = organizationId,
+                UploadedById = userId,
+                FileName = validationResult.SanitizedFileName!,
+                FileSize = (int)validationResult.FileSize,
+                FileMimeType = validationResult.DetectedMimeType,
+                FileHash = validationResult.FileHash,
+                FileUrl = string.Empty, // Will be set after upload
+                Status = _workflowService.GetInitialStatus(),
+                ProcessingStatus = NoticeProcessingStatus.Queued,
+                Priority = NoticePriority.Medium,
+                Gstin = gstin?.ToUpperInvariant(),
+                GstinHash = !string.IsNullOrEmpty(gstin) ? ICrossOrgNoticeVisibilityService.ComputeGstinHash(gstin) : null,
+                GstinId = gstinId,
+                CaProspectClientId = caProspectClientId,
+                Tags = tags
+            };
+
+            // Upload to S3
+            var extension = Path.GetExtension(fileName).ToLowerInvariant();
+            var s3Key = _storageService.GetNoticeKey(organizationId, notice.Id, extension);
+
+            try
+            {
+                var uploadedKey = await _storageService.UploadAsync(
+                    fileStream, s3Key, validationResult.DetectedMimeType!);
+                notice.FileUrl = uploadedKey;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to upload notice file to S3");
+                return NoticeUploadResult.Failed(
+                    "UPLOAD_FAILED",
+                    "Failed to upload file to storage");
+            }
+
+            // Save notice to database
+            _db.Notices.Add(notice);
+            await _db.SaveChangesAsync(cancellationToken);
+
+            // Confirm reservation after successful save (prevents rollback on dispose)
+            await _usageService.ConfirmNoticeReservationAsync(reservation);
+
+            // Queue AI processing
+            var jobId = _backgroundJobs.Enqueue<INoticeProcessingJob>(
+                job => job.ProcessAsync(notice.Id, cancellationToken));
+
+            // Update notice with job ID (optional tracking)
+            notice.Metadata ??= [];
+            notice.Metadata["processing_job_id"] = jobId;
+            await _db.SaveChangesAsync(cancellationToken);
+
+            // Audit log
+            await _auditService.LogAsync(new AuditLogEntry
+            {
+                Action = "notice.uploaded",
+                EntityType = "Notice",
+                EntityId = notice.Id,
+                UserId = userId,
+                OrganizationId = organizationId,
+                NewValues = new Dictionary<string, object>
+                {
+                    ["file_name"] = notice.FileName,
+                    ["file_size"] = notice.FileSize,
+                    ["gstin"] = gstin ?? "not_specified"
+                }
+            });
+
+            _logger.LogInformation(
+                "Notice {NoticeId} uploaded by user {UserId} in org {OrgId}, file: {FileName}",
+                notice.Id, userId, organizationId, notice.FileName);
+
+            // Auto-create CaBoGstinLinks if a CA is uploading for a connected client's GSTIN
+            // This enables cross-org visibility for the Business Owner
+            if (!string.IsNullOrEmpty(gstin))
+            {
+                await EnsureCaBoGstinLinksAsync(organizationId, userId, gstin, cancellationToken);
+            }
+
+            return NoticeUploadResult.Succeeded(
+                notice.Id,
+                notice.FileName,
+                notice.FileSize,
+                notice.Status,
+                jobId,
+                duplicateCheck.IsPotentialDuplicate ? duplicateCheck : null);
         }
-
-        return NoticeUploadResult.Succeeded(
-            notice.Id,
-            notice.FileName,
-            notice.FileSize,
-            notice.Status,
-            jobId,
-            duplicateCheck.IsPotentialDuplicate ? duplicateCheck : null);
+        catch
+        {
+            // Reservation auto-rollbacks on dispose if not confirmed
+            throw;
+        }
     }
 
     /// <inheritdoc />
@@ -930,112 +941,134 @@ public class NoticeServiceImpl : INoticeServiceExtended
                 storageReason ?? "Storage limit reached. Please upgrade your plan or delete some files.");
         }
 
-        // Check for duplicates
-        var duplicateCheck = await CheckDuplicateAsync(fileHash, organizationId, cancellationToken);
-
-        // Validate GSTIN if provided
-        Guid? gstinId = null;
-        Guid? caProspectClientIdForConfirm = null;
-        if (!string.IsNullOrEmpty(gstin))
+        // Atomically reserve a notice slot (check + increment with lock)
+        var reservationResult = await _usageService.TryReserveNoticeSlotAsync(organizationId);
+        if (!reservationResult.Success)
         {
-            var orgGstin = await FindOrgGstinAsync(organizationId, gstin, cancellationToken);
+            return NoticeUploadResult.Failed(
+                reservationResult.ErrorCode ?? ErrorCodes.NoticeLimitExceeded,
+                reservationResult.ErrorMessage ?? "Monthly notice limit reached. Please upgrade your plan to process more notices.");
+        }
 
-            if (orgGstin == null)
+        await using var reservation = reservationResult.Reservation!;
+
+        try
+        {
+            // Check for duplicates
+            var duplicateCheck = await CheckDuplicateAsync(fileHash, organizationId, cancellationToken);
+
+            // Validate GSTIN if provided
+            Guid? gstinId = null;
+            Guid? caProspectClientIdForConfirm = null;
+            if (!string.IsNullOrEmpty(gstin))
             {
-                return NoticeUploadResult.Failed(
-                    "INVALID_GSTIN",
-                    $"GSTIN {gstin} not found in organization");
-            }
+                var orgGstin = await FindOrgGstinAsync(organizationId, gstin, cancellationToken);
 
-            gstinId = orgGstin.Id;
-
-            // Check if CA is uploading for a prospect client's GSTIN that's in staging
-            // If so, set CaProspectClientId on the Notice so it can be transferred on acceptance
-            var user = await _userManager.FindByIdAsync(userId.ToString());
-            if (user?.IsCA == true)
-            {
-                var gstinHash = ICrossOrgNoticeVisibilityService.ComputeGstinHash(gstin);
-                var stagingClient = await _db.CaProspectClients
-                    .FirstOrDefaultAsync(p =>
-                        p.CaUserId == userId &&
-                        p.GstinHash == gstinHash &&
-                        p.Status == "staging" &&
-                        p.DeletedAt == null,
-                        cancellationToken);
-
-                if (stagingClient != null)
+                if (orgGstin == null)
                 {
-                    caProspectClientIdForConfirm = stagingClient.Id;
-                    _logger.LogInformation(
-                        "CA {UserId} confirming upload for prospect client {ProspectClientId}, GSTIN {Gstin}",
-                        userId, stagingClient.Id, gstin);
+                    return NoticeUploadResult.Failed(
+                        "INVALID_GSTIN",
+                        $"GSTIN {gstin} not found in organization");
+                }
+
+                gstinId = orgGstin.Id;
+
+                // Check if CA is uploading for a prospect client's GSTIN that's in staging
+                // If so, set CaProspectClientId on the Notice so it can be transferred on acceptance
+                var user = await _userManager.FindByIdAsync(userId.ToString());
+                if (user?.IsCA == true)
+                {
+                    var gstinHash = ICrossOrgNoticeVisibilityService.ComputeGstinHash(gstin);
+                    var stagingClient = await _db.CaProspectClients
+                        .FirstOrDefaultAsync(p =>
+                            p.CaUserId == userId &&
+                            p.GstinHash == gstinHash &&
+                            p.Status == "staging" &&
+                            p.DeletedAt == null,
+                            cancellationToken);
+
+                    if (stagingClient != null)
+                    {
+                        caProspectClientIdForConfirm = stagingClient.Id;
+                        _logger.LogInformation(
+                            "CA {UserId} confirming upload for prospect client {ProspectClientId}, GSTIN {Gstin}",
+                            userId, stagingClient.Id, gstin);
+                    }
                 }
             }
-        }
 
-        // Extract notice ID from S3 key
-        // Key format: {org_id}/notices/{notice_id}/original.{ext}
-        var keyParts = s3Key.Split('/');
-        var noticeIdStr = keyParts.Length >= 3 ? keyParts[2] : null;
-        var noticeId = Guid.TryParse(noticeIdStr, out var parsed) ? parsed : Guid.NewGuid();
+            // Extract notice ID from S3 key
+            // Key format: {org_id}/notices/{notice_id}/original.{ext}
+            var keyParts = s3Key.Split('/');
+            var noticeIdStr = keyParts.Length >= 3 ? keyParts[2] : null;
+            var noticeId = Guid.TryParse(noticeIdStr, out var parsed) ? parsed : Guid.NewGuid();
 
-        // Create notice record
-        var notice = new Notice
-        {
-            Id = noticeId,
-            OrganizationId = organizationId,
-            UploadedById = userId,
-            FileName = _validationService.SanitizeFileName(fileName),
-            FileSize = fileSize,
-            FileMimeType = contentType,
-            FileHash = fileHash,
-            FileUrl = s3Key,
-            Status = _workflowService.GetInitialStatus(),
-            ProcessingStatus = NoticeProcessingStatus.Queued,
-            Priority = NoticePriority.Medium,
-            Gstin = gstin?.ToUpperInvariant(),
-            GstinHash = !string.IsNullOrEmpty(gstin) ? ICrossOrgNoticeVisibilityService.ComputeGstinHash(gstin) : null,
-            GstinId = gstinId,
-            CaProspectClientId = caProspectClientIdForConfirm,
-            Tags = tags
-        };
-
-        _db.Notices.Add(notice);
-        await _db.SaveChangesAsync(cancellationToken);
-
-        // Queue AI processing
-        var jobId = _backgroundJobs.Enqueue<INoticeProcessingJob>(
-            job => job.ProcessAsync(notice.Id, cancellationToken));
-
-        // Audit log
-        await _auditService.LogAsync(new AuditLogEntry
-        {
-            Action = "notice.uploaded",
-            EntityType = "Notice",
-            EntityId = notice.Id,
-            UserId = userId,
-            OrganizationId = organizationId,
-            NewValues = new Dictionary<string, object>
+            // Create notice record
+            var notice = new Notice
             {
-                ["file_name"] = notice.FileName,
-                ["file_size"] = notice.FileSize,
-                ["upload_method"] = "presigned"
+                Id = noticeId,
+                OrganizationId = organizationId,
+                UploadedById = userId,
+                FileName = _validationService.SanitizeFileName(fileName),
+                FileSize = fileSize,
+                FileMimeType = contentType,
+                FileHash = fileHash,
+                FileUrl = s3Key,
+                Status = _workflowService.GetInitialStatus(),
+                ProcessingStatus = NoticeProcessingStatus.Queued,
+                Priority = NoticePriority.Medium,
+                Gstin = gstin?.ToUpperInvariant(),
+                GstinHash = !string.IsNullOrEmpty(gstin) ? ICrossOrgNoticeVisibilityService.ComputeGstinHash(gstin) : null,
+                GstinId = gstinId,
+                CaProspectClientId = caProspectClientIdForConfirm,
+                Tags = tags
+            };
+
+            _db.Notices.Add(notice);
+            await _db.SaveChangesAsync(cancellationToken);
+
+            // Confirm reservation after successful save (prevents rollback on dispose)
+            await _usageService.ConfirmNoticeReservationAsync(reservation);
+
+            // Queue AI processing
+            var jobId = _backgroundJobs.Enqueue<INoticeProcessingJob>(
+                job => job.ProcessAsync(notice.Id, cancellationToken));
+
+            // Audit log
+            await _auditService.LogAsync(new AuditLogEntry
+            {
+                Action = "notice.uploaded",
+                EntityType = "Notice",
+                EntityId = notice.Id,
+                UserId = userId,
+                OrganizationId = organizationId,
+                NewValues = new Dictionary<string, object>
+                {
+                    ["file_name"] = notice.FileName,
+                    ["file_size"] = notice.FileSize,
+                    ["upload_method"] = "presigned"
+                }
+            });
+
+            // Auto-create CaBoGstinLinks if a CA is uploading for a connected client's GSTIN
+            if (!string.IsNullOrEmpty(gstin))
+            {
+                await EnsureCaBoGstinLinksAsync(organizationId, userId, gstin, cancellationToken);
             }
-        });
 
-        // Auto-create CaBoGstinLinks if a CA is uploading for a connected client's GSTIN
-        if (!string.IsNullOrEmpty(gstin))
-        {
-            await EnsureCaBoGstinLinksAsync(organizationId, userId, gstin, cancellationToken);
+            return NoticeUploadResult.Succeeded(
+                notice.Id,
+                notice.FileName,
+                notice.FileSize,
+                notice.Status,
+                jobId,
+                duplicateCheck.IsPotentialDuplicate ? duplicateCheck : null);
         }
-
-        return NoticeUploadResult.Succeeded(
-            notice.Id,
-            notice.FileName,
-            notice.FileSize,
-            notice.Status,
-            jobId,
-            duplicateCheck.IsPotentialDuplicate ? duplicateCheck : null);
+        catch
+        {
+            // Reservation auto-rollbacks on dispose if not confirmed
+            throw;
+        }
     }
 
     /// <inheritdoc />
@@ -1053,85 +1086,106 @@ public class NoticeServiceImpl : INoticeServiceExtended
             throw new InvalidOperationException($"GSTIN {request.Gstin} not found in organization");
         }
 
-        // Calculate priority if not provided
-        var priority = request.Priority ?? _workflowService.CalculatePriority(
-            request.NoticeType,
-            request.NoticeCategory,
-            request.ResponseDeadline,
-            (request.TaxAmount ?? 0) + (request.PenaltyAmount ?? 0) + (request.InterestAmount ?? 0));
-
-        // Create notice record
-        var noticeId = Guid.NewGuid();
-        var notice = new Notice
+        // Atomically reserve a notice slot (check + increment with lock)
+        var reservationResult = await _usageService.TryReserveNoticeSlotAsync(organizationId);
+        if (!reservationResult.Success)
         {
-            Id = noticeId,
-            OrganizationId = organizationId,
-            UploadedById = userId,
-            Gstin = request.Gstin.ToUpperInvariant(),
-            GstinHash = ICrossOrgNoticeVisibilityService.ComputeGstinHash(request.Gstin),
-            GstinId = orgGstin.Id,
-            NoticeNumber = request.NoticeNumber,
-            NoticeType = request.NoticeType,
-            NoticeCategory = request.NoticeCategory,
-            NoticeSubCategory = request.NoticeSubCategory,
-            IssueDate = request.IssueDate,
-            ResponseDeadline = request.ResponseDeadline,
-            HearingDate = request.HearingDate,
-            PeriodFrom = request.PeriodFrom,
-            PeriodTo = request.PeriodTo,
-            TaxAmount = request.TaxAmount,
-            PenaltyAmount = request.PenaltyAmount,
-            InterestAmount = request.InterestAmount,
-            IssuingAuthority = request.IssuingAuthority,
-            Notes = request.Subject,
-            Priority = priority,
-            Tags = request.Tags,
-            AssignedToId = request.AssignedToId,
-            AssignedById = request.AssignedToId.HasValue ? userId : null,
-            AssignedAt = request.AssignedToId.HasValue ? DateTime.UtcNow : null,
-            // Manual entry - placeholder file values
-            FileName = $"manual_entry_{noticeId:N}.txt",
-            FileUrl = $"manual://{noticeId}",
-            FileSize = 0,
-            // Manual entry - no AI processing needed
-            Status = NoticeStatus.Analyzed,
-            ProcessingStatus = NoticeProcessingStatus.Completed,
-            IsManualEntry = true,
-            CreatedAt = DateTime.UtcNow,
-            UpdatedAt = DateTime.UtcNow
-        };
-
-        _db.Notices.Add(notice);
-        await _db.SaveChangesAsync(cancellationToken);
-
-        // Audit log
-        await _auditService.LogAsync(new AuditLogEntry
-        {
-            Action = "notice.created_manual",
-            EntityType = "Notice",
-            EntityId = notice.Id,
-            UserId = userId,
-            OrganizationId = organizationId,
-            NewValues = new Dictionary<string, object>
-            {
-                ["gstin"] = notice.Gstin ?? "",
-                ["notice_number"] = notice.NoticeNumber ?? "",
-                ["notice_type"] = notice.NoticeType ?? "",
-                ["is_manual_entry"] = true
-            }
-        });
-
-        _logger.LogInformation(
-            "Manual notice created: {NoticeId} for org {OrganizationId} by user {UserId}",
-            notice.Id, organizationId, userId);
-
-        // Auto-create CaBoGstinLinks if a CA is creating a notice for a connected client's GSTIN
-        if (!string.IsNullOrEmpty(request.Gstin))
-        {
-            await EnsureCaBoGstinLinksAsync(organizationId, userId, request.Gstin, cancellationToken);
+            throw new InvalidOperationException(
+                $"{reservationResult.ErrorCode}: {reservationResult.ErrorMessage}");
         }
 
-        return notice;
+        await using var reservation = reservationResult.Reservation!;
+
+        try
+        {
+            // Calculate priority if not provided
+            var priority = request.Priority ?? _workflowService.CalculatePriority(
+                request.NoticeType,
+                request.NoticeCategory,
+                request.ResponseDeadline,
+                (request.TaxAmount ?? 0) + (request.PenaltyAmount ?? 0) + (request.InterestAmount ?? 0));
+
+            // Create notice record
+            var noticeId = Guid.NewGuid();
+            var notice = new Notice
+            {
+                Id = noticeId,
+                OrganizationId = organizationId,
+                UploadedById = userId,
+                Gstin = request.Gstin.ToUpperInvariant(),
+                GstinHash = ICrossOrgNoticeVisibilityService.ComputeGstinHash(request.Gstin),
+                GstinId = orgGstin.Id,
+                NoticeNumber = request.NoticeNumber,
+                NoticeType = request.NoticeType,
+                NoticeCategory = request.NoticeCategory,
+                NoticeSubCategory = request.NoticeSubCategory,
+                IssueDate = request.IssueDate,
+                ResponseDeadline = request.ResponseDeadline,
+                HearingDate = request.HearingDate,
+                PeriodFrom = request.PeriodFrom,
+                PeriodTo = request.PeriodTo,
+                TaxAmount = request.TaxAmount,
+                PenaltyAmount = request.PenaltyAmount,
+                InterestAmount = request.InterestAmount,
+                IssuingAuthority = request.IssuingAuthority,
+                Notes = request.Subject,
+                Priority = priority,
+                Tags = request.Tags,
+                AssignedToId = request.AssignedToId,
+                AssignedById = request.AssignedToId.HasValue ? userId : null,
+                AssignedAt = request.AssignedToId.HasValue ? DateTime.UtcNow : null,
+                // Manual entry - placeholder file values
+                FileName = $"manual_entry_{noticeId:N}.txt",
+                FileUrl = $"manual://{noticeId}",
+                FileSize = 0,
+                // Manual entry - no AI processing needed
+                Status = NoticeStatus.Analyzed,
+                ProcessingStatus = NoticeProcessingStatus.Completed,
+                IsManualEntry = true,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+
+            _db.Notices.Add(notice);
+            await _db.SaveChangesAsync(cancellationToken);
+
+            // Confirm reservation after successful save (prevents rollback on dispose)
+            await _usageService.ConfirmNoticeReservationAsync(reservation);
+
+            // Audit log
+            await _auditService.LogAsync(new AuditLogEntry
+            {
+                Action = "notice.created_manual",
+                EntityType = "Notice",
+                EntityId = notice.Id,
+                UserId = userId,
+                OrganizationId = organizationId,
+                NewValues = new Dictionary<string, object>
+                {
+                    ["gstin"] = notice.Gstin ?? "",
+                    ["notice_number"] = notice.NoticeNumber ?? "",
+                    ["notice_type"] = notice.NoticeType ?? "",
+                    ["is_manual_entry"] = true
+                }
+            });
+
+            _logger.LogInformation(
+                "Manual notice created: {NoticeId} for org {OrganizationId} by user {UserId}",
+                notice.Id, organizationId, userId);
+
+            // Auto-create CaBoGstinLinks if a CA is creating a notice for a connected client's GSTIN
+            if (!string.IsNullOrEmpty(request.Gstin))
+            {
+                await EnsureCaBoGstinLinksAsync(organizationId, userId, request.Gstin, cancellationToken);
+            }
+
+            return notice;
+        }
+        catch
+        {
+            // Reservation auto-rollbacks on dispose if not confirmed
+            throw;
+        }
     }
 
     /// <inheritdoc />

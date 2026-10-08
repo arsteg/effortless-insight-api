@@ -9,6 +9,9 @@ public static class ErrorCodes
     public const string GstinLimitExceeded = "GSTIN_LIMIT_EXCEEDED";
     public const string GstinNotInOrganization = "GSTIN_NOT_IN_ORGANIZATION";
 
+    // Notice Limit Errors
+    public const string NoticeLimitExceeded = "NOTICE_LIMIT_EXCEEDED";
+
     // Subscription Errors
     public const string SubscriptionExpired = "SUBSCRIPTION_EXPIRED";
     public const string SubscriptionCancelled = "SUBSCRIPTION_CANCELLED";
