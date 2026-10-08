@@ -59,6 +59,7 @@ public class OrganizationManagementService : IOrganizationManagementService
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly IEmailService _emailService;
     private readonly IAuditService _auditService;
+    private readonly IGstinLimitEnforcementService _gstinLimitService;
     private readonly IConfiguration _configuration;
     private readonly ILogger<OrganizationManagementService> _logger;
 
@@ -74,6 +75,7 @@ public class OrganizationManagementService : IOrganizationManagementService
         UserManager<ApplicationUser> userManager,
         IEmailService emailService,
         IAuditService auditService,
+        IGstinLimitEnforcementService gstinLimitService,
         IConfiguration configuration,
         ILogger<OrganizationManagementService> logger)
     {
@@ -84,6 +86,7 @@ public class OrganizationManagementService : IOrganizationManagementService
         _userManager = userManager;
         _emailService = emailService;
         _auditService = auditService;
+        _gstinLimitService = gstinLimitService;
         _configuration = configuration;
         _logger = logger;
     }
@@ -487,21 +490,17 @@ public class OrganizationManagementService : IOrganizationManagementService
             throw new InvalidOperationException("GSTIN_EXISTS");
         }
 
-        // Check plan limits
+        // Check plan limits - enforce GSTIN limit based on subscription
+        var limitResult = await _gstinLimitService.ValidateCanAddGstinAsync(organizationId, request.Gstin);
+        if (!limitResult.IsAllowed)
+        {
+            throw new InvalidOperationException($"{limitResult.ErrorCode}: {limitResult.ErrorMessage}");
+        }
+
         var organization = await _dbContext.Organizations
             .Include(o => o.OrganizationGstins)
             .FirstOrDefaultAsync(o => o.Id == organizationId && o.DeletedAt == null)
             ?? throw new KeyNotFoundException("ORGANIZATION_NOT_FOUND");
-
-        // Get active subscription to check limits
-        var subscription = await _dbContext.BillingSubscriptions
-            .Include(s => s.Plan)
-            .FirstOrDefaultAsync(s => s.OrganizationId == organizationId
-                && (s.Status == SubscriptionStatus.Active || s.Status == SubscriptionStatus.Trialing)
-                && s.DeletedAt == null);
-
-        // Note: GstinLimit is not in the new billing system's PlanLimits
-        // This check can be removed or updated based on business requirements
 
         // Get state name
         var stateName = await _gstinValidator.GetStateNameAsync(gstinResult.StateCode!) ?? gstinResult.StateName!;

@@ -124,6 +124,10 @@ public class CaClientServiceAcceptInvitationTests
         gstNoticeRawServiceMock
             .Setup(s => s.AutoImportForGstinAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AutoImportResult { Imported = 0, SkippedAsDuplicate = 0, Failed = 0 });
+        var gstinLimitServiceMock = new Mock<IGstinLimitEnforcementService>();
+        gstinLimitServiceMock
+            .Setup(s => s.ValidateCanAddGstinAsync(It.IsAny<Guid>(), It.IsAny<string?>()))
+            .ReturnsAsync(new GstinLimitValidationResult(IsAllowed: true, ErrorCode: null, ErrorMessage: null, CurrentCount: 0, Limit: 10, IsUnlimited: false));
         var configuration = new ConfigurationBuilder().Build();
 
         var service = new CaClientService(
@@ -133,6 +137,7 @@ public class CaClientServiceAcceptInvitationTests
             orgMock.Object,
             caBoGstinLinkServiceMock.Object,
             gstNoticeRawServiceMock.Object,
+            gstinLimitServiceMock.Object,
             userManagerMock.Object,
             emailServiceMock.Object,
             fileStorageMock.Object,

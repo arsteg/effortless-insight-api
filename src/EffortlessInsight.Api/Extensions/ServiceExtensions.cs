@@ -82,6 +82,7 @@ public static class ServiceExtensions
         services.AddScoped<ICaGstinAuthorizationService, CaGstinAuthorizationService>();
         services.AddScoped<ICaClientService, CaClientService>();
         services.AddScoped<ICaBoGstinLinkService, CaBoGstinLinkService>();
+        services.AddScoped<IGstinLimitEnforcementService, GstinLimitEnforcementService>();
 
         // Register GSTN integration services
         services.AddScoped<Services.GstnIntegration.IGstnConnectionService, Services.GstnIntegration.GstnConnectionService>();

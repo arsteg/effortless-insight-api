@@ -4,6 +4,9 @@ using EffortlessInsight.Api.Services.Organizations;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
+// Import for GSTIN limit status DTO
+using GstinLimitStatusDto = EffortlessInsight.Api.Services.Organizations.GstinLimitStatusDto;
+
 namespace EffortlessInsight.Api.Controllers;
 
 [ApiController]
@@ -254,7 +257,33 @@ public class OrganizationsController : ControllerBase
         }
         catch (InvalidOperationException ex) when (ex.Message.StartsWith("GSTIN_LIMIT_EXCEEDED"))
         {
-            return BadRequest(new ApiErrorResponse(false, "GSTIN_LIMIT_EXCEEDED", ex.Message.Replace("GSTIN_LIMIT_EXCEEDED: ", "")));
+            return StatusCode(StatusCodes.Status403Forbidden,
+                new ApiErrorResponse(false, "GSTIN_LIMIT_EXCEEDED", ex.Message.Replace("GSTIN_LIMIT_EXCEEDED: ", "")));
+        }
+        catch (InvalidOperationException ex) when (ex.Message.StartsWith("SUBSCRIPTION_EXPIRED"))
+        {
+            return StatusCode(StatusCodes.Status402PaymentRequired,
+                new ApiErrorResponse(false, "SUBSCRIPTION_EXPIRED", ex.Message.Replace("SUBSCRIPTION_EXPIRED: ", "")));
+        }
+        catch (InvalidOperationException ex) when (ex.Message.StartsWith("SUBSCRIPTION_CANCELLED"))
+        {
+            return StatusCode(StatusCodes.Status402PaymentRequired,
+                new ApiErrorResponse(false, "SUBSCRIPTION_CANCELLED", ex.Message.Replace("SUBSCRIPTION_CANCELLED: ", "")));
+        }
+        catch (InvalidOperationException ex) when (ex.Message.StartsWith("TRIAL_EXPIRED"))
+        {
+            return StatusCode(StatusCodes.Status402PaymentRequired,
+                new ApiErrorResponse(false, "TRIAL_EXPIRED", ex.Message.Replace("TRIAL_EXPIRED: ", "")));
+        }
+        catch (InvalidOperationException ex) when (ex.Message.StartsWith("SUBSCRIPTION_REQUIRED"))
+        {
+            return StatusCode(StatusCodes.Status402PaymentRequired,
+                new ApiErrorResponse(false, "SUBSCRIPTION_REQUIRED", ex.Message.Replace("SUBSCRIPTION_REQUIRED: ", "")));
+        }
+        catch (InvalidOperationException ex) when (ex.Message.StartsWith("CONCURRENT_OPERATION"))
+        {
+            return StatusCode(StatusCodes.Status409Conflict,
+                new ApiErrorResponse(false, "CONCURRENT_OPERATION", "Another operation is in progress. Please try again."));
         }
         catch (KeyNotFoundException)
         {
@@ -336,6 +365,42 @@ public class OrganizationsController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to set primary GSTIN {GstinId} for organization {OrgId}", gstinId, orgId);
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
+        }
+    }
+
+    /// <summary>
+    /// Get GSTIN limit status for organization
+    /// </summary>
+    [HttpGet("{orgId:guid}/gstin-limit-status")]
+    [ProducesResponseType(typeof(ApiResponse<GstinLimitStatusDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetGstinLimitStatus(Guid orgId, [FromServices] IGstinLimitEnforcementService gstinLimitService)
+    {
+        try
+        {
+            var userId = GetCurrentUserId();
+
+            // Verify user has access to this organization
+            var result = await _organizationService.GetByIdAsync(orgId, userId);
+
+            var limitStatus = await gstinLimitService.GetLimitStatusAsync(orgId);
+            return Ok(new ApiResponse<GstinLimitStatusDto>(true, limitStatus));
+        }
+        catch (UnauthorizedAccessException ex) when (ex.Message == "NOT_A_MEMBER")
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                new ApiErrorResponse(false, "NOT_A_MEMBER", "You are not a member of this organization"));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(new ApiErrorResponse(false, "ORGANIZATION_NOT_FOUND", "Organization not found"));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get GSTIN limit status for organization {OrgId}", orgId);
             return StatusCode(StatusCodes.Status500InternalServerError,
                 new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
         }

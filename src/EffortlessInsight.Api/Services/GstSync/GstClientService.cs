@@ -1,6 +1,7 @@
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Data.Entities.GstSync;
 using EffortlessInsight.Api.DTOs;
+using EffortlessInsight.Api.Services.Organizations;
 using Microsoft.EntityFrameworkCore;
 
 namespace EffortlessInsight.Api.Services.GstSync;
@@ -12,12 +13,18 @@ public class GstClientService : IGstClientService
 {
     private readonly ApplicationDbContext _context;
     private readonly IGstinLinkService _gstinLink;
+    private readonly IGstinLimitEnforcementService _gstinLimitService;
     private readonly ILogger<GstClientService> _logger;
 
-    public GstClientService(ApplicationDbContext context, IGstinLinkService gstinLink, ILogger<GstClientService> logger)
+    public GstClientService(
+        ApplicationDbContext context,
+        IGstinLinkService gstinLink,
+        IGstinLimitEnforcementService gstinLimitService,
+        ILogger<GstClientService> logger)
     {
         _context = context;
         _gstinLink = gstinLink;
+        _gstinLimitService = gstinLimitService;
         _logger = logger;
     }
 
@@ -59,6 +66,13 @@ public class GstClientService : IGstClientService
         if (existing != null)
         {
             throw new InvalidOperationException($"GSTIN {request.Gstin} is already registered for this organization.");
+        }
+
+        // Check GSTIN limit before creating
+        var limitResult = await _gstinLimitService.ValidateCanAddGstinAsync(organizationId, request.Gstin);
+        if (!limitResult.IsAllowed)
+        {
+            throw new InvalidOperationException($"{limitResult.ErrorCode}: {limitResult.ErrorMessage}");
         }
 
         // Extract state code from GSTIN

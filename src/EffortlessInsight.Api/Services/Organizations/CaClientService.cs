@@ -135,6 +135,7 @@ public class CaClientService : ICaClientService
     private readonly IOrganizationManagementService _organizationService;
     private readonly ICaBoGstinLinkService _caBoGstinLinkService;
     private readonly IGstNoticeRawService _gstNoticeRawService;
+    private readonly IGstinLimitEnforcementService _gstinLimitService;
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly IEmailService _emailService;
     private readonly IFileStorageService _fileStorageService;
@@ -154,6 +155,7 @@ public class CaClientService : ICaClientService
         IOrganizationManagementService organizationService,
         ICaBoGstinLinkService caBoGstinLinkService,
         IGstNoticeRawService gstNoticeRawService,
+        IGstinLimitEnforcementService gstinLimitService,
         UserManager<ApplicationUser> userManager,
         IEmailService emailService,
         IFileStorageService fileStorageService,
@@ -169,6 +171,7 @@ public class CaClientService : ICaClientService
         _organizationService = organizationService;
         _caBoGstinLinkService = caBoGstinLinkService;
         _gstNoticeRawService = gstNoticeRawService;
+        _gstinLimitService = gstinLimitService;
         _userManager = userManager;
         _emailService = emailService;
         _fileStorageService = fileStorageService;
@@ -192,6 +195,19 @@ public class CaClientService : ICaClientService
         if (request.ClientDisplayName?.Length > 255) throw new InvalidOperationException("INVALID_CLIENT_NAME");
         var gstin = validation.Gstin!;
         var hash = ComputeGstinHash(gstin);
+
+        // Check if this GSTIN already exists as a prospect - if so, no limit check needed
+        var existingProspect = await _dbContext.CaProspectClients
+            .FirstOrDefaultAsync(p => p.CaUserId == caUserId && p.GstinHash == hash && p.DeletedAt == null);
+        if (existingProspect == null)
+        {
+            // Check CA client GSTIN limit before creating new prospect
+            var limitResult = await _gstinLimitService.ValidateCanAddGstinAsync(orgId, gstin);
+            if (!limitResult.IsAllowed)
+            {
+                throw new InvalidOperationException($"{limitResult.ErrorCode}: {limitResult.ErrorMessage}");
+            }
+        }
         var attempt = 0;
         return await _dbContext.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
         {
