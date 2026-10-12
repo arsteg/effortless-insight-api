@@ -1371,11 +1371,7 @@ public class NoticeServiceImpl : INoticeServiceExtended
             .Where(n => n.OrganizationId == organizationId && n.DeletedAt == null);
 
         // Apply filters
-        if (!string.IsNullOrEmpty(filter.Status))
-        {
-            var statuses = filter.Status.Split(',', StringSplitOptions.RemoveEmptyEntries);
-            query = query.Where(n => statuses.Contains(n.Status));
-        }
+        query = query.WhereStatusFilter(filter.Status);
 
         if (!string.IsNullOrEmpty(filter.Priority))
         {
@@ -1711,11 +1707,7 @@ public class NoticeServiceImpl : INoticeServiceExtended
 
     private static IQueryable<Notice> ApplyFilters(IQueryable<Notice> query, NoticeFilterDto filter)
     {
-        if (!string.IsNullOrEmpty(filter.Status))
-        {
-            var statuses = filter.Status.Split(',', StringSplitOptions.RemoveEmptyEntries);
-            query = query.Where(n => statuses.Contains(n.Status));
-        }
+        query = query.WhereStatusFilter(filter.Status);
 
         if (!string.IsNullOrEmpty(filter.Priority))
         {
@@ -1870,9 +1862,35 @@ public class NoticeServiceImpl : INoticeServiceExtended
                 $"Reason is required for transition from '{oldStatus}' to '{newStatus}'");
         }
 
+        // A restore goes back to the status the notice was archived from, not any allowed one
+        if (oldStatus == NoticeStatus.Archived)
+        {
+            var restoreStatus = notice.GetRestoreStatus();
+            if (!string.Equals(newStatus, restoreStatus, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    $"An archived notice can only be restored to '{restoreStatus}'");
+            }
+        }
+
         // Update status
         notice.Status = newStatus;
         notice.UpdatedAt = DateTime.UtcNow;
+
+        // Remember where an archived notice came from so restoring can put it back.
+        // A new dictionary is assigned so EF sees the jsonb column as changed.
+        if (newStatus == NoticeStatus.Archived)
+        {
+            notice.Metadata = new Dictionary<string, object>(notice.Metadata ?? [])
+            {
+                [NoticeStatusExtensions.PreArchiveStatusKey] = oldStatus
+            };
+        }
+        else if (oldStatus == NoticeStatus.Archived && notice.Metadata != null)
+        {
+            notice.Metadata = new Dictionary<string, object>(notice.Metadata);
+            notice.Metadata.Remove(NoticeStatusExtensions.PreArchiveStatusKey);
+        }
 
         // Store reason in metadata if provided
         if (!string.IsNullOrEmpty(reason))

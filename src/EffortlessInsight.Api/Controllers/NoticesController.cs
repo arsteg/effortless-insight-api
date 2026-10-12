@@ -2187,7 +2187,8 @@ public class NoticesController : ControllerBase
             AssignedToName: notice.AssignedTo?.Name,
             CreatedAt: notice.CreatedAt,
             OrganizationId: notice.OrganizationId,
-            ExtendedDeadline: notice.ExtendedDeadline);
+            ExtendedDeadline: notice.ExtendedDeadline,
+            RestoreStatus: notice.GetRestoreStatus());
     }
 
     private static NoticeDto MapToDtoWithCrossOrg(NoticeWithCrossOrgInfo noticeInfo)
@@ -2221,7 +2222,8 @@ public class NoticesController : ControllerBase
             IsFromLinkedOrganization: noticeInfo.IsFromLinkedOrganization,
             LinkedOrganizationType: noticeInfo.LinkedOrganizationType,
             IsReadOnly: noticeInfo.IsReadOnly,
-            ExtendedDeadline: notice.ExtendedDeadline);
+            ExtendedDeadline: notice.ExtendedDeadline,
+            RestoreStatus: notice.GetRestoreStatus());
     }
 
     private static NoticeDetailDto MapToDetailDto(Notice notice)
@@ -2254,7 +2256,8 @@ public class NoticesController : ControllerBase
             AssignedToName: notice.AssignedTo?.Name,
             CreatedAt: notice.CreatedAt,
             UpdatedAt: notice.UpdatedAt,
-            OrganizationId: notice.OrganizationId);
+            OrganizationId: notice.OrganizationId,
+            RestoreStatus: notice.GetRestoreStatus());
     }
 
     private static NoticeDetailDto MapToDetailDtoWithCrossOrg(NoticeWithCrossOrgInfo noticeInfo)
@@ -2292,7 +2295,8 @@ public class NoticesController : ControllerBase
             OrganizationName: noticeInfo.OrganizationName,
             IsFromLinkedOrganization: noticeInfo.IsFromLinkedOrganization,
             LinkedOrganizationType: noticeInfo.LinkedOrganizationType,
-            IsReadOnly: noticeInfo.IsReadOnly);
+            IsReadOnly: noticeInfo.IsReadOnly,
+            RestoreStatus: notice.GetRestoreStatus());
     }
 
     private static NoticeAiReportDto MapReportToDto(NoticeAiReport report)

@@ -189,6 +189,11 @@ public class NoticeWorkflowServiceTests
     [InlineData(NoticeStatus.InProgress, NoticeStatus.Responded, true)]
     [InlineData(NoticeStatus.Responded, NoticeStatus.Closed, true)]
     [InlineData(NoticeStatus.Closed, NoticeStatus.Archived, true)]
+    [InlineData(NoticeStatus.Analyzed, NoticeStatus.Archived, true)]
+    [InlineData(NoticeStatus.Failed, NoticeStatus.Archived, true)]
+    [InlineData(NoticeStatus.Archived, NoticeStatus.Analyzed, true)]
+    [InlineData(NoticeStatus.Archived, NoticeStatus.Closed, true)]
+    [InlineData(NoticeStatus.Archived, NoticeStatus.Failed, true)]
     public void ValidateTransition_ValidTransitions_ReturnsAllowed(string from, string to, bool expectedAllowed)
     {
         // Act
@@ -211,6 +216,18 @@ public class NoticeWorkflowServiceTests
         // Assert
         result.IsAllowed.Should().BeFalse();
         result.ErrorMessage.Should().NotBeNullOrEmpty();
+    }
+
+    [Theory]
+    [InlineData(NoticeStatus.Archived)]
+    [InlineData(NoticeStatus.Analyzed)]
+    public void ValidateTransition_SameStatus_ReturnsNotAllowed(string status)
+    {
+        // Archiving an archived notice must not report a silent success
+        var result = _service.ValidateTransition(status, status);
+
+        result.IsAllowed.Should().BeFalse();
+        result.ErrorCode.Should().Be("NO_STATUS_CHANGE");
     }
 
     [Fact]
@@ -238,6 +255,10 @@ public class NoticeWorkflowServiceTests
     [InlineData(NoticeStatus.Analyzed, NoticeStatus.Closed, true)] // Closing without response
     [InlineData(NoticeStatus.InProgress, NoticeStatus.Analyzed, true)] // Going back
     [InlineData(NoticeStatus.Responded, NoticeStatus.InProgress, true)] // Reopening
+    [InlineData(NoticeStatus.Analyzed, NoticeStatus.Archived, false)] // Archiving
+    [InlineData(NoticeStatus.Failed, NoticeStatus.Archived, false)] // Archiving
+    [InlineData(NoticeStatus.Archived, NoticeStatus.Analyzed, false)] // Restoring
+    [InlineData(NoticeStatus.Archived, NoticeStatus.Closed, false)] // Restoring
     public void RequiresReason_ForSpecificTransitions_ReturnsTrue(string from, string to, bool requiresReason)
     {
         // Act
@@ -476,6 +497,75 @@ public class NoticeStatusTests
         NoticeStatus.All.Should().Contain(NoticeStatus.Closed);
         NoticeStatus.All.Should().Contain(NoticeStatus.Archived);
         NoticeStatus.All.Should().Contain(NoticeStatus.Failed);
+    }
+}
+
+public class NoticeStatusExtensionsTests
+{
+    private static Notice ArchivedNotice(object? preArchiveStatus) => new()
+    {
+        Status = NoticeStatus.Archived,
+        Metadata = preArchiveStatus == null
+            ? null
+            : new Dictionary<string, object> { [NoticeStatusExtensions.PreArchiveStatusKey] = preArchiveStatus }
+    };
+
+    [Fact]
+    public void GetRestoreStatus_UsesStatusSavedAtArchive()
+    {
+        ArchivedNotice(NoticeStatus.Closed).GetRestoreStatus().Should().Be(NoticeStatus.Closed);
+    }
+
+    [Fact]
+    public void GetRestoreStatus_ReadsJsonValueLoadedFromDatabase()
+    {
+        // jsonb metadata comes back from the database as JsonElement, not string
+        var stored = System.Text.Json.JsonDocument.Parse("\"failed\"").RootElement;
+
+        ArchivedNotice(stored).GetRestoreStatus().Should().Be(NoticeStatus.Failed);
+    }
+
+    [Fact]
+    public void GetRestoreStatus_WithoutSavedStatus_FallsBackToAnalyzed()
+    {
+        // Notices archived before the previous status was recorded
+        ArchivedNotice(null).GetRestoreStatus().Should().Be(NoticeStatus.Analyzed);
+    }
+
+    [Fact]
+    public void GetRestoreStatus_ForActiveNotice_ReturnsNull()
+    {
+        new Notice { Status = NoticeStatus.Analyzed }.GetRestoreStatus().Should().BeNull();
+    }
+
+    private static readonly IQueryable<Notice> Notices = new[]
+    {
+        new Notice { Status = NoticeStatus.Analyzed },
+        new Notice { Status = NoticeStatus.Closed },
+        new Notice { Status = NoticeStatus.Archived },
+    }.AsQueryable();
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public void WhereStatusFilter_AllStatus_ExcludesArchived(string? status)
+    {
+        Notices.WhereStatusFilter(status).Select(n => n.Status).Should()
+            .BeEquivalentTo([NoticeStatus.Analyzed, NoticeStatus.Closed]);
+    }
+
+    [Fact]
+    public void WhereStatusFilter_Archived_ReturnsOnlyArchived()
+    {
+        Notices.WhereStatusFilter(NoticeStatus.Archived).Select(n => n.Status).Should()
+            .BeEquivalentTo([NoticeStatus.Archived]);
+    }
+
+    [Fact]
+    public void WhereStatusFilter_MultipleStatuses_ReturnsThoseStatuses()
+    {
+        Notices.WhereStatusFilter("analyzed,closed").Select(n => n.Status).Should()
+            .BeEquivalentTo([NoticeStatus.Analyzed, NoticeStatus.Closed]);
     }
 }
 

@@ -111,7 +111,10 @@ public class UsersController : ControllerBase
             }
 
             _logger.LogInformation("User {UserId} updated their avatar", userId);
-            return Ok(new ApiResponse<AvatarResponse>(true, new AvatarResponse(url)));
+
+            // `url` is a private S3 key; hand the client a viewable link instead.
+            var displayUrl = await _storage.ResolveAvatarUrlAsync(url) ?? url;
+            return Ok(new ApiResponse<AvatarResponse>(true, new AvatarResponse(displayUrl)));
         }
         catch (Exception ex)
         {

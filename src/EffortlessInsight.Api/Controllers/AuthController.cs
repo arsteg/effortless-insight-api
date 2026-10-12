@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.DTOs;
+using EffortlessInsight.Api.Services;
 using EffortlessInsight.Api.Services.Auth;
 using EffortlessInsight.Api.Services.Organizations;
 using Microsoft.AspNetCore.Authorization;
@@ -18,6 +19,7 @@ public class AuthController : ControllerBase
     private readonly IOrganizationManagementService _organizationService;
     private readonly IOtpService _otpService;
     private readonly ApplicationDbContext _dbContext;
+    private readonly IFileStorageService _storage;
     private readonly ILogger<AuthController> _logger;
 
     public AuthController(
@@ -26,6 +28,7 @@ public class AuthController : ControllerBase
         IOrganizationManagementService organizationService,
         IOtpService otpService,
         ApplicationDbContext dbContext,
+        IFileStorageService storage,
         ILogger<AuthController> logger )
     {
         _authService = authService;
@@ -33,6 +36,7 @@ public class AuthController : ControllerBase
         _organizationService = organizationService;
         _otpService = otpService;
         _dbContext = dbContext;
+        _storage = storage;
         _logger = logger;
     }
 
@@ -503,7 +507,7 @@ public class AuthController : ControllerBase
                 Email: user.Email!,
                 Name: user.Name,
                 Mobile: user.Mobile,
-                AvatarUrl: user.AvatarUrl,
+                AvatarUrl: await _storage.ResolveAvatarUrlAsync(user.AvatarUrl),
                 EmailVerified: user.EmailConfirmed,
                 MobileVerified: user.IsMobileVerified,
                 Is2faEnabled: user.Is2faEnabled,
