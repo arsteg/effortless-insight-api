@@ -155,8 +155,8 @@ public class NoticeWorkflowService : INoticeWorkflowService
         // Failed - can retry or abandon
         [NoticeStatus.Failed] = [NoticeStatus.Processing, NoticeStatus.Archived],
 
-        // Archived - can restore
-        [NoticeStatus.Archived] = [NoticeStatus.Analyzed]
+        // Archived - restore to the status it was archived from (NoticeService enforces which one)
+        [NoticeStatus.Archived] = [NoticeStatus.Analyzed, NoticeStatus.Closed, NoticeStatus.Failed]
     };
 
     /// <summary>
@@ -166,9 +166,7 @@ public class NoticeWorkflowService : INoticeWorkflowService
     [
         (NoticeStatus.Analyzed, NoticeStatus.Closed),     // Closing without response
         (NoticeStatus.InProgress, NoticeStatus.Analyzed), // Going back
-        (NoticeStatus.Responded, NoticeStatus.InProgress), // Reopening
-        (NoticeStatus.Failed, NoticeStatus.Archived),      // Abandoning
-        (NoticeStatus.Archived, NoticeStatus.Analyzed)     // Restoring
+        (NoticeStatus.Responded, NoticeStatus.InProgress)  // Reopening
     ];
 
     /// <summary>
@@ -201,10 +199,12 @@ public class NoticeWorkflowService : INoticeWorkflowService
         currentStatus = currentStatus.ToLowerInvariant();
         newStatus = newStatus.ToLowerInvariant();
 
-        // Same status is a no-op
+        // Re-applying the current status saves nothing; report it instead of a silent success
         if (currentStatus == newStatus)
         {
-            return StatusTransitionResult.Allowed();
+            return StatusTransitionResult.Denied(
+                "NO_STATUS_CHANGE",
+                $"Notice is already '{currentStatus}'");
         }
 
         // Check if current status exists
@@ -476,6 +476,40 @@ public class NoticeWorkflowService : INoticeWorkflowService
 /// </summary>
 public static class NoticeStatusExtensions
 {
+    /// <summary>
+    /// Metadata key holding the status a notice had when it was archived.
+    /// </summary>
+    public const string PreArchiveStatusKey = "pre_archive_status";
+
+    /// <summary>
+    /// Status an archived notice returns to when restored: the one it was archived from,
+    /// or Analyzed for notices archived before that was recorded. Null when not archived.
+    /// </summary>
+    public static string? GetRestoreStatus(this Notice notice)
+    {
+        if (notice.Status != NoticeStatus.Archived)
+            return null;
+
+        var stored = notice.Metadata?.TryGetValue(PreArchiveStatusKey, out var value) == true
+            ? value?.ToString()
+            : null;
+
+        return stored != null && NoticeStatus.IsValid(stored) ? stored : NoticeStatus.Analyzed;
+    }
+
+    /// <summary>
+    /// Applies the list's status filter. No status ("All Status") means active notices only;
+    /// archived notices appear only when asked for.
+    /// </summary>
+    public static IQueryable<Notice> WhereStatusFilter(this IQueryable<Notice> query, string? status)
+    {
+        if (string.IsNullOrEmpty(status))
+            return query.Where(n => n.Status != NoticeStatus.Archived);
+
+        var statuses = status.Split(',', StringSplitOptions.RemoveEmptyEntries);
+        return query.Where(n => statuses.Contains(n.Status));
+    }
+
     /// <summary>
     /// Checks if the notice is in a terminal state.
     /// </summary>
