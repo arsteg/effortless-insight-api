@@ -258,6 +258,9 @@ public class CurrentOrganizationService : ICurrentOrganizationService
             "settings.view" => true,
             "settings.edit" => role is "owner" or "admin",
 
+            // Integration permissions
+            "integrations.manage" => role is "owner" or "admin",
+
             // Task permissions
             "tasks.view" => true,
             "tasks.create" => role is not "viewer",

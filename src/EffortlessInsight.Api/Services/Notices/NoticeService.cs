@@ -137,6 +137,10 @@ public interface INoticeServiceExtended : INoticeService
         List<string>? tags = null,
         CancellationToken cancellationToken = default);
 
+    Task<NoticeUploadResult> UploadEmailAsync(Stream fileStream, string fileName, string? contentType,
+        Guid organizationId, Guid userId, string? gstin, CancellationToken cancellationToken, EmailIngestionContext emailSource);
+
+
     /// <summary>
     /// Generates a pre-signed URL for direct upload.
     /// </summary>
@@ -683,7 +687,16 @@ public class NoticeServiceImpl : INoticeServiceExtended
     }
 
     /// <inheritdoc />
-    public async Task<NoticeUploadResult> UploadAsync(
+    public Task<NoticeUploadResult> UploadAsync(Stream fileStream, string fileName, string? contentType,
+        Guid organizationId, Guid userId, string? gstin = null, List<string>? tags = null,
+        CancellationToken cancellationToken = default) =>
+        UploadCoreAsync(fileStream, fileName, contentType, organizationId, userId, gstin, tags, cancellationToken);
+
+    public Task<NoticeUploadResult> UploadEmailAsync(Stream fileStream, string fileName, string? contentType,
+        Guid organizationId, Guid userId, string? gstin, CancellationToken cancellationToken, EmailIngestionContext emailSource) =>
+        UploadCoreAsync(fileStream, fileName, contentType, organizationId, userId, gstin, null, cancellationToken, emailSource);
+
+    private async Task<NoticeUploadResult> UploadCoreAsync(
         Stream fileStream,
         string fileName,
         string? contentType,
@@ -691,7 +704,8 @@ public class NoticeServiceImpl : INoticeServiceExtended
         Guid userId,
         string? gstin = null,
         List<string>? tags = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        EmailIngestionContext? emailSource = null)
     {
         // Validate file
         var validationResult = await _validationService.ValidateAsync(
@@ -703,6 +717,11 @@ public class NoticeServiceImpl : INoticeServiceExtended
                 validationResult.ErrorCode!,
                 validationResult.ErrorMessage!);
         }
+
+        // Email duplicates are terminal successes and must not reserve quota.
+        if (emailSource != null && await _db.Notices.IgnoreQueryFilters().AnyAsync(n => n.DeletedAt == null && n.OrganizationId == organizationId &&
+            (n.FileHash == validationResult.FileHash || n.AttachmentHash == emailSource.AttachmentHash), cancellationToken))
+            return NoticeUploadResult.Failed("DUPLICATE_NOTICE", "This notice was already imported. No monthly allowance was used.");
 
         // Check storage limit before uploading
         var (canUpload, storageReason) = await _usageService.CanUploadFileAsync(
@@ -738,6 +757,10 @@ public class NoticeServiceImpl : INoticeServiceExtended
             // Check for duplicates
             var duplicateCheck = await CheckDuplicateAsync(
                 validationResult.FileHash!, organizationId, cancellationToken);
+
+            if (emailSource != null && await _db.Notices.IgnoreQueryFilters().AnyAsync(n => n.DeletedAt == null && n.OrganizationId == organizationId &&
+                (n.FileHash == validationResult.FileHash || n.AttachmentHash == emailSource.AttachmentHash), cancellationToken))
+                return NoticeUploadResult.Failed("DUPLICATE_NOTICE", "This notice was already imported. No monthly allowance was used.");
 
             // Validate GSTIN if provided
             Guid? gstinId = null;
@@ -798,6 +821,26 @@ public class NoticeServiceImpl : INoticeServiceExtended
                 CaProspectClientId = caProspectClientId,
                 Tags = tags
             };
+
+            if (emailSource != null)
+            {
+                notice.Source = NoticeSource.Email;
+                notice.EmailImportKey = emailSource.AttachmentHash;
+                notice.NoticeNumber = emailSource.ReferenceNumber;
+                notice.ConnectedEmailAccountId = emailSource.AccountId;
+                notice.EmailProvider = emailSource.Provider;
+                notice.EmailMessageId = emailSource.MessageId;
+                notice.EmailProviderMessageId = emailSource.MessageId;
+                notice.EmailSender = emailSource.Sender;
+                notice.EmailSubject = emailSource.Subject;
+                notice.EmailReceivedAt = emailSource.ReceivedAt;
+                notice.AttachmentHash = emailSource.AttachmentHash;
+                notice.Metadata = new() {
+                    ["email_attachment_id"] = emailSource.AttachmentId,
+                    ["connected_email"] = emailSource.ConnectedEmail,
+                    ["email_sync_at"] = DateTime.UtcNow.ToString("O")
+                };
+            }
 
             // Upload to S3
             var extension = Path.GetExtension(fileName).ToLowerInvariant();

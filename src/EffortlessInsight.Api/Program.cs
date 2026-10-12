@@ -4,6 +4,7 @@ using AspNetCoreRateLimit;
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.Extensions;
 using EffortlessInsight.Api.Middleware;
+using EffortlessInsight.Api.Services.EmailSync;
 using Hangfire;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.EntityFrameworkCore;
@@ -21,16 +22,25 @@ builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, relo
 // checked-in appsettings.json only carries dev placeholders.)
 if (builder.Environment.IsProduction())
 {
+    if (builder.Configuration.GetValue<bool>("EmailSync:Enabled"))
+    {
+        var publicApi = builder.Configuration["EmailSync:PublicApiBaseUrl"];
+        if (!Uri.TryCreate(publicApi, UriKind.Absolute, out var callbackOrigin) || callbackOrigin.Scheme != "https" || callbackOrigin.IsLoopback)
+            throw new InvalidOperationException("EmailSync:PublicApiBaseUrl must be the public HTTPS API origin in production.");
+    }
     var requiredSecrets = new Dictionary<string, string?>
     {
         ["Jwt:Secret"] = builder.Configuration["Jwt:Secret"],
         ["AdminAuth:JwtSecret"] = builder.Configuration["AdminAuth:JwtSecret"],
         ["TwoFactor:EncryptionKey"] = builder.Configuration["TwoFactor:EncryptionKey"],
+        ["Encryption:FieldEncryptionKey"] = builder.Configuration["Encryption:FieldEncryptionKey"],
     };
     var badSecrets = requiredSecrets
         .Where(kv => string.IsNullOrWhiteSpace(kv.Value)
                      || kv.Value.Contains("change-in-production")
-                     || kv.Value.StartsWith("your-"))
+                     || kv.Value.StartsWith("your-")
+                     || kv.Value.Contains("DO-NOT-USE")
+                     || kv.Value.Length < 32)
         .Select(kv => kv.Key)
         .ToList();
     if (badSecrets.Count > 0)
@@ -156,6 +166,7 @@ var connectionString = builder.Configuration.GetConnectionString("DefaultConnect
 var dataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(connectionString);
 dataSourceBuilder.EnableDynamicJson();
 var dataSource = dataSourceBuilder.Build();
+builder.Services.AddSingleton(dataSource);
 
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseNpgsql(
@@ -183,6 +194,7 @@ builder.Services.AddBillingServices(builder.Configuration);
 builder.Services.AddAdminServices(builder.Configuration);
 builder.Services.AddAdminAuthentication(builder.Configuration);
 builder.Services.AddWhatsAppServices(builder.Configuration);
+builder.Services.AddEmailSyncServices(builder.Configuration);
 
 // Add Database Seeders
 builder.Services.AddScoped<WorkflowTemplateSeeder>();
@@ -444,6 +456,9 @@ EffortlessInsight.Api.Jobs.WhatsAppJobsExtensions.ConfigureWhatsAppJobs(app);
 
 // Configure GST sync notification jobs (digests, due-date reminders, stale-client nudges)
 EffortlessInsight.Api.Jobs.GstSyncJobsExtensions.ConfigureGstSyncJobs(app);
+
+// Configure email sync jobs (daily sync, token refresh, cleanup)
+EffortlessInsight.Api.Jobs.EmailSyncJobsExtensions.UseEmailSyncJobs(app);
 
 // Apply migrations and seed data on startup in development
 //if (app.Environment.IsDevelopment())

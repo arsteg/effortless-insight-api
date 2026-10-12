@@ -8,6 +8,7 @@ namespace EffortlessInsight.Api.Data.Entities;
 /// </summary>
 public class Notice : BaseEntity
 {
+    [MaxLength(64)] public string? EmailImportKey { get; set; }
     // ============================================================================
     // Organization & User Relationships
     // ============================================================================
@@ -279,6 +280,59 @@ public class Notice : BaseEntity
     public string? GspCorrelationId { get; set; }
 
     // ============================================================================
+    // Email Sync Integration
+    // ============================================================================
+
+    /// <summary>
+    /// Connected email account that imported this notice.
+    /// </summary>
+    public Guid? ConnectedEmailAccountId { get; set; }
+
+    [ForeignKey(nameof(ConnectedEmailAccountId))]
+    public ConnectedEmailAccount? ConnectedEmailAccount { get; set; }
+
+    /// <summary>
+    /// Internal email message ID (provider-specific).
+    /// </summary>
+    [MaxLength(255)]
+    public string? EmailMessageId { get; set; }
+
+    /// <summary>
+    /// Email provider message ID (Gmail message ID or Outlook ID).
+    /// </summary>
+    [MaxLength(255)]
+    public string? EmailProviderMessageId { get; set; }
+
+    /// <summary>
+    /// Email provider: "gmail" or "outlook".
+    /// </summary>
+    [MaxLength(20)]
+    public string? EmailProvider { get; set; }
+
+    /// <summary>
+    /// Sender email address.
+    /// </summary>
+    [MaxLength(255)]
+    public string? EmailSender { get; set; }
+
+    /// <summary>
+    /// Email subject line.
+    /// </summary>
+    [MaxLength(500)]
+    public string? EmailSubject { get; set; }
+
+    /// <summary>
+    /// When the email was received.
+    /// </summary>
+    public DateTime? EmailReceivedAt { get; set; }
+
+    /// <summary>
+    /// SHA-256 hash of the attachment content for duplicate detection.
+    /// </summary>
+    [MaxLength(64)]
+    public string? AttachmentHash { get; set; }
+
+    // ============================================================================
     // Soft Delete
     // ============================================================================
 
@@ -418,7 +472,12 @@ public static class NoticeSource
     /// </summary>
     public const string GstnPortal = "gstn_portal";
 
-    public static readonly string[] All = [Upload, Manual, GstnPortal];
+    /// <summary>
+    /// Notice imported automatically from connected email account.
+    /// </summary>
+    public const string Email = "email";
+
+    public static readonly string[] All = [Upload, Manual, GstnPortal, Email];
 
     public static bool IsValid(string source) => All.Contains(source);
 }

@@ -451,6 +451,47 @@ public class UsageServiceTests : IDisposable
     #region TryReserveNoticeSlotAsync Tests
 
     [Fact]
+    public async Task ReservationIgnoresDetachedCachedUsage_AndRollbackRestoresCount()
+    {
+        var org = BillingTestFixture.CreateOrganization();
+        var plan = BillingTestFixture.CreateStarterPlan();
+        plan.Limits.NoticesPerMonth = 2;
+        _dbContext.Organizations.Add(org);
+        _dbContext.SubscriptionPlans.Add(plan);
+        _dbContext.BillingSubscriptions.Add(BillingTestFixture.CreateSubscription(org.Id, plan.Id, plan.Code));
+        _dbContext.UsageRecords.Add(BillingTestFixture.CreateUsageRecord(org.Id, noticesCount: 1));
+        await _dbContext.SaveChangesAsync();
+        _cache.GetAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(
+            System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(BillingTestFixture.CreateUsageRecord(org.Id, noticesCount: 0)));
+        _redisDb.StringSetAsync(Arg.Any<RedisKey>(), Arg.Any<RedisValue>(), Arg.Any<TimeSpan?>(), Arg.Any<When>()).Returns(true);
+
+        var reserved = await _sut.TryReserveNoticeSlotAsync(org.Id);
+        reserved.Success.Should().BeTrue();
+        (await _dbContext.UsageRecords.AsNoTracking().SingleAsync()).NoticesCount.Should().Be(2);
+        (await _sut.TryReserveNoticeSlotAsync(org.Id)).Success.Should().BeFalse();
+        await reserved.Reservation!.DisposeAsync();
+        (await _dbContext.UsageRecords.AsNoTracking().SingleAsync()).NoticesCount.Should().Be(1);
+    }
+
+    [Theory]
+    [InlineData(SubscriptionStatus.Paused)]
+    [InlineData(SubscriptionStatus.Expired)]
+    [InlineData(SubscriptionStatus.Cancelled)]
+    public async Task InactiveSubscriptionsCannotReserveNotices(string status)
+    {
+        var org = BillingTestFixture.CreateOrganization();
+        var plan = BillingTestFixture.CreateStarterPlan();
+        _dbContext.Organizations.Add(org);
+        _dbContext.SubscriptionPlans.Add(plan);
+        _dbContext.BillingSubscriptions.Add(BillingTestFixture.CreateSubscription(org.Id, plan.Id, plan.Code, status));
+        await _dbContext.SaveChangesAsync();
+        _redisDb.StringSetAsync(Arg.Any<RedisKey>(), Arg.Any<RedisValue>(), Arg.Any<TimeSpan?>(), Arg.Any<When>()).Returns(true);
+        (await _sut.CanCreateNoticeAsync(org.Id)).CanCreate.Should().BeFalse();
+        (await _sut.TryReserveNoticeSlotAsync(org.Id)).Success.Should().BeFalse();
+        (await _dbContext.UsageRecords.CountAsync()).Should().Be(0);
+    }
+
+    [Fact]
     public async Task TryReserveNoticeSlotAsync_WithinLimit_ShouldReturnSuccessAndIncrement()
     {
         // Arrange
@@ -471,9 +512,7 @@ public class UsageServiceTests : IDisposable
             Arg.Any<RedisKey>(),
             Arg.Any<RedisValue>(),
             Arg.Any<TimeSpan?>(),
-            Arg.Any<bool>(),
-            Arg.Any<When>(),
-            Arg.Any<CommandFlags>()
+            Arg.Any<When>()
         ).Returns(true);
 
         // Act
@@ -509,9 +548,7 @@ public class UsageServiceTests : IDisposable
             Arg.Any<RedisKey>(),
             Arg.Any<RedisValue>(),
             Arg.Any<TimeSpan?>(),
-            Arg.Any<bool>(),
-            Arg.Any<When>(),
-            Arg.Any<CommandFlags>()
+            Arg.Any<When>()
         ).Returns(true);
 
         // Act
@@ -544,9 +581,7 @@ public class UsageServiceTests : IDisposable
             Arg.Any<RedisKey>(),
             Arg.Any<RedisValue>(),
             Arg.Any<TimeSpan?>(),
-            Arg.Any<bool>(),
-            Arg.Any<When>(),
-            Arg.Any<CommandFlags>()
+            Arg.Any<When>()
         ).Returns(true);
 
         // Act
@@ -578,9 +613,7 @@ public class UsageServiceTests : IDisposable
             Arg.Any<RedisKey>(),
             Arg.Any<RedisValue>(),
             Arg.Any<TimeSpan?>(),
-            Arg.Any<bool>(),
-            Arg.Any<When>(),
-            Arg.Any<CommandFlags>()
+            Arg.Any<When>()
         ).Returns(true);
 
         // Act
@@ -612,9 +645,7 @@ public class UsageServiceTests : IDisposable
             Arg.Any<RedisKey>(),
             Arg.Any<RedisValue>(),
             Arg.Any<TimeSpan?>(),
-            Arg.Any<bool>(),
-            Arg.Any<When>(),
-            Arg.Any<CommandFlags>()
+            Arg.Any<When>()
         ).Returns(true);
 
         // Act
@@ -646,9 +677,7 @@ public class UsageServiceTests : IDisposable
             Arg.Any<RedisKey>(),
             Arg.Any<RedisValue>(),
             Arg.Any<TimeSpan?>(),
-            Arg.Any<bool>(),
-            Arg.Any<When>(),
-            Arg.Any<CommandFlags>()
+            Arg.Any<When>()
         ).Returns(false);
 
         // Act
@@ -657,7 +686,7 @@ public class UsageServiceTests : IDisposable
         // Assert
         result.Success.Should().BeFalse();
         result.ErrorCode.Should().Be(ErrorCodes.ConcurrentOperation);
-        result.ErrorMessage.Should().Contain("concurrent");
+        result.ErrorMessage.Should().Contain("Another notice creation");
     }
 
     [Fact]
@@ -680,9 +709,7 @@ public class UsageServiceTests : IDisposable
             Arg.Any<RedisKey>(),
             Arg.Any<RedisValue>(),
             Arg.Any<TimeSpan?>(),
-            Arg.Any<bool>(),
-            Arg.Any<When>(),
-            Arg.Any<CommandFlags>()
+            Arg.Any<When>()
         ).Returns(true);
 
         // Act
@@ -712,9 +739,7 @@ public class UsageServiceTests : IDisposable
             Arg.Any<RedisKey>(),
             Arg.Any<RedisValue>(),
             Arg.Any<TimeSpan?>(),
-            Arg.Any<bool>(),
-            Arg.Any<When>(),
-            Arg.Any<CommandFlags>()
+            Arg.Any<When>()
         ).Returns(true);
 
         var result = await _sut.TryReserveNoticeSlotAsync(org.Id);
@@ -728,7 +753,7 @@ public class UsageServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task TryReserveNoticeSlotAsync_RedisUnavailable_FallsBackToNonAtomic()
+    public async Task TryReserveNoticeSlotAsync_RedisUnavailable_DoesNotConsumeAllowance()
     {
         // Arrange
         var org = BillingTestFixture.CreateOrganization();
@@ -750,9 +775,11 @@ public class UsageServiceTests : IDisposable
         // Act
         var result = await _sut.TryReserveNoticeSlotAsync(org.Id);
 
-        // Assert - should fall back to non-atomic and succeed
-        result.Success.Should().BeTrue();
-        result.Reservation.Should().NotBeNull();
+        result.Success.Should().BeFalse();
+        result.Reservation.Should().BeNull();
+        result.ErrorCode.Should().Be(ErrorCodes.ConcurrentOperation);
+        result.ErrorMessage.Should().Contain("no notice allowance was used");
+        (await _dbContext.UsageRecords.SingleAsync()).NoticesCount.Should().Be(50);
     }
 
     #endregion

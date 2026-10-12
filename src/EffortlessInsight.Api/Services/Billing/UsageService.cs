@@ -19,11 +19,12 @@ public class NoticeReservation : IAsyncDisposable
     private readonly string _lockKey;
     private readonly string _lockValue;
     private readonly ILogger _logger;
+    private readonly Guid? _usageId;
     private bool _disposed;
 
     public Guid OrganizationId { get; }
     public Guid ReservationId { get; }
-    internal bool IsConfirmed { get; set; }
+    public bool IsConfirmed { get; internal set; }
 
     internal NoticeReservation(
         Guid organizationId,
@@ -32,7 +33,8 @@ public class NoticeReservation : IAsyncDisposable
         IDistributedCache cache,
         string lockKey,
         string lockValue,
-        ILogger logger)
+        ILogger logger,
+        Guid? usageId = null)
     {
         OrganizationId = organizationId;
         ReservationId = Guid.NewGuid();
@@ -42,6 +44,7 @@ public class NoticeReservation : IAsyncDisposable
         _lockKey = lockKey;
         _lockValue = lockValue;
         _logger = logger;
+        _usageId = usageId;
     }
 
     public async ValueTask DisposeAsync()
@@ -76,14 +79,23 @@ public class NoticeReservation : IAsyncDisposable
             var usage = await _dbContext.UsageRecords
                 .FirstOrDefaultAsync(u =>
                     u.OrganizationId == OrganizationId &&
-                    u.PeriodStart <= today &&
-                    u.PeriodEnd >= today);
+                    (_usageId != null ? u.Id == _usageId : u.PeriodStart <= today && u.PeriodEnd >= today));
 
             if (usage != null && usage.NoticesCount > 0)
             {
-                usage.NoticesCount--;
-                usage.LastCalculatedAt = DateTime.UtcNow;
-                await _dbContext.SaveChangesAsync();
+                if (_dbContext.Database.IsRelational())
+                {
+                    await _dbContext.UsageRecords.Where(u => u.Id == usage.Id && u.NoticesCount > 0)
+                        .ExecuteUpdateAsync(s => s.SetProperty(u => u.NoticesCount, u => u.NoticesCount - 1)
+                            .SetProperty(u => u.LastCalculatedAt, DateTime.UtcNow));
+                    await _dbContext.Entry(usage).ReloadAsync();
+                }
+                else
+                {
+                    usage.NoticesCount--;
+                    usage.LastCalculatedAt = DateTime.UtcNow;
+                    await _dbContext.SaveChangesAsync();
+                }
 
                 // Invalidate cache
                 try
@@ -198,9 +210,15 @@ public class UsageService : IUsageService
 
     public async Task<UsageRecord> GetOrCreateCurrentUsageAsync(Guid organizationId)
     {
-        var usage = await GetCurrentUsageAsync(organizationId);
+        // Mutation callers require a tracked, current row, never a deserialized cache snapshot.
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var usage = await _dbContext.UsageRecords.FirstOrDefaultAsync(u => u.OrganizationId == organizationId &&
+            u.PeriodStart <= today && u.PeriodEnd >= today);
         if (usage != null)
+        {
+            await _dbContext.Entry(usage).ReloadAsync();
             return usage;
+        }
 
         // Get subscription to determine billing period
         var subscription = await _dbContext.BillingSubscriptions
@@ -444,10 +462,22 @@ public class UsageService : IUsageService
     private async Task<PlanLimits?> GetPlanLimitsAsync(Guid organizationId)
     {
         var subscription = await _dbContext.BillingSubscriptions
+            .AsNoTracking()
             .Include(s => s.Plan)
             .FirstOrDefaultAsync(s => s.OrganizationId == organizationId);
 
-        return subscription?.Plan.Limits;
+        if (subscription == null) return null;
+        var now = DateTime.UtcNow;
+        // Background imports must enforce the same lifecycle rules as request middleware.
+        var entitled = subscription.Status switch
+        {
+            SubscriptionStatus.Active => subscription.CurrentPeriodEnd >= now ||
+                (!string.IsNullOrEmpty(subscription.RazorpaySubscriptionId) && !subscription.CancelAtPeriodEnd),
+            SubscriptionStatus.Trialing or "trial" => subscription.TrialEnd == null || subscription.TrialEnd > now,
+            SubscriptionStatus.PastDue => subscription.GracePeriodEndAt == null || subscription.GracePeriodEndAt > now,
+            _ => false
+        };
+        return entitled ? subscription.Plan.Limits : null;
     }
 
     private async Task InvalidateCacheAsync(Guid organizationId)
@@ -542,21 +572,40 @@ public class UsageService : IUsageService
 
             try
             {
-                // Check quota inside lock
-                var (canCreate, quotaReason) = await CanCreateNoticeAsync(organizationId);
-                if (!canCreate)
+                // The conditional database update remains atomic even if a Redis lease expires.
+                var limits = await GetPlanLimitsAsync(organizationId);
+                if (limits == null)
                 {
-                    // Release lock immediately on quota failure
                     await db.KeyDeleteAsync(lockKey);
-                    return new NoticeReservationResult(
-                        Success: false,
-                        ErrorCode: ErrorCodes.NoticeLimitExceeded,
-                        ErrorMessage: quotaReason ?? "Monthly notice limit reached. Please upgrade your plan.",
-                        Reservation: null);
+                    return new(false, ErrorCodes.NoticeLimitExceeded, "No active subscription. Please choose a plan to process notices.", null);
                 }
-
-                // Pre-increment counter (pessimistic reservation)
-                await IncrementNoticeCountAsync(organizationId);
+                var usage = await GetOrCreateCurrentUsageAsync(organizationId);
+                bool reserved;
+                if (_dbContext.Database.IsRelational())
+                {
+                    reserved = await _dbContext.UsageRecords.Where(u => u.Id == usage.Id &&
+                        (limits.NoticesPerMonth == -1 || u.NoticesCount < limits.NoticesPerMonth))
+                        .ExecuteUpdateAsync(s => s.SetProperty(u => u.NoticesCount, u => u.NoticesCount + 1)
+                            .SetProperty(u => u.LastCalculatedAt, DateTime.UtcNow)) == 1;
+                    await _dbContext.Entry(usage).ReloadAsync();
+                }
+                else
+                {
+                    reserved = limits.NoticesPerMonth == -1 || usage.NoticesCount < limits.NoticesPerMonth;
+                    if (reserved)
+                    {
+                        usage.NoticesCount++;
+                        usage.LastCalculatedAt = DateTime.UtcNow;
+                        await _dbContext.SaveChangesAsync();
+                    }
+                }
+                if (!reserved)
+                {
+                    await db.KeyDeleteAsync(lockKey);
+                    return new(false, ErrorCodes.NoticeLimitExceeded,
+                        "Monthly notice limit reached. Upgrade your plan or retry after the monthly reset.", null);
+                }
+                await InvalidateCacheAsync(organizationId);
 
                 // Create reservation handle
                 var reservation = new NoticeReservation(
@@ -566,7 +615,8 @@ public class UsageService : IUsageService
                     _cache,
                     lockKey,
                     lockValue,
-                    _logger);
+                    _logger,
+                    usage.Id);
 
                 _logger.LogInformation(
                     "Notice slot reserved {ReservationId} for organization {OrganizationId}",
@@ -594,34 +644,9 @@ public class UsageService : IUsageService
         }
         catch (RedisConnectionException ex)
         {
-            _logger.LogError(ex,
-                "Redis connection error during notice reservation for organization {OrganizationId}. " +
-                "Falling back to non-atomic check.",
-                organizationId);
-
-            // Fallback: perform non-atomic check (same as before)
-            // This maintains availability when Redis is down
-            var (canCreate, quotaReason) = await CanCreateNoticeAsync(organizationId);
-            if (!canCreate)
-            {
-                return new NoticeReservationResult(
-                    Success: false,
-                    ErrorCode: ErrorCodes.NoticeLimitExceeded,
-                    ErrorMessage: quotaReason ?? "Monthly notice limit reached. Please upgrade your plan.",
-                    Reservation: null);
-            }
-
-            // Increment counter
-            await IncrementNoticeCountAsync(organizationId);
-
-            // Create a no-op reservation (no lock to release, no rollback possible)
-            var fallbackReservation = new NoOpNoticeReservation(organizationId, _logger);
-
-            return new NoticeReservationResult(
-                Success: true,
-                ErrorCode: null,
-                ErrorMessage: null,
-                Reservation: fallbackReservation);
+            _logger.LogError(ex, "Notice quota reservation is unavailable for organization {OrganizationId}", organizationId);
+            return new NoticeReservationResult(false, ErrorCodes.ConcurrentOperation,
+                "Notice processing is temporarily unavailable. Please retry; no notice allowance was used.", null);
         }
     }
 
@@ -637,19 +662,5 @@ public class UsageService : IUsageService
             reservation.ReservationId, reservation.OrganizationId);
 
         return Task.CompletedTask;
-    }
-}
-
-/// <summary>
-/// No-op reservation used when Redis is unavailable.
-/// Does not support rollback - marked as confirmed immediately.
-/// </summary>
-internal sealed class NoOpNoticeReservation : NoticeReservation
-{
-    internal NoOpNoticeReservation(Guid organizationId, ILogger logger)
-        : base(organizationId, null!, null!, null!, "", "", logger)
-    {
-        // Mark as confirmed immediately since we can't rollback without Redis
-        IsConfirmed = true;
     }
 }

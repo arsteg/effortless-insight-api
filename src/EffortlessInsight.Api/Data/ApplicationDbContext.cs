@@ -154,6 +154,11 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
     public DbSet<GstnOtpSession> GstnOtpSessions => Set<GstnOtpSession>();
     public DbSet<GstnSyncLog> GstnSyncLogs => Set<GstnSyncLog>();
 
+    // Email Sync entities
+    public DbSet<EmailImportReceipt> EmailImportReceipts => Set<EmailImportReceipt>();
+    public DbSet<ConnectedEmailAccount> ConnectedEmailAccounts => Set<ConnectedEmailAccount>();
+    public DbSet<EmailSyncLog> EmailSyncLogs => Set<EmailSyncLog>();
+
     // WhatsApp Bot entities
     public DbSet<WhatsAppVerification> WhatsAppVerifications => Set<WhatsAppVerification>();
     public DbSet<WhatsAppSession> WhatsAppSessions => Set<WhatsAppSession>();
@@ -2791,6 +2796,94 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
                 .HasForeignKey(e => e.TriggeredById)
                 .OnDelete(DeleteBehavior.SetNull);
         });
+
+        // ============================================================================
+        // Email Sync Entity Configurations
+        // ============================================================================
+
+        modelBuilder.Entity<EmailImportReceipt>(entity =>
+        {
+            entity.HasIndex(e => new { e.ConnectedEmailAccountId, e.ItemKey }).IsUnique();
+            entity.HasIndex(e => new { e.OrganizationId, e.AttachmentHash });
+            entity.HasOne<ConnectedEmailAccount>().WithMany().HasForeignKey(e => e.ConnectedEmailAccountId).OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<ConnectedEmailAccount>(entity =>
+        {
+            // One email account per provider per organization
+            entity.HasIndex(e => new { e.OrganizationId, e.Email, e.Provider })
+                .IsUnique()
+                .HasFilter("\"DeletedAt\" IS NULL")
+                .HasDatabaseName("IX_ConnectedEmailAccounts_Org_Email_Provider_Unique");
+
+            // Query optimization indexes
+            entity.HasIndex(e => new { e.OrganizationId, e.Status })
+                .HasDatabaseName("IX_ConnectedEmailAccounts_Org_Status");
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => e.TokenExpiresAt)
+                .HasFilter("\"Status\" = 'connected'");
+            entity.HasIndex(e => e.AutoSyncEnabled)
+                .HasFilter("\"Status\" = 'connected' AND \"AutoSyncEnabled\" = true");
+
+            // Soft delete filter
+            entity.HasQueryFilter(e => e.DeletedAt == null);
+
+            // JSON columns
+            entity.Property(e => e.LastSyncResult)
+                .HasColumnType("jsonb");
+
+            // Relationships
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.Organization)
+                .WithMany()
+                .HasForeignKey(e => e.OrganizationId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<EmailSyncLog>(entity =>
+        {
+            entity.HasIndex(e => e.ConnectedEmailAccountId);
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => e.StartedAt);
+            entity.HasIndex(e => e.CreatedAt);
+
+            // JSON columns
+            entity.Property(e => e.ImportedNoticeIds)
+                .HasColumnType("jsonb");
+            entity.Property(e => e.Metadata)
+                .HasColumnType("jsonb");
+
+            entity.HasOne(e => e.ConnectedEmailAccount)
+                .WithMany(c => c.SyncLogs)
+                .HasForeignKey(e => e.ConnectedEmailAccountId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.TriggeredBy)
+                .WithMany()
+                .HasForeignKey(e => e.TriggeredById)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<Notice>().HasIndex(n => new { n.OrganizationId, n.EmailImportKey })
+            .IsUnique().HasFilter("\"EmailImportKey\" IS NOT NULL AND \"DeletedAt\" IS NULL");
+        // Email-related Notice indexes
+        modelBuilder.Entity<Notice>()
+            .HasIndex(e => e.AttachmentHash)
+            .HasFilter("\"AttachmentHash\" IS NOT NULL")
+            .HasDatabaseName("IX_Notices_AttachmentHash");
+
+        modelBuilder.Entity<Notice>()
+            .HasIndex(e => new { e.EmailProviderMessageId, e.EmailProvider })
+            .HasFilter("\"EmailProviderMessageId\" IS NOT NULL")
+            .HasDatabaseName("IX_Notices_EmailProvider_MessageId");
+
+        modelBuilder.Entity<Notice>()
+            .HasIndex(e => e.ConnectedEmailAccountId)
+            .HasFilter("\"ConnectedEmailAccountId\" IS NOT NULL")
+            .HasDatabaseName("IX_Notices_ConnectedEmailAccountId");
 
         // ============================================================================
         // WhatsApp Bot Entity Configurations
