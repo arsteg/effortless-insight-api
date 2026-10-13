@@ -287,6 +287,20 @@ public class WhatsAppSessionService : IWhatsAppSessionService
             user.WhatsAppOptedIn = false;
             user.WhatsAppOptedInAt = null;
             user.UpdatedAt = DateTime.UtcNow;
+
+            // STOP/unlink must remain an opt-out now that notifications no longer
+            // require a linked WhatsApp account.
+            var preferences = await _db.UserNotificationPreferences
+                .FirstOrDefaultAsync(p => p.UserId == userId, ct);
+            if (preferences == null)
+            {
+                preferences = new UserNotificationPreference { UserId = userId };
+                _db.UserNotificationPreferences.Add(preferences);
+            }
+            preferences.ChannelSettings = new Dictionary<string, object>(preferences.ChannelSettings)
+            {
+                ["whatsapp"] = new Dictionary<string, object> { ["enabled"] = false }
+            };
         }
 
         await _db.SaveChangesAsync(ct);

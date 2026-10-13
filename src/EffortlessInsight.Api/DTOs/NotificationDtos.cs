@@ -129,7 +129,7 @@ public record SmsChannelDto
 
 public record WhatsAppChannelDto
 {
-    public bool Enabled { get; init; } = false;
+    public bool Enabled { get; init; } = true;
     public string? Phone { get; init; }
     public bool Verified { get; init; }
 }

@@ -170,26 +170,26 @@ public class WhatsAppController : ControllerBase
             return NotFound(new { message = "User not found" });
         }
 
-        if (!user.WhatsAppVerified || string.IsNullOrEmpty(user.WhatsAppPhoneNumber))
+        if (await WhatsAppNotificationEligibility.GetRecipientAsync(_db, userId, ct) is not { } recipient)
         {
-            return BadRequest(new { message = "WhatsApp not linked" });
+            return BadRequest(new { message = "An active plan with WhatsApp Assistant and a registered mobile number are required" });
         }
 
         try
         {
             // Format the phone number
-            var formattedPhone = _client.FormatPhoneNumber(user.WhatsAppPhoneNumber);
+            var formattedPhone = _client.FormatPhoneNumber(recipient.Mobile!);
 
             _logger.LogInformation(
                 "Sending test template message. Original: {Original}, Formatted: {Formatted}",
-                user.WhatsAppPhoneNumber,
+                recipient.Mobile!,
                 formattedPhone);
 
             // Use hello_world template (provided by Meta by default)
             // This works outside the 24-hour window
             var result = await _client.SendTemplateMessageAsync(
-                user.WhatsAppPhoneNumber,
-                "hello_world",  // Meta's default template
+                recipient.Mobile!,
+                "ei_test",  // Meta's default template
                 "en_US",        // Language code
                 ct: ct);
 

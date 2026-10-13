@@ -35,6 +35,10 @@ public class FeatureAccessService : IFeatureAccessService
         string featureCode,
         CancellationToken cancellationToken = default)
     {
+        if (string.Equals(featureCode, FeatureCodes.WhatsAppAssistant, StringComparison.OrdinalIgnoreCase))
+            return await Services.WhatsApp.WhatsAppNotificationEligibility.HasPlanFeatureAsync(
+                _dbContext, organizationId, cancellationToken);
+
         // Ask AI is opt-in for every plan, including CA plans and free-access grants.
         if (string.Equals(featureCode, FeatureCodes.AskAi, StringComparison.OrdinalIgnoreCase))
         {

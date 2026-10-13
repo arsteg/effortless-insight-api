@@ -176,10 +176,10 @@ public class WhatsAppBotService : IWhatsAppBotService
         string content,
         CancellationToken ct = default)
     {
-        var user = await _db.Users.FindAsync([userId], ct);
-        if (user?.WhatsAppPhoneNumber == null || !user.WhatsAppVerified || !user.WhatsAppOptedIn)
+        var user = await WhatsAppNotificationEligibility.GetRecipientAsync(_db, userId, ct);
+        if (user == null)
         {
-            return new WhatsAppSendResult(false, null, "NOT_LINKED", "User not linked to WhatsApp");
+            return new WhatsAppSendResult(false, null, "WHATSAPP_NOT_ELIGIBLE", "An active plan with WhatsApp Assistant and a registered mobile number are required");
         }
 
         // Check rate limiting
@@ -200,13 +200,13 @@ public class WhatsAppBotService : IWhatsAppBotService
         }
 
         var sw = Stopwatch.StartNew();
-        var result = await _client.SendTextMessageAsync(user.WhatsAppPhoneNumber, content, ct: ct);
+        var result = await _client.SendTextMessageAsync(user.Mobile!, content, ct: ct);
         sw.Stop();
 
         // Log outgoing message
         await _messageLogService.LogOutgoingMessageAsync(
             result.MessageId,
-            user.WhatsAppPhoneNumber,
+            user.Mobile!,
             "text",
             content,
             null,
@@ -231,10 +231,10 @@ public class WhatsAppBotService : IWhatsAppBotService
         string? correlationId = null,
         CancellationToken ct = default)
     {
-        var user = await _db.Users.FindAsync([userId], ct);
-        if (user?.WhatsAppPhoneNumber == null || !user.WhatsAppVerified || !user.WhatsAppOptedIn)
+        var user = await WhatsAppNotificationEligibility.GetRecipientAsync(_db, userId, ct);
+        if (user == null)
         {
-            return new WhatsAppSendResult(false, null, "NOT_LINKED", "User not linked to WhatsApp");
+            return new WhatsAppSendResult(false, null, "WHATSAPP_NOT_ELIGIBLE", "An active plan with WhatsApp Assistant and a registered mobile number are required");
         }
 
         // Check rate limiting
@@ -252,7 +252,7 @@ public class WhatsAppBotService : IWhatsAppBotService
 
         var sw = Stopwatch.StartNew();
         var result = await _client.SendTemplateMessageAsync(
-            user.WhatsAppPhoneNumber,
+            user.Mobile!,
             templateName,
             language,
             parameters,
@@ -262,7 +262,7 @@ public class WhatsAppBotService : IWhatsAppBotService
         // Log template message with parameters for retry capability
         await _messageLogService.LogTemplateMessageAsync(
             result.MessageId,
-            user.WhatsAppPhoneNumber,
+            user.Mobile!,
             templateName,
             language,
             parameterValues,
@@ -286,10 +286,10 @@ public class WhatsAppBotService : IWhatsAppBotService
         List<WhatsAppButton> buttons,
         CancellationToken ct = default)
     {
-        var user = await _db.Users.FindAsync([userId], ct);
-        if (user?.WhatsAppPhoneNumber == null || !user.WhatsAppVerified || !user.WhatsAppOptedIn)
+        var user = await WhatsAppNotificationEligibility.GetRecipientAsync(_db, userId, ct);
+        if (user == null)
         {
-            return new WhatsAppSendResult(false, null, "NOT_LINKED", "User not linked to WhatsApp");
+            return new WhatsAppSendResult(false, null, "WHATSAPP_NOT_ELIGIBLE", "An active plan with WhatsApp Assistant and a registered mobile number are required");
         }
 
         // Check 24h window
@@ -302,7 +302,7 @@ public class WhatsAppBotService : IWhatsAppBotService
 
         var sw = Stopwatch.StartNew();
         var result = await _client.SendInteractiveButtonsAsync(
-            user.WhatsAppPhoneNumber,
+            user.Mobile!,
             bodyText,
             buttons,
             ct: ct);
@@ -311,7 +311,7 @@ public class WhatsAppBotService : IWhatsAppBotService
         // Log outgoing message
         await _messageLogService.LogOutgoingMessageAsync(
             result.MessageId,
-            user.WhatsAppPhoneNumber,
+            user.Mobile!,
             "interactive",
             bodyText,
             null,

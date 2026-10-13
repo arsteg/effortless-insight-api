@@ -80,12 +80,10 @@ public class WhatsAppJobs
             return;
         }
 
-        // Get users with WhatsApp linked and daily digest enabled
+        // Candidate recipients; the send service checks the current plan and notification preferences.
         var users = await db.Users
             .Where(u =>
-                u.WhatsAppVerified &&
-                u.WhatsAppOptedIn &&
-                u.WhatsAppPhoneNumber != null &&
+                u.Mobile != null &&
                 u.OrganizationId != null &&
                 u.DeletedAt == null)
             .ToListAsync(ct);
@@ -180,8 +178,8 @@ public class WhatsAppJobs
                     d.EffectiveDeadline.Date == targetDate &&
                     d.Status != "completed" &&
                     d.Notice.AssignedTo != null &&
-                    d.Notice.AssignedTo.WhatsAppVerified &&
-                    d.Notice.AssignedTo.WhatsAppOptedIn)
+                    d.Notice.AssignedTo.Mobile != null &&
+                    d.Notice.AssignedTo.DeletedAt == null)
                 .ToListAsync(ct);
 
             foreach (var deadline in deadlines)
@@ -258,8 +256,7 @@ public class WhatsAppJobs
         var users = await db.Users
             .Where(u =>
                 u.OrganizationId == notice.OrganizationId &&
-                u.WhatsAppVerified &&
-                u.WhatsAppOptedIn &&
+                u.Mobile != null &&
                 u.DeletedAt == null)
             .ToListAsync(ct);
 
@@ -318,8 +315,8 @@ public class WhatsAppJobs
             .FirstOrDefaultAsync(t => t.Id == taskId, ct);
 
         if (task?.AssignedTo == null ||
-            !task.AssignedTo.WhatsAppVerified ||
-            !task.AssignedTo.WhatsAppOptedIn)
+            string.IsNullOrWhiteSpace(task.AssignedTo.Mobile) ||
+            task.AssignedTo.DeletedAt != null)
         {
             return;
         }
@@ -379,28 +376,19 @@ public class WhatsAppJobs
         {
             try
             {
-                // Get the phone number - prefer FullPhoneNumber (stored for retryable messages)
-                // Fall back to user's WhatsApp number if available
-                string? phoneNumber = message.FullPhoneNumber;
-                if (string.IsNullOrEmpty(phoneNumber) && message.UserId.HasValue)
+                var recipient = message.UserId.HasValue
+                    ? await WhatsAppNotificationEligibility.GetRecipientAsync(db, message.UserId.Value, ct)
+                    : null;
+                if (recipient == null)
                 {
-                    var user = await db.Users.FindAsync([message.UserId.Value], ct);
-                    phoneNumber = user?.WhatsAppPhoneNumber;
-                }
-
-                if (string.IsNullOrEmpty(phoneNumber))
-                {
-                    _logger.LogWarning("Cannot retry message {MessageId}: no phone number available", message.Id);
-                    await messageLogService.MarkRetryAttemptAsync(
-                        message.Id,
-                        success: false,
-                        newWamId: null,
-                        errorCode: "NO_PHONE",
-                        errorMessage: "No phone number available for retry",
-                        ct);
-                    failCount++;
+                    // A downgrade or removed account is not a transient provider failure.
+                    message.IsRetryable = false;
+                    message.ErrorCode = "WHATSAPP_NOT_ELIGIBLE";
+                    message.ErrorMessage = "Recipient no longer has WhatsApp Assistant access or a registered mobile number";
+                    await db.SaveChangesAsync(ct);
                     continue;
                 }
+                var phoneNumber = recipient.Mobile!;
 
                 WhatsAppSendResult result;
 

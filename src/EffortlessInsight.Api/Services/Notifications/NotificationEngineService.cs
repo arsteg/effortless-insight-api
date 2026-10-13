@@ -1,3 +1,4 @@
+using EffortlessInsight.Api.Services.WhatsApp;
 using System.Security.Cryptography;
 using System.Text;
 using EffortlessInsight.Api.Data;
@@ -1060,6 +1061,11 @@ public class NotificationEngineService : INotificationEngineService
         Notification notification, ApplicationUser user, string type,
         Dictionary<string, object> data, CancellationToken cancellationToken)
     {
+        var recipient = await WhatsAppNotificationEligibility.GetRecipientAsync(_dbContext, user.Id, cancellationToken);
+        if (recipient == null)
+            return new DeliveryResultDto(NotificationChannel.WhatsApp, "skipped", null);
+        user = recipient;
+
         var delivery = new NotificationDelivery
         {
             NotificationId = notification.Id,

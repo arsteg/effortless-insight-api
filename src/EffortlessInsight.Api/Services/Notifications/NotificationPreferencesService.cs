@@ -247,32 +247,9 @@ public class NotificationPreferencesService : INotificationPreferencesService
         if (shouldWhatsApp && await _channelUnsubscribe.IsUnsubscribedAsync(userId, NotificationChannel.WhatsApp, category, notificationType, cancellationToken))
             shouldWhatsApp = false;
 
-        // Check WhatsApp subscription tier - only paid plans have WhatsApp access
         if (shouldWhatsApp)
-        {
-            var orgMembership = await _dbContext.OrganizationMembers
-                .AsNoTracking()
-                .Where(m => m.UserId == userId && m.Status == "active")
-                .FirstOrDefaultAsync(cancellationToken);
-
-            if (orgMembership != null)
-            {
-                var hasWhatsAppAccess = await _featureAccessService.HasFeatureAccessAsync(
-                    orgMembership.OrganizationId, FeatureCodes.WhatsAppAssistant, cancellationToken);
-                if (!hasWhatsAppAccess)
-                {
-                    _logger.LogDebug(
-                        "WhatsApp disabled for user {UserId} - organization {OrgId} does not have whatsapp_assistant feature",
-                        userId, orgMembership.OrganizationId);
-                    shouldWhatsApp = false;
-                }
-            }
-            else
-            {
-                // User has no active org membership - disable WhatsApp
-                shouldWhatsApp = false;
-            }
-        }
+            shouldWhatsApp = await Services.WhatsApp.WhatsAppNotificationEligibility.GetRecipientAsync(
+                _dbContext, userId, cancellationToken) != null;
 
         return new ChannelDecision(
             shouldEmail,
@@ -409,7 +386,7 @@ public class NotificationPreferencesService : INotificationPreferencesService
                 },
                 WhatsApp = new WhatsAppChannelDto
                 {
-                    Enabled = false,
+                    Enabled = !string.IsNullOrEmpty(user.Mobile),
                     Phone = user.Mobile,
                     Verified = false
                 },
@@ -472,7 +449,7 @@ public class NotificationPreferencesService : INotificationPreferencesService
         {
             ["email"] = new Dictionary<string, object> { ["enabled"] = true },
             ["sms"] = new Dictionary<string, object> { ["enabled"] = !string.IsNullOrEmpty(user.Mobile) },
-            ["whatsapp"] = new Dictionary<string, object> { ["enabled"] = false },
+            ["whatsapp"] = new Dictionary<string, object> { ["enabled"] = !string.IsNullOrEmpty(user.Mobile) },
             ["push"] = new Dictionary<string, object> { ["enabled"] = true }
         };
     }
@@ -483,7 +460,7 @@ public class NotificationPreferencesService : INotificationPreferencesService
         {
             Email = new EmailChannelDto { Enabled = true },
             Sms = new SmsChannelDto { Enabled = true },
-            WhatsApp = new WhatsAppChannelDto { Enabled = false },
+            WhatsApp = new WhatsAppChannelDto { Enabled = true },
             Push = new PushChannelDto { Enabled = true }
         };
     }
