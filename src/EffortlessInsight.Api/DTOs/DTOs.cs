@@ -818,7 +818,8 @@ public record NoticeDto(
     bool IsReadOnly = false,
     DateOnly? ExtendedDeadline = null,
     /// <summary>For archived notices, the status a restore returns it to; null otherwise.</summary>
-    string? RestoreStatus = null
+    string? RestoreStatus = null,
+    string? ProcessingError = null
 );
 
 public record NoticeDetailDto(
@@ -859,7 +860,8 @@ public record NoticeDetailDto(
     /// <summary>True if this notice is read-only (cross-org notices cannot be edited).</summary>
     bool IsReadOnly = false,
     /// <summary>For archived notices, the status a restore returns it to; null otherwise.</summary>
-    string? RestoreStatus = null
+    string? RestoreStatus = null,
+    string? ProcessingError = null
 );
 
 // Notice Relationship DTOs

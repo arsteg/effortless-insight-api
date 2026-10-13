@@ -125,6 +125,17 @@ public class GstNoticeRawService : IGstNoticeRawService
                     continue;
                 }
 
+                var existing = await FindMatchingNoticeAsync(organizationId, rawNotice, cancellationToken);
+                if (existing != null)
+                {
+                    rawNotice.ImportedToNotices = true;
+                    rawNotice.ImportedNoticeId = existing.Id;
+                    rawNotice.ImportedAt = DateTime.UtcNow;
+                    await _context.SaveChangesAsync(cancellationToken);
+                    alreadyImportedCount++;
+                    continue;
+                }
+
                 // Atomically reserve a notice slot (check + increment with lock).
                 // Checked per notice so a batch stops cleanly when the monthly
                 // allowance runs out.
@@ -141,6 +152,7 @@ public class GstNoticeRawService : IGstNoticeRawService
 
                 try
                 {
+                    await NoticeIdentity.ValidateGstinAsync(_context, organizationId, rawNotice.Gstin, cancellationToken);
                     // Resolve the org GSTIN registry entry for this client so the
                     // imported notice is linked (self-heals clients that predate
                     // the OrganizationGstinId column).
@@ -162,7 +174,7 @@ public class GstNoticeRawService : IGstNoticeRawService
                         UploadedById = userId,
                         NoticeType = rawNotice.NoticeType,
                         NoticeCategory = rawNotice.NoticeCategory,
-                        NoticeNumber = rawNotice.ReferenceNumber ?? rawNotice.PortalNoticeId,
+                        NoticeNumber = NoticeIdentity.Normalize(rawNotice.ReferenceNumber) ?? rawNotice.PortalNoticeId,
                         Gstin = rawNotice.Gstin,
                         // GstinHash is essential for cross-org notice visibility (CA-BO linking)
                         GstinHash = !string.IsNullOrEmpty(rawNotice.Gstin)
@@ -233,14 +245,33 @@ public class GstNoticeRawService : IGstNoticeRawService
                         importedGstins.Add(rawNotice.Gstin);
                     }
                 }
+                catch (Exception ex) when (NoticeIdentity.IsDuplicate(ex))
+                {
+                    // Clear the rejected insert before quota-reservation disposal saves its rollback.
+                    _context.ChangeTracker.Clear();
+                    throw;
+                }
                 catch
                 {
                     // Reservation auto-rollbacks on dispose if not confirmed
                     throw;
                 }
             }
+            catch (Exception ex) when (NoticeIdentity.IsDuplicate(ex))
+            {
+                _context.ChangeTracker.Clear();
+                var raw = await _context.GstNoticesRaw.FirstAsync(n => n.Id == noticeId && n.OrganizationId == organizationId, cancellationToken);
+                var existing = await FindMatchingNoticeAsync(organizationId, raw, cancellationToken);
+                if (existing == null) throw;
+                raw.ImportedToNotices = true;
+                raw.ImportedNoticeId = existing.Id;
+                raw.ImportedAt = DateTime.UtcNow;
+                await _context.SaveChangesAsync(cancellationToken);
+                alreadyImportedCount++;
+            }
             catch (Exception ex)
             {
+                _context.ChangeTracker.Clear();
                 errors.Add($"Failed to import notice {noticeId}: {ex.Message}");
                 _logger.LogError(ex, "Failed to import notice {NoticeId}", noticeId);
                 failedCount++;
@@ -470,18 +501,28 @@ public class GstNoticeRawService : IGstNoticeRawService
             return result;
         }
 
-        // Get or create the OrganizationGstin for the BO's organization
-        var boGstinEntry = await _gstinLink.FindOrCreateAsync(
-            boOrganizationId,
-            normalizedGstin,
-            tradeName: null,
-            legalName: null,
-            cancellationToken);
+        // Auto-import is only allowed for a GSTIN already registered by the BO.
+        var registeredGstins = await _context.OrganizationGstins.AsNoTracking()
+            .Where(g => g.OrganizationId == boOrganizationId && g.DeletedAt == null).ToListAsync(cancellationToken);
+        var boGstinEntry = registeredGstins.FirstOrDefault(g => NoticeIdentity.Normalize(g.Gstin) == normalizedGstin)
+            ?? throw new InvalidOperationException("INVALID_GSTIN: GSTIN is not registered in the business owner's organization.");
 
         foreach (var raw in rawNotices)
         {
             try
             {
+                // Dedupe by PortalNoticeId or ReferenceNumber
+                var existing = await FindMatchingNoticeAsync(boOrganizationId, raw, cancellationToken);
+                if (existing != null)
+                {
+                    raw.ImportedToNotices = true;
+                    raw.ImportedNoticeId = existing.Id;
+                    raw.ImportedAt = DateTime.UtcNow;
+                    await _context.SaveChangesAsync(cancellationToken);
+                    skippedAsDuplicate++;
+                    continue;
+                }
+
                 // Check quota
                 var (canCreate, reason) = await _usageService.CanCreateNoticeAsync(boOrganizationId);
                 if (!canCreate)
@@ -496,17 +537,6 @@ public class GstNoticeRawService : IGstNoticeRawService
                     };
                 }
 
-                // Dedupe by PortalNoticeId or ReferenceNumber
-                var existing = await FindMatchingNoticeAsync(boOrganizationId, raw, cancellationToken);
-                if (existing != null)
-                {
-                    raw.ImportedToNotices = true;
-                    raw.ImportedNoticeId = existing.Id;
-                    raw.ImportedAt = DateTime.UtcNow;
-                    skippedAsDuplicate++;
-                    continue;
-                }
-
                 // Create Notice in BO's org
                 var notice = new Data.Entities.Notice
                 {
@@ -514,7 +544,7 @@ public class GstNoticeRawService : IGstNoticeRawService
                     UploadedById = boUserId,
                     NoticeType = raw.NoticeType,
                     NoticeCategory = raw.NoticeCategory,
-                    NoticeNumber = raw.ReferenceNumber ?? raw.PortalNoticeId,
+                    NoticeNumber = NoticeIdentity.Normalize(raw.ReferenceNumber) ?? raw.PortalNoticeId,
                     Gstin = raw.Gstin,
                     GstinHash = !string.IsNullOrEmpty(raw.Gstin)
                         ? ICrossOrgNoticeVisibilityService.ComputeGstinHash(raw.Gstin)
@@ -553,12 +583,12 @@ public class GstNoticeRawService : IGstNoticeRawService
 
                 _context.Notices.Add(notice);
 
-                // Advance the per-plan usage counter
-                await _usageService.IncrementNoticeCountAsync(boOrganizationId);
-
                 raw.ImportedToNotices = true;
                 raw.ImportedNoticeId = notice.Id;
                 raw.ImportedAt = DateTime.UtcNow;
+
+                await _context.SaveChangesAsync(cancellationToken);
+                await _usageService.IncrementNoticeCountAsync(boOrganizationId);
 
                 if (raw.PdfS3Key != null)
                 {
@@ -567,8 +597,23 @@ public class GstNoticeRawService : IGstNoticeRawService
 
                 imported++;
             }
+            catch (Exception ex) when (NoticeIdentity.IsDuplicate(ex))
+            {
+                foreach (var entry in _context.ChangeTracker.Entries<Notice>().Where(e => e.State == EntityState.Added).ToList())
+                    entry.State = EntityState.Detached;
+                var existing = await FindMatchingNoticeAsync(boOrganizationId, raw, cancellationToken);
+                if (existing == null) throw;
+                raw.ImportedToNotices = true;
+                raw.ImportedNoticeId = existing.Id;
+                raw.ImportedAt = DateTime.UtcNow;
+                await _context.SaveChangesAsync(cancellationToken);
+                skippedAsDuplicate++;
+            }
             catch (Exception ex)
             {
+                foreach (var entry in _context.ChangeTracker.Entries<Notice>().Where(e => e.State == EntityState.Added).ToList())
+                    entry.State = EntityState.Detached;
+                await _context.Entry(raw).ReloadAsync(cancellationToken);
                 _logger.LogError(ex, "Failed to auto-import GstNoticeRaw {RawNoticeId} to org {BoOrgId}",
                     raw.Id, boOrganizationId);
                 failed++;
@@ -603,33 +648,8 @@ public class GstNoticeRawService : IGstNoticeRawService
         GstNoticeRaw raw,
         CancellationToken cancellationToken)
     {
-        // Match by PortalNoticeId (GstnNoticeId in Notice)
-        if (!string.IsNullOrWhiteSpace(raw.PortalNoticeId))
-        {
-            var byPortalId = await _context.Notices
-                .FirstOrDefaultAsync(n =>
-                    n.OrganizationId == organizationId &&
-                    n.GstnNoticeId == raw.PortalNoticeId &&
-                    n.DeletedAt == null,
-                    cancellationToken);
-            if (byPortalId != null)
-                return byPortalId;
-        }
-
-        // Match by ReferenceNumber (NoticeNumber in Notice)
-        if (!string.IsNullOrWhiteSpace(raw.ReferenceNumber))
-        {
-            var byReference = await _context.Notices
-                .FirstOrDefaultAsync(n =>
-                    n.OrganizationId == organizationId &&
-                    n.NoticeNumber == raw.ReferenceNumber &&
-                    n.DeletedAt == null,
-                    cancellationToken);
-            if (byReference != null)
-                return byReference;
-        }
-
-        return null;
+        return await NoticeIdentity.FindAsync(_context, organizationId, raw.Gstin,
+            NoticeIdentity.Normalize(raw.ReferenceNumber) ?? raw.PortalNoticeId, raw.PortalNoticeId, ct: cancellationToken);
     }
 
     /// <summary>

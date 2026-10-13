@@ -723,6 +723,9 @@ public class NoticeServiceImpl : INoticeServiceExtended
             (n.FileHash == validationResult.FileHash || n.AttachmentHash == emailSource.AttachmentHash), cancellationToken))
             return NoticeUploadResult.Failed("DUPLICATE_NOTICE", "This notice was already imported. No monthly allowance was used.");
 
+        if ((await CheckDuplicateAsync(validationResult.FileHash!, organizationId, cancellationToken)).IsPotentialDuplicate)
+            return NoticeUploadResult.Failed("DUPLICATE_NOTICE", "This notice already exists.");
+
         // Check storage limit before uploading
         var (canUpload, storageReason) = await _usageService.CanUploadFileAsync(
             organizationId, validationResult.FileSize);
@@ -757,6 +760,8 @@ public class NoticeServiceImpl : INoticeServiceExtended
             // Check for duplicates
             var duplicateCheck = await CheckDuplicateAsync(
                 validationResult.FileHash!, organizationId, cancellationToken);
+            if (duplicateCheck.IsPotentialDuplicate)
+                return NoticeUploadResult.Failed("DUPLICATE_NOTICE", "This notice already exists.");
 
             if (emailSource != null && await _db.Notices.IgnoreQueryFilters().AnyAsync(n => n.DeletedAt == null && n.OrganizationId == organizationId &&
                 (n.FileHash == validationResult.FileHash || n.AttachmentHash == emailSource.AttachmentHash), cancellationToken))
@@ -911,6 +916,19 @@ public class NoticeServiceImpl : INoticeServiceExtended
                 jobId,
                 duplicateCheck.IsPotentialDuplicate ? duplicateCheck : null);
         }
+        catch (Exception ex) when (NoticeIdentity.IsDuplicate(ex))
+        {
+            // This request owns these newly uploaded objects; remove the losing upload.
+            var rejectedFiles = _db.ChangeTracker.Entries<Notice>().Where(e => e.State == EntityState.Added)
+                .Select(e => e.Entity.FileUrl).ToList();
+            _db.ChangeTracker.Clear();
+            foreach (var file in rejectedFiles)
+            {
+                try { await _storageService.DeleteAsync(file); }
+                catch (Exception cleanupError) { _logger.LogWarning(cleanupError, "Could not remove rejected duplicate upload"); }
+            }
+            return NoticeUploadResult.Failed("DUPLICATE_NOTICE", "This notice already exists.");
+        }
         catch
         {
             // Reservation auto-rollbacks on dispose if not confirmed
@@ -976,6 +994,9 @@ public class NoticeServiceImpl : INoticeServiceExtended
         }
 
         // Check storage limit before confirming upload
+        if ((await CheckDuplicateAsync(fileHash, organizationId, cancellationToken)).IsPotentialDuplicate)
+            return NoticeUploadResult.Failed("DUPLICATE_NOTICE", "This notice already exists.");
+
         var (canUpload, storageReason) = await _usageService.CanUploadFileAsync(organizationId, fileSize);
         if (!canUpload)
         {
@@ -999,6 +1020,8 @@ public class NoticeServiceImpl : INoticeServiceExtended
         {
             // Check for duplicates
             var duplicateCheck = await CheckDuplicateAsync(fileHash, organizationId, cancellationToken);
+            if (duplicateCheck.IsPotentialDuplicate)
+                return NoticeUploadResult.Failed("DUPLICATE_NOTICE", "This notice already exists.");
 
             // Validate GSTIN if provided
             Guid? gstinId = null;
@@ -1106,6 +1129,12 @@ public class NoticeServiceImpl : INoticeServiceExtended
                 notice.Status,
                 jobId,
                 duplicateCheck.IsPotentialDuplicate ? duplicateCheck : null);
+        }
+        catch (Exception ex) when (NoticeIdentity.IsDuplicate(ex))
+        {
+            // Clear the failed insert before quota-reservation disposal saves its rollback.
+            _db.ChangeTracker.Clear();
+            return NoticeUploadResult.Failed("DUPLICATE_NOTICE", "This notice already exists.");
         }
         catch
         {
@@ -2076,12 +2105,16 @@ public class NoticeServiceImpl : INoticeServiceExtended
                 cancellationToken)
             ?? throw new InvalidOperationException("Notice not found");
 
-        if (notice.ProcessingAttempts >= MaxProcessingAttempts)
+        var requiresCorrection = NoticeProcessingFailure.RequiresCorrection(notice.ProcessingError);
+        if (notice.ProcessingAttempts >= MaxProcessingAttempts && !requiresCorrection)
         {
             throw new InvalidOperationException(
                 $"Maximum processing attempts ({MaxProcessingAttempts}) exceeded");
         }
 
+        // Validation failures can be retried after correcting the document/GSTIN,
+        // including notices whose old automatic retries exhausted the counter.
+        if (requiresCorrection) notice.ProcessingAttempts = 0;
         // Reset processing status
         notice.ProcessingStatus = NoticeProcessingStatus.Queued;
         notice.ProcessingError = null;

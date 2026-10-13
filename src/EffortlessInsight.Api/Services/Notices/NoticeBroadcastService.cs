@@ -30,6 +30,7 @@ public class NoticeBroadcastService : INoticeBroadcastService
             noticeId = notice.Id,
             status = notice.Status,
             processingStatus = notice.ProcessingStatus,
+            processingError = NoticeProcessingFailure.UserMessage(notice.ProcessingError),
             riskLevel = notice.AiReport?.RiskLevel,
             riskScore = notice.AiReport?.RiskScore,
             noticeType = notice.NoticeType,

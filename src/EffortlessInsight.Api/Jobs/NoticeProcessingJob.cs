@@ -26,6 +26,8 @@ public class NoticeProcessingJob : INoticeProcessingJob
     private readonly INoticeBroadcastService _broadcastService;
     private readonly ILogger<NoticeProcessingJob> _logger;
 
+    private readonly Services.Billing.IUsageService _usageService;
+
     private const int MaxRetries = 3;
     private static readonly TimeSpan[] RetryDelays =
     [
@@ -43,7 +45,8 @@ public class NoticeProcessingJob : INoticeProcessingJob
         IBackgroundJobClient backgroundJobs,
         INotificationService notificationService,
         INoticeBroadcastService broadcastService,
-        ILogger<NoticeProcessingJob> logger)
+        ILogger<NoticeProcessingJob> logger,
+        Services.Billing.IUsageService usageService)
     {
         _db = db;
         _aiService = aiService;
@@ -54,6 +57,7 @@ public class NoticeProcessingJob : INoticeProcessingJob
         _notificationService = notificationService;
         _broadcastService = broadcastService;
         _logger = logger;
+        _usageService = usageService;
     }
 
     /// <summary>
@@ -150,6 +154,27 @@ public class NoticeProcessingJob : INoticeProcessingJob
                 await HandleFailureAsync(notice, result.Error ?? "Unknown error", stopwatch.ElapsedMilliseconds, cancellationToken);
             }
         }
+        catch (Exception ex) when (NoticeIdentity.IsDuplicate(ex))
+        {
+            // A provisional upload only learns its business identity after OCR.
+            // Keep its audit history, but remove the losing row from active notices.
+            _db.ChangeTracker.Clear();
+            var duplicate = await _db.Notices.IgnoreQueryFilters()
+                .FirstOrDefaultAsync(n => n.Id == noticeId && n.DeletedAt == null, cancellationToken);
+            if (duplicate == null) return;
+            duplicate.DeletedAt = DateTime.UtcNow;
+            duplicate.ProcessingStatus = NoticeProcessingStatus.Failed;
+            duplicate.ProcessingError = "DUPLICATE_NOTICE: This notice already exists.";
+            if (ex is DuplicateNoticeException known)
+            {
+                duplicate.Metadata ??= [];
+                duplicate.Metadata["duplicate_of"] = known.ExistingNoticeId.ToString();
+            }
+            await _db.SaveChangesAsync(cancellationToken);
+            await _usageService.DecrementNoticeCountAsync(duplicate.OrganizationId);
+            await _broadcastService.BroadcastStatusUpdateAsync(duplicate, cancellationToken);
+            return;
+        }
         catch (Exception ex)
         {
             stopwatch.Stop();
@@ -202,16 +227,29 @@ public class NoticeProcessingJob : INoticeProcessingJob
 
         var detectedGstin = report.Metadata.Gstin?.Trim().ToUpperInvariant();
         var isCaWorkspace = await _db.OrganizationMembers.AnyAsync(m => m.OrganizationId == notice.OrganizationId
-            && m.Role == "owner" && m.User.IsCA && m.Status == "active" && m.DeletedAt == null, cancellationToken);
+            && m.Role == "owner" && m.User.IsCA && m.Status == "active" && m.DeletedAt == null, cancellationToken)
+            && !await _db.CaProspectClients.AnyAsync(p => p.MergedIntoOrganizationId == notice.OrganizationId
+                && p.Status == "merged" && p.DeletedAt == null, cancellationToken);
         if (isCaWorkspace && !string.IsNullOrWhiteSpace(detectedGstin) && !new Services.Organizations.GstinValidatorService(_db).Validate(detectedGstin).IsValid)
             throw new InvalidOperationException("GSTIN_REVIEW_REQUIRED: The detected GSTIN is invalid. Review the document and correct its GSTIN.");
         if (isCaWorkspace && string.IsNullOrWhiteSpace(detectedGstin) && string.IsNullOrWhiteSpace(notice.Gstin))
             throw new InvalidOperationException("GSTIN_REVIEW_REQUIRED: No GSTIN could be identified. Select the client GSTIN and retry processing.");
 
-        if (notice.CaProspectClientId != null && !string.IsNullOrWhiteSpace(notice.Gstin)
+        if (!isCaWorkspace)
+        {
+            var effectiveGstin = string.IsNullOrWhiteSpace(detectedGstin) ? notice.Gstin : detectedGstin;
+            var allowed = await _db.OrganizationGstins.AsNoTracking()
+                .Where(g => g.OrganizationId == notice.OrganizationId && g.DeletedAt == null)
+                .ToListAsync(cancellationToken);
+            if (string.IsNullOrWhiteSpace(effectiveGstin) || !allowed.Any(g =>
+                string.Equals(g.Gstin.Trim(), effectiveGstin.Trim(), StringComparison.OrdinalIgnoreCase)))
+                throw new InvalidOperationException("INVALID_GSTIN: The document GSTIN is not registered in this organization.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(notice.Gstin)
             && !string.IsNullOrWhiteSpace(report.Metadata.Gstin)
             && !string.Equals(notice.Gstin.Trim(), report.Metadata.Gstin.Trim(), StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("The document GSTIN does not match the selected client GSTIN. Review the document before processing it again.");
+            throw new InvalidOperationException("GSTIN_MISMATCH: The document GSTIN does not match the selected client GSTIN. Review the document before processing it again.");
 
         // Update notice with extracted metadata
         notice.NoticeType = report.Metadata.NoticeType;
@@ -367,7 +405,7 @@ public class NoticeProcessingJob : INoticeProcessingJob
         notice.ProcessingCompletedAt = DateTime.UtcNow;
         notice.UpdatedAt = DateTime.UtcNow;
 
-        if (notice.ProcessingAttempts < MaxRetries)
+        if (notice.ProcessingAttempts < MaxRetries && !NoticeProcessingFailure.RequiresCorrection(error))
         {
             // Schedule retry with exponential backoff
             var delay = RetryDelays[Math.Min(notice.ProcessingAttempts - 1, RetryDelays.Length - 1)];

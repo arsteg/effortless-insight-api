@@ -152,6 +152,10 @@ public class NoticesController : ControllerBase
             return StatusCode(StatusCodes.Status201Created,
                 new ApiResponse<NoticeDto>(true, dto));
         }
+        catch (Exception ex) when (NoticeIdentity.IsDuplicate(ex))
+        {
+            return Conflict(new ApiErrorResponse(false, "DUPLICATE_NOTICE", "This notice already exists."));
+        }
         catch (InvalidOperationException ex) when (ex.Message.Contains("GSTIN"))
         {
             return BadRequest(new ApiErrorResponse(false, "INVALID_GSTIN", ex.Message));
@@ -2188,7 +2192,8 @@ public class NoticesController : ControllerBase
             CreatedAt: notice.CreatedAt,
             OrganizationId: notice.OrganizationId,
             ExtendedDeadline: notice.ExtendedDeadline,
-            RestoreStatus: notice.GetRestoreStatus());
+            RestoreStatus: notice.GetRestoreStatus(),
+            ProcessingError: NoticeProcessingFailure.UserMessage(notice.ProcessingError));
     }
 
     private static NoticeDto MapToDtoWithCrossOrg(NoticeWithCrossOrgInfo noticeInfo)
@@ -2223,7 +2228,8 @@ public class NoticesController : ControllerBase
             LinkedOrganizationType: noticeInfo.LinkedOrganizationType,
             IsReadOnly: noticeInfo.IsReadOnly,
             ExtendedDeadline: notice.ExtendedDeadline,
-            RestoreStatus: notice.GetRestoreStatus());
+            RestoreStatus: notice.GetRestoreStatus(),
+            ProcessingError: NoticeProcessingFailure.UserMessage(notice.ProcessingError));
     }
 
     private static NoticeDetailDto MapToDetailDto(Notice notice)
@@ -2257,7 +2263,8 @@ public class NoticesController : ControllerBase
             CreatedAt: notice.CreatedAt,
             UpdatedAt: notice.UpdatedAt,
             OrganizationId: notice.OrganizationId,
-            RestoreStatus: notice.GetRestoreStatus());
+            RestoreStatus: notice.GetRestoreStatus(),
+            ProcessingError: NoticeProcessingFailure.UserMessage(notice.ProcessingError));
     }
 
     private static NoticeDetailDto MapToDetailDtoWithCrossOrg(NoticeWithCrossOrgInfo noticeInfo)
@@ -2296,7 +2303,8 @@ public class NoticesController : ControllerBase
             IsFromLinkedOrganization: noticeInfo.IsFromLinkedOrganization,
             LinkedOrganizationType: noticeInfo.LinkedOrganizationType,
             IsReadOnly: noticeInfo.IsReadOnly,
-            RestoreStatus: notice.GetRestoreStatus());
+            RestoreStatus: notice.GetRestoreStatus(),
+            ProcessingError: NoticeProcessingFailure.UserMessage(notice.ProcessingError));
     }
 
     private static NoticeAiReportDto MapReportToDto(NoticeAiReport report)

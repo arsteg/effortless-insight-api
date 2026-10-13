@@ -797,6 +797,16 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
         // ============================================================================
         modelBuilder.Entity<Notice>(entity =>
         {
+            entity.Property<string>("IdentityGstin").HasComputedColumnSql("NULLIF(upper(btrim(\"Gstin\")), '')", stored: true);
+            entity.Property<string>("IdentityReference").HasComputedColumnSql("NULLIF(upper(btrim(\"NoticeNumber\")), '')", stored: true);
+            entity.Property<string>("IdentityPortal").HasComputedColumnSql("NULLIF(upper(btrim(\"GstnNoticeId\")), '')", stored: true);
+            entity.HasIndex("OrganizationId", "IdentityGstin", "IdentityReference").IsUnique()
+                .HasDatabaseName("UX_Notices_Identity").HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex("OrganizationId", "IdentityGstin", "IdentityPortal").IsUnique()
+                .HasDatabaseName("UX_Notices_Portal").HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(n => new { n.OrganizationId, n.FileHash }).IsUnique()
+                .HasDatabaseName("UX_Notices_Content")
+                .HasFilter("\"DeletedAt\" IS NULL AND \"FileHash\" IS NOT NULL AND \"FileHash\" <> ''");
             // Basic indexes
             entity.HasIndex(n => n.OrganizationId)
                 .HasFilter("\"DeletedAt\" IS NULL");
@@ -3402,6 +3412,7 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
                 {
                     await using var transaction = await Database.BeginTransactionAsync(cancellationToken);
                     await Services.Organizations.CaWorkspaceWrites.PrepareAsync(this, cancellationToken);
+                    await Services.Notices.NoticeIdentity.ValidateAsync(this, cancellationToken);
                     UpdateTimestamps();
                     var count = await base.SaveChangesAsync(false, cancellationToken);
                     await transaction.CommitAsync(cancellationToken);
@@ -3412,6 +3423,7 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
             await Services.Organizations.CaWorkspaceWrites.PrepareAsync(this, cancellationToken);
         }
         UpdateTimestamps();
+        await Services.Notices.NoticeIdentity.ValidateAsync(this, cancellationToken);
         return await base.SaveChangesAsync(cancellationToken);
     }
 

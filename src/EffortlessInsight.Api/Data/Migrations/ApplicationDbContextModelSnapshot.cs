@@ -5735,6 +5735,21 @@ namespace EffortlessInsight.Api.Data.Migrations
 
             modelBuilder.Entity("EffortlessInsight.Api.Data.Entities.Notice", b =>
                 {
+                    b.Property<string>("IdentityGstin")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("text")
+                        .HasComputedColumnSql("NULLIF(upper(btrim(\"Gstin\")), '')", true);
+
+                    b.Property<string>("IdentityReference")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("text")
+                        .HasComputedColumnSql("NULLIF(upper(btrim(\"NoticeNumber\")), '')", true);
+
+                    b.Property<string>("IdentityPortal")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("text")
+                        .HasComputedColumnSql("NULLIF(upper(btrim(\"GstnNoticeId\")), '')", true);
+
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
@@ -6067,6 +6082,21 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.HasIndex("OrganizationId", "Status", "ResponseDeadline")
                         .HasDatabaseName("IX_Notices_Org_Status_Deadline")
                         .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("OrganizationId", "IdentityGstin", "IdentityReference")
+                        .IsUnique()
+                        .HasDatabaseName("UX_Notices_Identity")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("OrganizationId", "IdentityGstin", "IdentityPortal")
+                        .IsUnique()
+                        .HasDatabaseName("UX_Notices_Portal")
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("OrganizationId", "FileHash")
+                        .IsUnique()
+                        .HasDatabaseName("UX_Notices_Content")
+                        .HasFilter("\"DeletedAt\" IS NULL AND \"FileHash\" IS NOT NULL AND \"FileHash\" <> ''");
 
                     b.ToTable("Notices");
                 });

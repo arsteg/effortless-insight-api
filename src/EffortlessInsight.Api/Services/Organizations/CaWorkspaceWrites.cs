@@ -75,18 +75,6 @@ public static class CaWorkspaceWrites
         foreach (var scope in scopes)
         {
             await LockAsync(db, scope.OrganizationId, scope.Gstin, ct);
-            if (notices.Where(n => n.OrganizationId == scope.OrganizationId && Hash(n.Gstin!) == Hash(scope.Gstin)
-                    && n.DeletedAt == null && n.GstnNoticeId != null).GroupBy(n => n.GstnNoticeId).Any(g => g.Count() > 1))
-                throw new InvalidOperationException("NOTICE_ALREADY_EXISTS: This batch contains a duplicate GST portal notice.");
-            foreach (var notice in notices.Where(n => n.OrganizationId == scope.OrganizationId
-                         && Hash(n.Gstin!) == Hash(scope.Gstin) && n.GstnNoticeId != null))
-            {
-                var hashForNotice = Hash(scope.Gstin);
-                if (await db.Notices.IgnoreQueryFilters().AnyAsync(n => n.OrganizationId == scope.OrganizationId
-                        && n.Id != notice.Id && n.DeletedAt == null && n.GstnNoticeId == notice.GstnNoticeId
-                        && (n.GstinHash == hashForNotice || n.Gstin == scope.Gstin), ct))
-                    throw new InvalidOperationException("NOTICE_ALREADY_EXISTS: This GST portal notice is already imported.");
-            }
             var scopeHash = Hash(scope.Gstin);
             // An organization can be owned by someone who also has a CA account.
             // Explicit BO ownership takes precedence over that person's account type.
@@ -116,11 +104,10 @@ public static class CaWorkspaceWrites
                     if (!routes.TryGetValue(notice.Id, out var destination))
                         throw new InvalidOperationException("CLIENT_ROUTING_RETRY: The client was accepted during processing. Retry to resolve its organization.");
                     await CaNoticeRouting.ResolveAsync(db, scope.OrganizationId, notice.UploadedById, scope.Gstin, ct);
-                    if (await db.Notices.IgnoreQueryFilters().AnyAsync(n => n.OrganizationId == destination.OrganizationId
-                            && n.Id != notice.Id && n.DeletedAt == null && n.GstinHash == hash
-                            && ((notice.GstnNoticeId != null && n.GstnNoticeId == notice.GstnNoticeId)
-                                || (notice.FileHash != null && n.FileHash == notice.FileHash)), ct))
-                        throw new InvalidOperationException("NOTICE_ALREADY_EXISTS: A matching notice already exists in the BO organization.");
+                    var duplicate = await Services.Notices.NoticeIdentity.FindAsync(db, destination.OrganizationId,
+                        notice.Gstin, notice.NoticeNumber, notice.GstnNoticeId, notice.FileHash, notice.Id, ct);
+                    if (duplicate != null)
+                        throw new Services.Notices.DuplicateNoticeException(duplicate.Id);
                     await new CaDistributorHandover(db).RouteIdentifiedNoticeAsync(notice, destination, prospect.Id, ct);
                 }
                 continue;

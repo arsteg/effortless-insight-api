@@ -4,6 +4,7 @@ using EffortlessInsight.Api.DTOs;
 using EffortlessInsight.Api.Options;
 using EffortlessInsight.Api.Services.Notifications;
 using Hangfire;
+using EffortlessInsight.Api.Services.Notices;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -192,6 +193,7 @@ public class GstnNoticeService : IGstnNoticeService
             var existingNoticeIds = await GetExistingGstnNoticeIdsAsync(
                 connection.OrganizationGstin.OrganizationId,
                 noticeIdsToCheck,
+                connection.OrganizationGstin.Gstin,
                 cancellationToken);
 
             // Process each notice
@@ -249,6 +251,13 @@ public class GstnNoticeService : IGstnNoticeService
                             svc => svc.DownloadNoticeDocumentAsync(notice.Id, CancellationToken.None));
                     }
 
+                    processed++;
+                }
+                catch (Exception ex) when (NoticeIdentity.IsDuplicate(ex))
+                {
+                    foreach (var entry in _context.ChangeTracker.Entries<Notice>().Where(e => e.State == EntityState.Added).ToList())
+                        entry.State = EntityState.Detached;
+                    skipped++;
                     processed++;
                 }
                 catch (Exception ex)
@@ -511,13 +520,15 @@ public class GstnNoticeService : IGstnNoticeService
     private async Task<HashSet<string>> GetExistingGstnNoticeIdsAsync(
         Guid organizationId,
         List<string> gstnNoticeIds,
+        string gstin,
         CancellationToken cancellationToken)
     {
         if (gstnNoticeIds.Count == 0)
             return [];
 
+        var normalizedGstin = NoticeIdentity.Normalize(gstin);
         var existingIds = await _context.Notices
-            .Where(n => n.OrganizationId == organizationId)
+            .Where(n => n.OrganizationId == organizationId && n.Gstin != null && n.Gstin.Trim().ToUpper() == normalizedGstin)
             .Where(n => n.GstnNoticeId != null && gstnNoticeIds.Contains(n.GstnNoticeId))
             .Where(n => n.DeletedAt == null)
             .Select(n => n.GstnNoticeId!)
@@ -552,6 +563,7 @@ public class GstnNoticeService : IGstnNoticeService
             Source = NoticeSource.GstnPortal,
             GstnNoticeId = gspNotice.NoticeId,
             GstnReferenceNumber = gspNotice.ReferenceNumber,
+            NoticeNumber = NoticeIdentity.Normalize(gspNotice.ReferenceNumber) ?? gspNotice.NoticeId,
             FetchedFromGstnAt = DateTime.UtcNow,
             GspCorrelationId = correlationId,
 
