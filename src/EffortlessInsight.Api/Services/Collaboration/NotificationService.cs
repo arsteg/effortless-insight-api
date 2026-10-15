@@ -10,16 +10,21 @@ public class NotificationService : INotificationService
     private readonly ApplicationDbContext _dbContext;
     private readonly IEmailService _emailService;
     private readonly ILogger<NotificationService> _logger;
+    private readonly IConfiguration _configuration;
 
     public NotificationService(
         ApplicationDbContext dbContext,
         IEmailService emailService,
-        ILogger<NotificationService> logger)
+        ILogger<NotificationService> logger,
+        IConfiguration configuration)
     {
         _dbContext = dbContext;
         _emailService = emailService;
         _logger = logger;
+        _configuration = configuration;
     }
+
+    private string AppBaseUrl => _configuration["App:BaseUrl"]?.TrimEnd('/') ?? "";
 
     public async Task NotifyTaskAssignedAsync(NoticeTask task, IEnumerable<Guid> assigneeIds, Guid assignedById)
     {
@@ -325,7 +330,7 @@ public class NotificationService : INotificationService
             var riskScore = notice.AiReport?.RiskScore ?? 0;
 
             var subject = $"Notice processed: {notice.NoticeType ?? "GST Notice"} - {notice.NoticeNumber ?? notice.FileName}";
-            var body = BuildNoticeProcessingCompleteEmail(notice, uploader, riskLevel, riskScore);
+            var body = BuildNoticeProcessingCompleteEmail(notice, uploader, riskLevel, riskScore, $"{AppBaseUrl}/notices/{notice.Id}");
 
             await _emailService.SendAsync(uploader.Email, subject, body);
 
@@ -349,7 +354,7 @@ public class NotificationService : INotificationService
             }
 
             var subject = $"Notice processing failed: {notice.FileName}";
-            var body = BuildNoticeProcessingFailedEmail(notice, uploader, error, attempts);
+            var body = BuildNoticeProcessingFailedEmail(notice, uploader, error, attempts, $"{AppBaseUrl}/notices/upload");
 
             await _emailService.SendAsync(uploader.Email, subject, body);
 
@@ -604,7 +609,7 @@ public class NotificationService : INotificationService
 </html>";
     }
 
-    private static string BuildNoticeProcessingCompleteEmail(Notice notice, ApplicationUser uploader, string riskLevel, int riskScore)
+    private static string BuildNoticeProcessingCompleteEmail(Notice notice, ApplicationUser uploader, string riskLevel, int riskScore, string noticeUrl)
     {
         var riskColor = riskLevel.ToLower() switch
         {
@@ -656,7 +661,7 @@ public class NotificationService : INotificationService
         <p>Log in to EffortlessInsight to view the full AI analysis, recommended actions, and required documents.</p>
 
         <div style='text-align: center; margin: 30px 0;'>
-            <a href='#' style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 14px 30px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;'>
+            <a href='{noticeUrl}' style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 14px 30px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;'>
                 View Notice Details
             </a>
         </div>
@@ -668,7 +673,7 @@ public class NotificationService : INotificationService
 </html>";
     }
 
-    private static string BuildNoticeProcessingFailedEmail(Notice notice, ApplicationUser uploader, string error, int attempts)
+    private static string BuildNoticeProcessingFailedEmail(Notice notice, ApplicationUser uploader, string error, int attempts, string uploadUrl)
     {
         var sanitizedError = error.Length > 200 ? error[..200] + "..." : error;
 
@@ -703,7 +708,7 @@ public class NotificationService : INotificationService
         </div>
 
         <div style='text-align: center; margin: 30px 0;'>
-            <a href='#' style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 14px 30px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;'>
+            <a href='{uploadUrl}' style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 14px 30px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;'>
                 Try Re-uploading
             </a>
         </div>

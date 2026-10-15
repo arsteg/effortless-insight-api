@@ -10,8 +10,8 @@ public interface IAuthService
     Task VerifyEmailAsync(string token);
     Task ForgotPasswordAsync(string email, string ipAddress);
     Task ResetPasswordAsync(ResetPasswordRequest request);
-    Task ChangePasswordAsync(Guid userId, ChangePasswordRequest request);
-    Task LogoutAsync(Guid userId, string? refreshTokenJti, bool allDevices);
+    Task ChangePasswordAsync(Guid userId, ChangePasswordRequest request, string? currentSessionId = null);
+    Task LogoutAsync(Guid userId, string? sessionId, bool allDevices);
 
     // OTP Login
     Task<OtpResponse> RequestOtpLoginAsync(string mobile, string ipAddress);

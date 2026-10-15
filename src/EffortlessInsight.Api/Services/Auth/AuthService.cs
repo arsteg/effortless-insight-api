@@ -362,30 +362,19 @@ public class AuthService : IAuthService
 
         var organization = membership?.Organization;
 
-        // Revoke only after the selected membership has been validated.
-        session.RevokedAt = DateTime.UtcNow;
-        session.RevokedReason = "token_refresh";
-
+        // Rotate only after the selected membership has been validated.
+        // The same session row is kept so its Id stays stable for the whole login.
         var (newRefreshToken, newJti, expiresAt) = _jwtService.GenerateRefreshToken(session.ExpiresAt > DateTime.UtcNow.AddDays(7));
-        var accessToken = _jwtService.GenerateAccessToken(user, organization, membership?.Role, membership?.IsExternal ?? false);
+        var accessToken = _jwtService.GenerateAccessToken(user, organization, membership?.Role, membership?.IsExternal ?? false, session.Id.ToString());
 
-        // Create new session
-        var newSession = new UserSession
-        {
-            UserId = user.Id,
-            OrganizationId = organization?.Id,
-            RefreshTokenHash = ComputeSha256Hash(newRefreshToken),
-            RefreshTokenJti = newJti,
-            DeviceId = session.DeviceId,
-            DeviceName = session.DeviceName,
-            Platform = session.Platform,
-            UserAgent = userAgent ?? session.UserAgent,
-            IpAddress = ipAddress,
-            ExpiresAt = expiresAt,
-            LastActiveAt = DateTime.UtcNow
-        };
+        session.OrganizationId = organization?.Id;
+        session.RefreshTokenHash = ComputeSha256Hash(newRefreshToken);
+        session.RefreshTokenJti = newJti;
+        session.UserAgent = userAgent ?? session.UserAgent;
+        session.IpAddress = ipAddress;
+        session.ExpiresAt = expiresAt;
+        session.LastActiveAt = DateTime.UtcNow;
 
-        _dbContext.UserSessions.Add(newSession);
         await _dbContext.SaveChangesAsync();
 
         return new TokenResponse(
@@ -557,7 +546,7 @@ public class AuthService : IAuthService
         _logger.LogInformation("Password reset successful for: {Email}", user.Email);
     }
 
-    public async Task ChangePasswordAsync( Guid userId, ChangePasswordRequest request )
+    public async Task ChangePasswordAsync( Guid userId, ChangePasswordRequest request, string? currentSessionId = null )
     {
         if (request.NewPassword != request.ConfirmPassword)
         {
@@ -598,13 +587,25 @@ public class AuthService : IAuthService
         user.UpdatedAt = DateTime.UtcNow;
         await _userManager.UpdateAsync(user);
 
+        // Log out every other device; keep the one that changed the password
+        var currentId = Guid.TryParse(currentSessionId, out var parsedId) ? parsedId : Guid.Empty;
+        var otherSessions = await _dbContext.UserSessions
+            .Where(s => s.UserId == userId && s.RevokedAt == null && s.Id != currentId)
+            .ToListAsync();
+        foreach (var session in otherSessions)
+        {
+            session.RevokedAt = DateTime.UtcNow;
+            session.RevokedReason = "password_change";
+        }
+        await _dbContext.SaveChangesAsync();
+
         // Audit log
         await LogAuthEventAsync(user.Id, user.Email, AuthEventTypes.PasswordChange, true, null, null, null);
 
         _logger.LogInformation("Password changed for user: {UserId}", userId);
     }
 
-    public async Task LogoutAsync( Guid userId, string? refreshTokenJti, bool allDevices )
+    public async Task LogoutAsync( Guid userId, string? sessionId, bool allDevices )
     {
         var user = await _userManager.FindByIdAsync(userId.ToString());
 
@@ -615,10 +616,10 @@ public class AuthService : IAuthService
             // Audit log
             await LogAuthEventAsync(userId, user?.Email, AuthEventTypes.AllSessionsRevoked, true, null, null, null);
         }
-        else if (!string.IsNullOrEmpty(refreshTokenJti))
+        else if (Guid.TryParse(sessionId, out var currentId))
         {
             var session = await _dbContext.UserSessions
-                .FirstOrDefaultAsync(s => s.RefreshTokenJti == refreshTokenJti && s.UserId == userId);
+                .FirstOrDefaultAsync(s => s.Id == currentId && s.UserId == userId);
 
             if (session != null)
             {
@@ -981,25 +982,29 @@ public class AuthService : IAuthService
 
         var roleOverride = membership?.Role;
 
-        var accessToken = _jwtService.GenerateAccessToken(user, organization, roleOverride);
-        var (refreshToken, _, expiresAt) = _jwtService.GenerateRefreshToken(partialTokenData.RememberMe);
+        var (refreshToken, jti, expiresAt) = _jwtService.GenerateRefreshToken(partialTokenData.RememberMe);
+
+        var geoLocation = await _geoLocationService.GetLocationAsync(ipAddress);
 
         var session = new UserSession
         {
             UserId = user.Id,
             OrganizationId = organization?.Id,
             RefreshTokenHash = ComputeSha256Hash(refreshToken),
-            RefreshTokenJti = refreshToken.Split(':')[0],
+            RefreshTokenJti = jti,
             DeviceId = partialTokenData.DeviceInfo?.DeviceId,
             DeviceName = partialTokenData.DeviceInfo?.DeviceName ?? ExtractDeviceName(userAgent),
             Platform = partialTokenData.DeviceInfo?.Platform ?? "web",
             UserAgent = userAgent,
             IpAddress = ipAddress,
+            LocationCity = geoLocation?.City,
+            LocationCountry = geoLocation?.Country,
             ExpiresAt = expiresAt,
             LastActiveAt = DateTime.UtcNow
         };
 
         _dbContext.UserSessions.Add(session);
+        var accessToken = _jwtService.GenerateAccessToken(user, organization, roleOverride, sessionId: session.Id.ToString());
 
         user.LastLoginAt = DateTime.UtcNow;
         user.LastLoginIp = ipAddress;
@@ -1902,7 +1907,6 @@ public class AuthService : IAuthService
         var roleOverride = membership?.Role;
 
         // Generate tokens
-        var accessToken = _jwtService.GenerateAccessToken(user, organization, roleOverride);
         var (refreshToken, jti, expiresAt) = _jwtService.GenerateRefreshToken(rememberMe);
 
         // Get geolocation for IP address (fire-and-forget friendly, won't block if it fails)
@@ -1927,6 +1931,7 @@ public class AuthService : IAuthService
         };
 
         _dbContext.UserSessions.Add(session);
+        var accessToken = _jwtService.GenerateAccessToken(user, organization, roleOverride, sessionId: session.Id.ToString());
 
         // Update last login info
         user.LastLoginAt = DateTime.UtcNow;

@@ -62,8 +62,8 @@ public class CaClientServiceAcceptInvitationTests
         var caGstinAuth = new CaGstinAuthorizationService(db);
 
         var orgMock = orgServiceMock ?? new Mock<IOrganizationManagementService>();
-        orgMock.Setup(s => s.CreateAsync(It.IsAny<CreateOrganizationRequest>(), boUserId))
-            .Returns((CreateOrganizationRequest req, Guid userId) =>
+        orgMock.Setup(s => s.CreateAsync(It.IsAny<CreateOrganizationRequest>(), boUserId, It.IsAny<string?>()))
+            .Returns((CreateOrganizationRequest req, Guid userId, string? _) =>
             {
                 var org = new Organization
                 {

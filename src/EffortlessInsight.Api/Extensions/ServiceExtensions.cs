@@ -25,6 +25,7 @@ using Hangfire.Redis.StackExchange;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using StackExchange.Redis;
 
@@ -315,6 +316,19 @@ public static class ServiceExtensions
                         context.Token = accessToken;
                     }
                     return Task.CompletedTask;
+                },
+
+                // Reject access tokens whose session was logged out (logout, password change, etc.)
+                OnTokenValidated = async context =>
+                {
+                    if (!Guid.TryParse(context.Principal?.FindFirst("session_id")?.Value, out var sessionId)) return;
+
+                    var db = context.HttpContext.RequestServices.GetRequiredService<ApplicationDbContext>();
+                    var isActive = await db.UserSessions.AsNoTracking()
+                        .AnyAsync(s => s.Id == sessionId && s.RevokedAt == null);
+
+                    if (!isActive)
+                        context.Fail("SESSION_REVOKED");
                 }
             };
         });

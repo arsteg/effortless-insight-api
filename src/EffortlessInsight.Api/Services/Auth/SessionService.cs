@@ -8,9 +8,9 @@ namespace EffortlessInsight.Api.Services.Auth;
 
 public interface ISessionService
 {
-    Task<SessionListResponse> GetUserSessionsAsync(Guid userId, string currentJti);
-    Task RevokeSessionAsync(Guid userId, Guid sessionId, string currentJti);
-    Task RevokeAllSessionsExceptCurrentAsync(Guid userId, string currentJti);
+    Task<SessionListResponse> GetUserSessionsAsync(Guid userId, string currentSessionId);
+    Task RevokeSessionAsync(Guid userId, Guid sessionId, string currentSessionId);
+    Task RevokeAllSessionsExceptCurrentAsync(Guid userId, string currentSessionId);
 }
 
 public class SessionService : ISessionService
@@ -24,9 +24,10 @@ public class SessionService : ISessionService
         _logger = logger;
     }
 
-    public async Task<SessionListResponse> GetUserSessionsAsync(Guid userId, string currentJti)
+    public async Task<SessionListResponse> GetUserSessionsAsync(Guid userId, string currentSessionId)
     {
         var now = DateTime.UtcNow;
+        var currentId = ParseSessionId(currentSessionId);
 
         var sessions = await _dbContext.UserSessions
             .Where(s => s.UserId == userId && s.RevokedAt == null && s.ExpiresAt > now)
@@ -41,17 +42,17 @@ public class SessionService : ISessionService
                     : s.LocationCountry,
                 s.LastActiveAt,
                 s.CreatedAt,
-                s.RefreshTokenJti == currentJti
+                s.Id == currentId
             ))
             .ToListAsync();
 
         var currentSession = sessions.FirstOrDefault(s => s.IsCurrent);
-        var currentSessionId = currentSession?.Id ?? Guid.Empty;
+        var listedCurrentId = currentSession?.Id ?? Guid.Empty;
 
-        return new SessionListResponse(currentSessionId, sessions);
+        return new SessionListResponse(listedCurrentId, sessions);
     }
 
-    public async Task RevokeSessionAsync(Guid userId, Guid sessionId, string currentJti)
+    public async Task RevokeSessionAsync(Guid userId, Guid sessionId, string currentSessionId)
     {
         var session = await _dbContext.UserSessions
             .Include(s => s.User)
@@ -63,7 +64,7 @@ public class SessionService : ISessionService
         }
 
         // Prevent revoking current session through this endpoint
-        if (session.RefreshTokenJti == currentJti)
+        if (session.Id == ParseSessionId(currentSessionId))
         {
             throw new InvalidOperationException("CANNOT_REVOKE_CURRENT_SESSION");
         }
@@ -89,10 +90,11 @@ public class SessionService : ISessionService
         _logger.LogInformation("Session {SessionId} revoked for user {UserId}", sessionId, userId);
     }
 
-    public async Task RevokeAllSessionsExceptCurrentAsync(Guid userId, string currentJti)
+    public async Task RevokeAllSessionsExceptCurrentAsync(Guid userId, string currentSessionId)
     {
+        var currentId = ParseSessionId(currentSessionId);
         var sessions = await _dbContext.UserSessions
-            .Where(s => s.UserId == userId && s.RevokedAt == null && s.RefreshTokenJti != currentJti)
+            .Where(s => s.UserId == userId && s.RevokedAt == null && s.Id != currentId)
             .ToListAsync();
 
         var user = await _dbContext.Users.FindAsync(userId);
@@ -123,4 +125,7 @@ public class SessionService : ISessionService
 
         _logger.LogInformation("Revoked {Count} sessions for user {UserId} (except current)", sessions.Count, userId);
     }
+
+    private static Guid ParseSessionId(string sessionId) =>
+        Guid.TryParse(sessionId, out var id) ? id : Guid.Empty;
 }
