@@ -272,6 +272,79 @@ public sealed class EmailTemplateRenderer : IEmailTemplateRenderer
                 </html>
                 """
             ),
+            "ca_free_access_granted" => new EmailTemplateContent(
+                "Free CA Access Granted - EffortlessInsight",
+                $"""
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta charset="utf-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                </head>
+                <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+                    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 10px 10px 0 0;">
+                        <h1 style="color: white; margin: 0; font-size: 24px;">EffortlessInsight</h1>
+                    </div>
+                    <div style="background: #ffffff; padding: 30px; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 10px 10px;">
+                        <h2 style="color: #333; margin-top: 0;">Free CA Access Granted</h2>
+                        <p>Hi {data.GetValueOrDefault("user_name", "there")},</p>
+                        <p>Great news! Your account has been granted <strong>Free CA Access</strong> on EffortlessInsight.</p>
+                        <div style="background: #f0fdf4; border-left: 4px solid #22c55e; padding: 12px 16px; margin: 20px 0; border-radius: 0 5px 5px 0;">
+                            <p style="margin: 0; color: #166534;"><strong>What this means:</strong> You now have full access to all CA features for your organizations without requiring a paid subscription.</p>
+                        </div>
+                        <table style="width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 14px;">
+                            <tr>
+                                <td style="padding: 8px 12px; background: #f8f9fa; border: 1px solid #e0e0e0; color: #666; width: 120px;">Reason</td>
+                                <td style="padding: 8px 12px; border: 1px solid #e0e0e0;">{data.GetValueOrDefault("reason", "-")}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 8px 12px; background: #f8f9fa; border: 1px solid #e0e0e0; color: #666;">Granted on</td>
+                                <td style="padding: 8px 12px; border: 1px solid #e0e0e0;">{data.GetValueOrDefault("granted_at", "-")}</td>
+                            </tr>
+                        </table>
+                        <p>You can start using all features immediately. Log in to your account to get started.</p>
+                        <p style="color: #666; font-size: 14px;">If you have any questions, please contact our support team.</p>
+                    </div>
+                </body>
+                </html>
+                """
+            ),
+            "ca_free_access_revoked" => new EmailTemplateContent(
+                "Free CA Access Revoked - EffortlessInsight",
+                $"""
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta charset="utf-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                </head>
+                <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+                    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 10px 10px 0 0;">
+                        <h1 style="color: white; margin: 0; font-size: 24px;">EffortlessInsight</h1>
+                    </div>
+                    <div style="background: #ffffff; padding: 30px; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 10px 10px;">
+                        <h2 style="color: #333; margin-top: 0;">Free CA Access Revoked</h2>
+                        <p>Hi {data.GetValueOrDefault("user_name", "there")},</p>
+                        <p>We wanted to let you know that your <strong>Free CA Access</strong> on EffortlessInsight has been revoked.</p>
+                        <table style="width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 14px;">
+                            <tr>
+                                <td style="padding: 8px 12px; background: #f8f9fa; border: 1px solid #e0e0e0; color: #666; width: 120px;">Reason</td>
+                                <td style="padding: 8px 12px; border: 1px solid #e0e0e0;">{data.GetValueOrDefault("reason", "-")}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 8px 12px; background: #f8f9fa; border: 1px solid #e0e0e0; color: #666;">Revoked on</td>
+                                <td style="padding: 8px 12px; border: 1px solid #e0e0e0;">{data.GetValueOrDefault("revoked_at", "-")}</td>
+                            </tr>
+                        </table>
+                        <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 12px 16px; margin: 20px 0; border-radius: 0 5px 5px 0;">
+                            <p style="margin: 0; color: #92400e;"><strong>What this means:</strong> Access to premium CA features will now depend on your organization's subscription plan. To continue using all features, please upgrade to a paid plan.</p>
+                        </div>
+                        <p style="color: #666; font-size: 14px;">If you believe this was done in error or have questions, please contact our support team.</p>
+                    </div>
+                </body>
+                </html>
+                """
+            ),
             _ => new EmailTemplateContent(
                 "Notification from EffortlessInsight",
                 $"""

@@ -4,6 +4,7 @@ using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.Data.Entities.Admin;
 using EffortlessInsight.Api.Services.Admin;
 using EffortlessInsight.Api.Services.Billing;
+using EffortlessInsight.Api.Services.Email;
 using EffortlessInsight.Api.Services.Organizations;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -21,6 +22,7 @@ public class AdminUsersController : AdminControllerBase
     private readonly ApplicationDbContext _dbContext;
     private readonly IAdminAuditService _auditService;
     private readonly ICaAccessService _caAccessService;
+    private readonly IEmailService _emailService;
     private readonly IFeatureAccessService _featureAccessService;
     private readonly ISubscriptionService _subscriptionService;
 
@@ -28,6 +30,7 @@ public class AdminUsersController : AdminControllerBase
         ApplicationDbContext dbContext,
         IAdminAuditService auditService,
         ICaAccessService caAccessService,
+        IEmailService emailService,
         IFeatureAccessService featureAccessService,
         ISubscriptionService subscriptionService,
         ILogger<AdminUsersController> logger)
@@ -36,6 +39,7 @@ public class AdminUsersController : AdminControllerBase
         _dbContext = dbContext;
         _auditService = auditService;
         _caAccessService = caAccessService;
+        _emailService = emailService;
         _featureAccessService = featureAccessService;
         _subscriptionService = subscriptionService;
     }
@@ -385,6 +389,13 @@ public class AdminUsersController : AdminControllerBase
             return Error("User already has active Free CA Access", "ALREADY_GRANTED");
         }
 
+        // Check CA owns at least one organization before granting access
+        var ownedOrgIds = await _caAccessService.GetOwnedOrganizationIdsAsync(userId);
+        if (ownedOrgIds.Count == 0)
+        {
+            return Error("CA user does not own any organizations. They must create an organization first.", "NO_ORGANIZATIONS");
+        }
+
         // Create audit record (kept for audit trail)
         _dbContext.CaFreeAccessGrants.Add(new CaFreeAccessGrant
         {
@@ -400,7 +411,6 @@ public class AdminUsersController : AdminControllerBase
         await _subscriptionService.GrantCaAccessSubscriptionAsync(userId, CurrentAdminId, request.Reason);
 
         // Immediate effect: clear the cached feature list for every org this CA owns.
-        var ownedOrgIds = await _caAccessService.GetOwnedOrganizationIdsAsync(userId);
         foreach (var orgId in ownedOrgIds)
         {
             await _featureAccessService.InvalidateCacheAsync(orgId);
@@ -416,6 +426,24 @@ public class AdminUsersController : AdminControllerBase
             ClientIpAddress,
             ClientUserAgent,
             CurrentSessionId);
+
+        // Send notification email (best-effort)
+        try
+        {
+            await _emailService.SendTemplateAsync(
+                user.Email!,
+                "ca_free_access_granted",
+                new Dictionary<string, object>
+                {
+                    ["user_name"] = user.Name,
+                    ["reason"] = request.Reason,
+                    ["granted_at"] = DateTime.UtcNow.ToString("MMMM dd, yyyy")
+                });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to send CA free access granted email to {Email}", user.Email);
+        }
 
         return Success<object?>(null, "Free CA Access granted successfully");
     }
@@ -476,6 +504,24 @@ public class AdminUsersController : AdminControllerBase
             ClientIpAddress,
             ClientUserAgent,
             CurrentSessionId);
+
+        // Send notification email (best-effort)
+        try
+        {
+            await _emailService.SendTemplateAsync(
+                user.Email!,
+                "ca_free_access_revoked",
+                new Dictionary<string, object>
+                {
+                    ["user_name"] = user.Name,
+                    ["reason"] = request.Reason,
+                    ["revoked_at"] = DateTime.UtcNow.ToString("MMMM dd, yyyy")
+                });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to send CA free access revoked email to {Email}", user.Email);
+        }
 
         return Success<object?>(null, "Free CA Access revoked successfully");
     }
