@@ -295,7 +295,7 @@ public class AuthController : ControllerBase
         try
         {
             var userId = GetCurrentUserId();
-            await _authService.ChangePasswordAsync(userId, request);
+            await _authService.ChangePasswordAsync(userId, request, GetCurrentSessionId());
 
             return Ok(new ApiResponse<object>(true, new
             {
@@ -333,9 +333,9 @@ public class AuthController : ControllerBase
         try
         {
             var userId = GetCurrentUserId();
-            var jti = User.FindFirst(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Jti)?.Value;
+            var currentSessionId = GetCurrentSessionId();
 
-            await _authService.LogoutAsync(userId, jti, request?.AllDevices ?? false);
+            await _authService.LogoutAsync(userId, currentSessionId, request?.AllDevices ?? false);
 
             return Ok(new ApiResponse<object>(true, new
             {
@@ -546,7 +546,7 @@ public class AuthController : ControllerBase
             var ipAddress = GetClientIpAddress();
             var userAgent = Request.Headers.UserAgent.ToString();
 
-            var result = await _organizationService.SwitchOrganizationAsync(request, userId, ipAddress, userAgent);
+            var result = await _organizationService.SwitchOrganizationAsync(request, userId, ipAddress, userAgent, GetCurrentSessionId());
 
             return Ok(new ApiResponse<SwitchOrganizationResponse>(true, result));
         }
@@ -554,6 +554,11 @@ public class AuthController : ControllerBase
         {
             return StatusCode(StatusCodes.Status403Forbidden,
                 new ApiErrorResponse(false, "NOT_A_MEMBER", "You are not a member of this organization or your access has expired"));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "SESSION_ALREADY_REPLACED")
+        {
+            return StatusCode(StatusCodes.Status409Conflict,
+                new ApiErrorResponse(false, "SESSION_ALREADY_REPLACED", "This session was already replaced by another request"));
         }
         catch (Exception ex)
         {
@@ -949,9 +954,9 @@ public class AuthController : ControllerBase
         try
         {
             var userId = GetCurrentUserId();
-            var jti = User.FindFirst(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Jti)?.Value ?? "";
+            var currentSessionId = GetCurrentSessionId() ?? "";
 
-            var result = await _sessionService.GetUserSessionsAsync(userId, jti);
+            var result = await _sessionService.GetUserSessionsAsync(userId, currentSessionId);
 
             return Ok(new ApiResponse<SessionListResponse>(true, result));
         }
@@ -976,9 +981,9 @@ public class AuthController : ControllerBase
         try
         {
             var userId = GetCurrentUserId();
-            var jti = User.FindFirst(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Jti)?.Value ?? "";
+            var currentSessionId = GetCurrentSessionId() ?? "";
 
-            await _sessionService.RevokeSessionAsync(userId, sessionId, jti);
+            await _sessionService.RevokeSessionAsync(userId, sessionId, currentSessionId);
 
             return Ok(new ApiResponse<object>(true, new
             {
@@ -1309,6 +1314,8 @@ public class AuthController : ControllerBase
 
         return Guid.Parse(userIdClaim);
     }
+
+    private string? GetCurrentSessionId() => User.FindFirst("session_id")?.Value;
 
     #endregion
 }

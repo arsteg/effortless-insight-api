@@ -39,7 +39,7 @@ public class OrganizationsController : ControllerBase
         try
         {
             var userId = GetCurrentUserId();
-            var result = await _organizationService.CreateAsync(request, userId);
+            var result = await _organizationService.CreateAsync(request, userId, User.FindFirst("session_id")?.Value);
             return StatusCode(StatusCodes.Status201Created, new ApiResponse<CreateOrganizationResponse>(true, result));
         }
         catch (InvalidOperationException ex) when (ex.Message.StartsWith("GSTIN_REQUIRED"))
@@ -884,7 +884,7 @@ public class InvitationsController : ControllerBase
             var userId = GetCurrentUserId();
             var ipAddress = GetClientIpAddress();
             var userAgent = Request.Headers.UserAgent.ToString();
-            var result = await _organizationService.AcceptInvitationAsync(token, userId, ipAddress, userAgent);
+            var result = await _organizationService.AcceptInvitationAsync(token, userId, ipAddress, userAgent, User.FindFirst("session_id")?.Value);
             return Ok(new ApiResponse<AcceptInvitationResponse>(true, result));
         }
         catch (KeyNotFoundException ex) when (ex.Message == "INVALID_INVITATION")

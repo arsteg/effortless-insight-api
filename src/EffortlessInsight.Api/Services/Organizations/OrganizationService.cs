@@ -15,7 +15,7 @@ namespace EffortlessInsight.Api.Services.Organizations;
 public interface IOrganizationManagementService
 {
     // Organization CRUD
-    Task<CreateOrganizationResponse> CreateAsync(CreateOrganizationRequest request, Guid userId);
+    Task<CreateOrganizationResponse> CreateAsync(CreateOrganizationRequest request, Guid userId, string? currentSessionId = null);
     Task<OrganizationDetailResponse> GetByIdAsync(Guid organizationId, Guid userId);
     Task<OrganizationListResponse> GetUserOrganizationsAsync(Guid userId);
     Task<OrganizationDetailResponse> UpdateAsync(Guid organizationId, UpdateOrganizationRequest request, Guid userId);
@@ -40,14 +40,14 @@ public interface IOrganizationManagementService
     Task<InvitationListResponse> GetInvitationsAsync(Guid organizationId, Guid userId);
     Task<ResendInvitationResponse> ResendInvitationAsync(Guid organizationId, Guid invitationId, Guid userId);
     Task CancelInvitationAsync(Guid organizationId, Guid invitationId, Guid userId);
-    Task<AcceptInvitationResponse> AcceptInvitationAsync(string token, Guid userId, string ipAddress, string userAgent);
+    Task<AcceptInvitationResponse> AcceptInvitationAsync(string token, Guid userId, string ipAddress, string userAgent, string? currentSessionId = null);
     Task DeclineInvitationAsync(string token, Guid userId);
 
     // Settings
     Task<OrganizationSettingsDto> UpdateSettingsAsync(Guid organizationId, UpdateOrganizationSettingsRequest request, Guid userId);
 
     // Organization Switching
-    Task<SwitchOrganizationResponse> SwitchOrganizationAsync(SwitchOrganizationRequest request, Guid userId, string ipAddress, string userAgent);
+    Task<SwitchOrganizationResponse> SwitchOrganizationAsync(SwitchOrganizationRequest request, Guid userId, string ipAddress, string userAgent, string? currentSessionId = null);
 }
 
 public class OrganizationManagementService : IOrganizationManagementService
@@ -90,7 +90,7 @@ public class OrganizationManagementService : IOrganizationManagementService
 
     #region Organization CRUD
 
-    public async Task<CreateOrganizationResponse> CreateAsync(CreateOrganizationRequest request, Guid userId)
+    public async Task<CreateOrganizationResponse> CreateAsync(CreateOrganizationRequest request, Guid userId, string? currentSessionId = null)
     {
         // Get user
         var user = await _userManager.FindByIdAsync(userId.ToString())
@@ -221,6 +221,14 @@ public class OrganizationManagementService : IOrganizationManagementService
         // Now update user's default organization (organization.Id is now set)
         user.OrganizationId = organization.Id;
         user.Role = "owner";
+
+        // Point the caller's session at the new org so the next refresh keeps it selected
+        if (Guid.TryParse(currentSessionId, out var sessionId))
+        {
+            var currentSession = await _dbContext.UserSessions.FirstOrDefaultAsync(s =>
+                s.UserId == userId && s.Id == sessionId && s.RevokedAt == null);
+            if (currentSession != null) currentSession.OrganizationId = organization.Id;
+        }
         await _dbContext.SaveChangesAsync();
 
         _logger.LogInformation("Organization {OrganizationId} created by user {UserId}", organization.Id, userId);
@@ -244,7 +252,8 @@ public class OrganizationManagementService : IOrganizationManagementService
         });
 
         // Generate new access token with organization context
-        var accessToken = _jwtService.GenerateAccessToken(user, organization, "owner");
+        // Keep the new access token tied to the caller's existing session
+        var accessToken = _jwtService.GenerateAccessToken(user, organization, "owner", sessionId: currentSessionId);
         var expiresIn = _jwtService.GetAccessTokenExpiryMinutes() * 60;
 
         return new CreateOrganizationResponse(
@@ -1308,7 +1317,7 @@ public class OrganizationManagementService : IOrganizationManagementService
         _logger.LogInformation("Invitation {InvitationId} cancelled by user {UserId}", invitationId, userId);
     }
 
-    public async Task<AcceptInvitationResponse> AcceptInvitationAsync(string token, Guid userId, string ipAddress, string userAgent)
+    public async Task<AcceptInvitationResponse> AcceptInvitationAsync(string token, Guid userId, string ipAddress, string userAgent, string? currentSessionId = null)
     {
         var tokenHash = HashToken(token);
 
@@ -1460,30 +1469,16 @@ public class OrganizationManagementService : IOrganizationManagementService
 
         // Generate new tokens with the organization context (same pattern as SwitchOrganizationAsync)
         // This ensures the JWT includes the correct org_id and role claims
+        // Update the caller's session in place so its Active Sessions entry stays the same
+        var (refreshToken, sessionId) = await RotateCurrentSessionAsync(
+            userId, currentSessionId, membership.OrganizationId, ipAddress, userAgent);
         var accessToken = _jwtService.GenerateAccessToken(
             user,
             invitation.Organization,
             membership.Role,
-            membership.IsExternal
+            membership.IsExternal,
+            sessionId
         );
-        var (refreshToken, jti, expiresAt) = _jwtService.GenerateRefreshToken();
-
-        // Create session for the new tokens
-        var session = new UserSession
-        {
-            UserId = user.Id,
-            OrganizationId = membership.OrganizationId,
-            RefreshTokenHash = HashToken(refreshToken),
-            RefreshTokenJti = jti,
-            IpAddress = ipAddress,
-            UserAgent = userAgent,
-            Platform = "web",
-            ExpiresAt = expiresAt,
-            LastActiveAt = DateTime.UtcNow
-        };
-
-        _dbContext.UserSessions.Add(session);
-        await _dbContext.SaveChangesAsync();
 
         return new AcceptInvitationResponse(
             Message: "Successfully joined organization",
@@ -1571,7 +1566,7 @@ public class OrganizationManagementService : IOrganizationManagementService
 
     #region Organization Switching
 
-    public async Task<SwitchOrganizationResponse> SwitchOrganizationAsync(SwitchOrganizationRequest request, Guid userId, string ipAddress, string userAgent)
+    public async Task<SwitchOrganizationResponse> SwitchOrganizationAsync(SwitchOrganizationRequest request, Guid userId, string ipAddress, string userAgent, string? currentSessionId = null)
     {
         var membership = await _dbContext.OrganizationMembers
             .Include(m => m.Organization)
@@ -1596,25 +1591,10 @@ public class OrganizationManagementService : IOrganizationManagementService
         await _dbContext.SaveChangesAsync();
 
         // Generate new tokens with organization context
-        var accessToken = _jwtService.GenerateAccessToken(user, organization, membership.Role, membership.IsExternal);
-        var (refreshToken, jti, expiresAt) = _jwtService.GenerateRefreshToken();
-
-        // Create session
-        var session = new UserSession
-        {
-            UserId = user.Id,
-            OrganizationId = membership.OrganizationId,
-            RefreshTokenHash = HashToken(refreshToken),
-            RefreshTokenJti = jti,
-            IpAddress = ipAddress,
-            UserAgent = userAgent,
-            Platform = "web",
-            ExpiresAt = expiresAt,
-            LastActiveAt = DateTime.UtcNow
-        };
-
-        _dbContext.UserSessions.Add(session);
-        await _dbContext.SaveChangesAsync();
+        // Update the caller's session in place so its Active Sessions entry stays the same
+        var (refreshToken, sessionId) = await RotateCurrentSessionAsync(
+            userId, currentSessionId, membership.OrganizationId, ipAddress, userAgent, rejectIfAlreadyReplaced: true);
+        var accessToken = _jwtService.GenerateAccessToken(user, organization, membership.Role, membership.IsExternal, sessionId);
 
         _logger.LogInformation("User {UserId} switched to organization {OrganizationId}", userId, organization.Id);
 
@@ -1623,6 +1603,59 @@ public class OrganizationManagementService : IOrganizationManagementService
             RefreshToken: refreshToken,
             Organization: new OrganizationBasicDto(organization.Id, organization.Name, membership.Role)
         );
+    }
+
+    /// <summary>
+    /// Gives the caller's session a new refresh token and organization in place, so its Id
+    /// (its Active Sessions entry) stays the same for the whole login. A new session is created
+    /// only when the caller has none to update (access tokens issued before session ids).
+    /// </summary>
+    private async Task<(string RefreshToken, string SessionId)> RotateCurrentSessionAsync(
+        Guid userId, string? currentSessionId, Guid organizationId, string ipAddress, string userAgent,
+        bool rejectIfAlreadyReplaced = false)
+    {
+        var session = Guid.TryParse(currentSessionId, out var id)
+            ? await _dbContext.UserSessions.AsNoTracking()
+                .FirstOrDefaultAsync(s => s.Id == id && s.UserId == userId && s.RevokedAt == null)
+            : null;
+
+        var (refreshToken, jti, expiresAt) = _jwtService.GenerateRefreshToken(session?.ExpiresAt > DateTime.UtcNow.AddDays(7));
+        var refreshTokenHash = HashToken(refreshToken);
+
+        if (session != null)
+        {
+            // Conditional on the refresh token read above, so two simultaneous requests cannot both rotate it
+            var updated = await _dbContext.UserSessions
+                .Where(s => s.Id == session.Id && s.RefreshTokenJti == session.RefreshTokenJti && s.RevokedAt == null)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(x => x.OrganizationId, (Guid?)organizationId)
+                    .SetProperty(x => x.RefreshTokenJti, jti)
+                    .SetProperty(x => x.RefreshTokenHash, refreshTokenHash)
+                    .SetProperty(x => x.ExpiresAt, expiresAt)
+                    .SetProperty(x => x.IpAddress, ipAddress)
+                    .SetProperty(x => x.UserAgent, userAgent)
+                    .SetProperty(x => x.LastActiveAt, DateTime.UtcNow));
+
+            if (updated > 0) return (refreshToken, session.Id.ToString());
+            if (rejectIfAlreadyReplaced) throw new InvalidOperationException("SESSION_ALREADY_REPLACED");
+        }
+
+        var newSession = new UserSession
+        {
+            UserId = userId,
+            OrganizationId = organizationId,
+            RefreshTokenHash = refreshTokenHash,
+            RefreshTokenJti = jti,
+            IpAddress = ipAddress,
+            UserAgent = userAgent,
+            Platform = "web",
+            ExpiresAt = expiresAt,
+            LastActiveAt = DateTime.UtcNow
+        };
+        _dbContext.UserSessions.Add(newSession);
+        await _dbContext.SaveChangesAsync();
+
+        return (refreshToken, newSession.Id.ToString());
     }
 
     #endregion

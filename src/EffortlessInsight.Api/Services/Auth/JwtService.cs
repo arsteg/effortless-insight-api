@@ -85,7 +85,7 @@ public class JwtService : IJwtService
         }
     }
 
-    public string GenerateAccessToken(ApplicationUser user, Organization? organization, string? roleOverride = null, bool isExternal = false)
+    public string GenerateAccessToken(ApplicationUser user, Organization? organization, string? roleOverride = null, bool isExternal = false, string? sessionId = null)
     {
         // Use roleOverride if provided, otherwise user.Role, default to "member" if both null
         var role = roleOverride ?? user.Role ?? "member";
@@ -104,6 +104,12 @@ public class JwtService : IJwtService
         {
             claims.Add(new Claim("org_id", organization.Id.ToString()));
             claims.Add(new Claim("org_name", organization.Name));
+        }
+
+        // Ties this access token to its UserSession row (Id stays the same for the whole login)
+        if (!string.IsNullOrEmpty(sessionId))
+        {
+            claims.Add(new Claim("session_id", sessionId));
         }
 
         // Add external collaborator claim

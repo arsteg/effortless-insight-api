@@ -37,7 +37,7 @@ public class AuthServiceOrganizationRefreshTests
         await db.SaveChangesAsync();
         var jwt = new Mock<IJwtService>();
         jwt.Setup(j => j.GenerateRefreshToken(It.IsAny<bool>())).Returns(() => { var jti = Guid.NewGuid().ToString(); return ($"{jti}:secret", jti, DateTime.UtcNow.AddDays(7)); });
-        jwt.Setup(j => j.GenerateAccessToken(user, selected, clientSelected ? "ca" : "owner", clientSelected)).Returns("correct-org-token");
+        jwt.Setup(j => j.GenerateAccessToken(user, selected, clientSelected ? "ca" : "owner", clientSelected, It.IsAny<string?>())).Returns("correct-org-token");
         var service = Create(db, jwt);
         var result = await service.RefreshTokenAsync(token, "127.0.0.1", "test");
         result.AccessToken.Should().Be("correct-org-token");
