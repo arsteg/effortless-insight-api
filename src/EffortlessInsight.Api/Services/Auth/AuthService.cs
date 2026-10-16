@@ -54,7 +54,7 @@ public class AuthService : IAuthService
         _geoLocationService = geoLocationService;
     }
 
-    public async Task<RegisterResponse> RegisterAsync( RegisterRequest request, string ipAddress, string? userAgent )
+    public async Task<RegisterResponse> RegisterAsync( RegisterRequest request, string ipAddress, string? userAgent, string? acceptLanguage = null )
     {
         // Check if email already exists
         var existingUser = await _userManager.FindByEmailAsync(request.Email);
@@ -95,7 +95,8 @@ public class AuthService : IAuthService
             }
         }
 
-        // Create user
+        // Create user with metadata
+        var language = ParseAcceptLanguage(acceptLanguage);
         var user = new ApplicationUser
         {
             UserName = request.Email,
@@ -109,7 +110,13 @@ public class AuthService : IAuthService
             IsCA = request.IsCA,
             TermsAccepted = request.AcceptTerms,
             TermsAcceptedAt = DateTime.UtcNow,
-            CreatedAt = DateTime.UtcNow
+            CreatedAt = DateTime.UtcNow,
+            // Signup metadata
+            Timezone = request.DeviceInfo?.Timezone,
+            Language = language,
+            SignupSource = request.UtmSource,
+            SignupMedium = request.UtmMedium,
+            SignupCampaign = request.UtmCampaign
         };
 
         var result = await _userManager.CreateAsync(user, request.Password);
@@ -220,7 +227,7 @@ public class AuthService : IAuthService
         );
     }
 
-    public async Task<object> LoginAsync( LoginRequest request, string ipAddress, string? userAgent )
+    public async Task<object> LoginAsync( LoginRequest request, string ipAddress, string? userAgent, string? acceptLanguage = null )
     {
         var user = await _userManager.FindByEmailAsync(request.Email);
 
@@ -293,8 +300,8 @@ public class AuthService : IAuthService
         // Reset failed login attempts on successful login
         await ResetFailedLoginAttemptsAsync(user, ipAddress, userAgent);
 
-        // Generate tokens and create session
-        var loginResponse = await CreateLoginSessionAsync(user, request.RememberMe, request.DeviceInfo, ipAddress, userAgent);
+        // Generate tokens and create session with metadata
+        var loginResponse = await CreateLoginSessionAsync(user, request.RememberMe, request.DeviceInfo, ipAddress, userAgent, acceptLanguage);
 
         await LogLoginAuditAsync(user.Id, request.Email, true, null, ipAddress, userAgent, "password");
 
@@ -1183,23 +1190,23 @@ public class AuthService : IAuthService
         return new OAuthLoginUrlResponse(loginUrl, stateToken);
     }
 
-    public async Task<object> HandleOAuthCallbackAsync( string provider, string code, string state, string ipAddress, string? userAgent )
+    public async Task<object> HandleOAuthCallbackAsync( string provider, OAuthCallbackRequest request, string ipAddress, string? userAgent, string? acceptLanguage = null )
     {
         // State is required for CSRF protection
-        if (string.IsNullOrEmpty(state))
+        if (string.IsNullOrEmpty(request.State))
         {
             throw new InvalidOperationException("MISSING_OAUTH_STATE");
         }
 
         // Verify state token exists and hasn't expired
-        var stateDataJson = await _cache.GetStringAsync($"oauth_state:{state}");
+        var stateDataJson = await _cache.GetStringAsync($"oauth_state:{request.State}");
         if (string.IsNullOrEmpty(stateDataJson))
         {
             throw new InvalidOperationException("INVALID_OAUTH_STATE");
         }
 
         // Remove state token immediately to prevent replay attacks
-        await _cache.RemoveAsync($"oauth_state:{state}");
+        await _cache.RemoveAsync($"oauth_state:{request.State}");
 
         // Verify the provider matches what was requested
         var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
@@ -1228,10 +1235,10 @@ public class AuthService : IAuthService
         switch (provider.ToLowerInvariant())
         {
             case "google":
-                userInfo = await ExchangeGoogleCodeAsync(code, callbackBaseUrl);
+                userInfo = await ExchangeGoogleCodeAsync(request.Code, callbackBaseUrl);
                 break;
             case "microsoft":
-                userInfo = await ExchangeMicrosoftCodeAsync(code, callbackBaseUrl);
+                userInfo = await ExchangeMicrosoftCodeAsync(request.Code, callbackBaseUrl);
                 break;
             default:
                 throw new ArgumentException($"Unsupported OAuth provider: {provider}");
@@ -1278,7 +1285,8 @@ public class AuthService : IAuthService
 
         if (user == null)
         {
-            // Create new user for OAuth login
+            // Create new user for OAuth login with metadata
+            var language = ParseAcceptLanguage(acceptLanguage);
             user = new ApplicationUser
             {
                 UserName = userInfo.Email,
@@ -1289,7 +1297,13 @@ public class AuthService : IAuthService
                 EmailVerifiedAt = DateTime.UtcNow,
                 Role = "owner",
                 AvatarUrl = userInfo.Picture,
-                CreatedAt = DateTime.UtcNow
+                CreatedAt = DateTime.UtcNow,
+                // Signup metadata
+                Timezone = request.DeviceInfo?.Timezone,
+                Language = language,
+                SignupSource = request.UtmSource,
+                SignupMedium = request.UtmMedium,
+                SignupCampaign = request.UtmCampaign
             };
 
             var result = await _userManager.CreateAsync(user);
@@ -1410,8 +1424,8 @@ public class AuthService : IAuthService
             );
         }
 
-        // Create login session
-        var loginResponse = await CreateLoginSessionAsync(user, false, null, ipAddress, userAgent);
+        // Create login session with device metadata
+        var loginResponse = await CreateLoginSessionAsync(user, false, request.DeviceInfo, ipAddress, userAgent, acceptLanguage);
 
         await LogLoginAuditAsync(user.Id, user.Email, true, null, ipAddress, userAgent, $"oauth_{provider}");
 
@@ -1889,7 +1903,8 @@ public class AuthService : IAuthService
         bool rememberMe,
         DeviceInfo? deviceInfo,
         string ipAddress,
-        string? userAgent )
+        string? userAgent,
+        string? acceptLanguage = null )
     {
         // Get user's organization from memberships first (multi-org support), then fallback to legacy field
         var membership = await _dbContext.OrganizationMembers
@@ -1912,7 +1927,11 @@ public class AuthService : IAuthService
         // Get geolocation for IP address (fire-and-forget friendly, won't block if it fails)
         var geoLocation = await _geoLocationService.GetLocationAsync(ipAddress);
 
-        // Create session
+        // Parse user agent for OS/browser info
+        var (osName, osVersion, browserName, browserVersion) = ParseUserAgent(userAgent);
+        var language = ParseAcceptLanguage(acceptLanguage);
+
+        // Create session with full metadata
         var session = new UserSession
         {
             UserId = user.Id,
@@ -1926,6 +1945,17 @@ public class AuthService : IAuthService
             IpAddress = ipAddress,
             LocationCity = geoLocation?.City,
             LocationCountry = geoLocation?.Country,
+            // Device/browser metadata
+            Timezone = deviceInfo?.Timezone,
+            Language = language,
+            OsName = osName,
+            OsVersion = osVersion,
+            BrowserName = browserName,
+            BrowserVersion = browserVersion,
+            ScreenWidth = deviceInfo?.ScreenWidth,
+            ScreenHeight = deviceInfo?.ScreenHeight,
+            ColorDepth = deviceInfo?.ColorDepth,
+            IsTouchDevice = deviceInfo?.IsTouchDevice ?? false,
             ExpiresAt = expiresAt,
             LastActiveAt = DateTime.UtcNow
         };
@@ -2133,6 +2163,130 @@ public class AuthService : IAuthService
             return "Edge Browser";
 
         return "Web Browser";
+    }
+
+    /// <summary>
+    /// Parses User-Agent string to extract OS and browser information.
+    /// </summary>
+    private static (string? OsName, string? OsVersion, string? BrowserName, string? BrowserVersion) ParseUserAgent( string? userAgent )
+    {
+        if (string.IsNullOrEmpty(userAgent))
+            return (null, null, null, null);
+
+        string? osName = null;
+        string? osVersion = null;
+        string? browserName = null;
+        string? browserVersion = null;
+
+        // Parse OS
+        if (userAgent.Contains("Windows NT 10.0"))
+        {
+            osName = "Windows";
+            // Windows 11 has build numbers >= 22000
+            if (userAgent.Contains("Windows NT 10.0; Win64; x64"))
+                osVersion = "10/11";
+            else
+                osVersion = "10";
+        }
+        else if (userAgent.Contains("Windows NT 6.3"))
+        {
+            osName = "Windows";
+            osVersion = "8.1";
+        }
+        else if (userAgent.Contains("Windows NT 6.2"))
+        {
+            osName = "Windows";
+            osVersion = "8";
+        }
+        else if (userAgent.Contains("Windows NT 6.1"))
+        {
+            osName = "Windows";
+            osVersion = "7";
+        }
+        else if (userAgent.Contains("Mac OS X"))
+        {
+            osName = "macOS";
+            var match = System.Text.RegularExpressions.Regex.Match(userAgent, @"Mac OS X (\d+[._]\d+(?:[._]\d+)?)");
+            if (match.Success)
+                osVersion = match.Groups[1].Value.Replace('_', '.');
+        }
+        else if (userAgent.Contains("Android"))
+        {
+            osName = "Android";
+            var match = System.Text.RegularExpressions.Regex.Match(userAgent, @"Android (\d+(?:\.\d+)?)");
+            if (match.Success)
+                osVersion = match.Groups[1].Value;
+        }
+        else if (userAgent.Contains("iPhone") || userAgent.Contains("iPad"))
+        {
+            osName = "iOS";
+            var match = System.Text.RegularExpressions.Regex.Match(userAgent, @"OS (\d+[_]\d+(?:[_]\d+)?)");
+            if (match.Success)
+                osVersion = match.Groups[1].Value.Replace('_', '.');
+        }
+        else if (userAgent.Contains("Linux"))
+        {
+            osName = "Linux";
+        }
+
+        // Parse Browser (order matters - check more specific first)
+        if (userAgent.Contains("Edg/"))
+        {
+            browserName = "Edge";
+            var match = System.Text.RegularExpressions.Regex.Match(userAgent, @"Edg/(\d+(?:\.\d+)?)");
+            if (match.Success)
+                browserVersion = match.Groups[1].Value;
+        }
+        else if (userAgent.Contains("OPR/") || userAgent.Contains("Opera"))
+        {
+            browserName = "Opera";
+            var match = System.Text.RegularExpressions.Regex.Match(userAgent, @"OPR/(\d+(?:\.\d+)?)");
+            if (match.Success)
+                browserVersion = match.Groups[1].Value;
+        }
+        else if (userAgent.Contains("Chrome/"))
+        {
+            browserName = "Chrome";
+            var match = System.Text.RegularExpressions.Regex.Match(userAgent, @"Chrome/(\d+(?:\.\d+)?)");
+            if (match.Success)
+                browserVersion = match.Groups[1].Value;
+        }
+        else if (userAgent.Contains("Safari/") && !userAgent.Contains("Chrome"))
+        {
+            browserName = "Safari";
+            var match = System.Text.RegularExpressions.Regex.Match(userAgent, @"Version/(\d+(?:\.\d+)?)");
+            if (match.Success)
+                browserVersion = match.Groups[1].Value;
+        }
+        else if (userAgent.Contains("Firefox/"))
+        {
+            browserName = "Firefox";
+            var match = System.Text.RegularExpressions.Regex.Match(userAgent, @"Firefox/(\d+(?:\.\d+)?)");
+            if (match.Success)
+                browserVersion = match.Groups[1].Value;
+        }
+
+        return (osName, osVersion, browserName, browserVersion);
+    }
+
+    /// <summary>
+    /// Parses Accept-Language header to extract preferred language.
+    /// Returns the primary language tag (e.g., "en-IN", "en-US", "hi").
+    /// </summary>
+    private static string? ParseAcceptLanguage( string? acceptLanguage )
+    {
+        if (string.IsNullOrEmpty(acceptLanguage))
+            return null;
+
+        // Accept-Language format: "en-IN,en-GB;q=0.9,en-US;q=0.8,en;q=0.7"
+        // We want the first (highest priority) language
+        var firstLang = acceptLanguage.Split(',')[0].Trim();
+
+        // Remove quality factor if present
+        var langTag = firstLang.Split(';')[0].Trim();
+
+        // Limit to 10 characters as per field constraint
+        return langTag.Length > 10 ? langTag[..10] : langTag;
     }
 
     #endregion

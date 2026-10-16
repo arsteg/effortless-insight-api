@@ -108,6 +108,37 @@ public class ApplicationUser : IdentityUser<Guid>
     /// </summary>
     public DateTime? WhatsAppLastMessageAt { get; set; }
 
+    // Signup metadata
+    /// <summary>
+    /// IANA timezone identifier captured at signup (e.g., "Asia/Kolkata").
+    /// </summary>
+    [MaxLength(50)]
+    public string? Timezone { get; set; }
+
+    /// <summary>
+    /// Preferred language from Accept-Language header at signup (e.g., "en-IN").
+    /// </summary>
+    [MaxLength(10)]
+    public string? Language { get; set; }
+
+    /// <summary>
+    /// UTM source parameter from signup URL.
+    /// </summary>
+    [MaxLength(50)]
+    public string? SignupSource { get; set; }
+
+    /// <summary>
+    /// UTM medium parameter from signup URL.
+    /// </summary>
+    [MaxLength(50)]
+    public string? SignupMedium { get; set; }
+
+    /// <summary>
+    /// UTM campaign parameter from signup URL.
+    /// </summary>
+    [MaxLength(100)]
+    public string? SignupCampaign { get; set; }
+
     // Activity tracking
     public DateTime? LastLoginAt { get; set; }
 

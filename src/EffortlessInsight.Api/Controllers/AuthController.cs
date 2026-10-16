@@ -54,8 +54,9 @@ public class AuthController : ControllerBase
         {
             var ipAddress = GetClientIpAddress();
             var userAgent = Request.Headers.UserAgent.ToString();
+            var acceptLanguage = Request.Headers.AcceptLanguage.ToString();
 
-            var result = await _authService.RegisterAsync(request, ipAddress, userAgent);
+            var result = await _authService.RegisterAsync(request, ipAddress, userAgent, acceptLanguage);
 
             return StatusCode(StatusCodes.Status201Created, new ApiResponse<RegisterResponse>(true, result));
         }
@@ -141,8 +142,9 @@ public class AuthController : ControllerBase
         {
             var ipAddress = GetClientIpAddress();
             var userAgent = Request.Headers.UserAgent.ToString();
+            var acceptLanguage = Request.Headers.AcceptLanguage.ToString();
 
-            var result = await _authService.LoginAsync(request, ipAddress, userAgent);
+            var result = await _authService.LoginAsync(request, ipAddress, userAgent, acceptLanguage);
 
             if (result is TwoFactorRequiredResponse twoFactorResponse)
             {
@@ -706,6 +708,13 @@ public class AuthController : ControllerBase
             attempt.Email = request.Email.Trim();
         }
 
+        // Store UTM parameters
+        attempt.UtmSource = request.UtmSource;
+        attempt.UtmMedium = request.UtmMedium;
+        attempt.UtmCampaign = request.UtmCampaign;
+        attempt.UtmTerm = request.UtmTerm;
+        attempt.UtmContent = request.UtmContent;
+
         await _dbContext.SaveChangesAsync();
     }
 
@@ -1080,8 +1089,9 @@ public class AuthController : ControllerBase
         {
             var ipAddress = GetClientIpAddress();
             var userAgent = Request.Headers.UserAgent.ToString();
+            var acceptLanguage = Request.Headers.AcceptLanguage.ToString();
 
-            var result = await _authService.HandleOAuthCallbackAsync(provider, request.Code, request.State, ipAddress, userAgent);
+            var result = await _authService.HandleOAuthCallbackAsync(provider, request, ipAddress, userAgent, acceptLanguage);
 
             if (result is TwoFactorRequiredResponse twoFactorResponse)
             {

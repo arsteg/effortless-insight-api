@@ -38,4 +38,35 @@ public class SignupAttempt : BaseEntity
 
     [MaxLength(1000)]
     public string? ContactNotes { get; set; }
+
+    // UTM tracking
+    /// <summary>
+    /// UTM source parameter identifying traffic source.
+    /// </summary>
+    [MaxLength(50)]
+    public string? UtmSource { get; set; }
+
+    /// <summary>
+    /// UTM medium parameter identifying marketing medium.
+    /// </summary>
+    [MaxLength(50)]
+    public string? UtmMedium { get; set; }
+
+    /// <summary>
+    /// UTM campaign parameter identifying campaign name.
+    /// </summary>
+    [MaxLength(100)]
+    public string? UtmCampaign { get; set; }
+
+    /// <summary>
+    /// UTM term parameter for paid search keywords.
+    /// </summary>
+    [MaxLength(100)]
+    public string? UtmTerm { get; set; }
+
+    /// <summary>
+    /// UTM content parameter for A/B testing and content-targeted ads.
+    /// </summary>
+    [MaxLength(100)]
+    public string? UtmContent { get; set; }
 }

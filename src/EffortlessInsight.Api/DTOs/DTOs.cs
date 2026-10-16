@@ -18,7 +18,15 @@ public record RegisterRequest(
     [MaxLength(128)] string? MobileVerificationToken = null,
     // Self-registered Chartered Accountant signup path (CA-as-distributor).
     // Sets ApplicationUser.IsCA, which allows GSTIN-optional org creation.
-    bool IsCA = false
+    bool IsCA = false,
+    // Device metadata (collected automatically from client)
+    DeviceInfo? DeviceInfo = null,
+    // UTM tracking parameters
+    [MaxLength(50)] string? UtmSource = null,
+    [MaxLength(50)] string? UtmMedium = null,
+    [MaxLength(100)] string? UtmCampaign = null,
+    [MaxLength(100)] string? UtmTerm = null,
+    [MaxLength(100)] string? UtmContent = null
 );
 
 public record MobileVerificationResponse( string VerificationToken, int ExpiresIn );
@@ -41,7 +49,13 @@ public record LoginRequest(
 public record DeviceInfo(
     [MaxLength(100)] string? DeviceId,
     [MaxLength(100)] string? DeviceName,
-    [MaxLength(20)] string Platform // web, ios, android
+    [MaxLength(20)] string Platform, // web, ios, android
+    // Device/browser metadata
+    [MaxLength(50)] string? Timezone = null,
+    int? ScreenWidth = null,
+    int? ScreenHeight = null,
+    int? ColorDepth = null,
+    bool? IsTouchDevice = null
 );
 
 public record LoginResponse(
@@ -109,7 +123,14 @@ public record SignupOtpVerifyRequest(
     [MaxLength(10)] string Otp,
     [MaxLength(100)] string? Name = null,
     [MaxLength(256)] string? Email = null,
-    [MaxLength(20)] string? Source = null );
+    [MaxLength(20)] string? Source = null,
+    // UTM tracking parameters
+    [MaxLength(50)] string? UtmSource = null,
+    [MaxLength(50)] string? UtmMedium = null,
+    [MaxLength(100)] string? UtmCampaign = null,
+    [MaxLength(100)] string? UtmTerm = null,
+    [MaxLength(100)] string? UtmContent = null
+);
 
 // Admin: incomplete-signup lead list
 public record SignupAttemptDto(
@@ -219,7 +240,17 @@ public record TwoFactorDisableRequest(
 public record OAuthProviderInfo( string Name, string DisplayName, bool Enabled );
 public record OAuthProvidersResponse( List<OAuthProviderInfo> Providers );
 public record OAuthLoginUrlResponse( string LoginUrl, string State );
-public record OAuthCallbackRequest( [MaxLength(2000)] string Code, [MaxLength(500)] string State, DeviceInfo? DeviceInfo = null );
+public record OAuthCallbackRequest(
+    [MaxLength(2000)] string Code,
+    [MaxLength(500)] string State,
+    DeviceInfo? DeviceInfo = null,
+    // UTM tracking parameters (passed through OAuth flow)
+    [MaxLength(50)] string? UtmSource = null,
+    [MaxLength(50)] string? UtmMedium = null,
+    [MaxLength(100)] string? UtmCampaign = null,
+    [MaxLength(100)] string? UtmTerm = null,
+    [MaxLength(100)] string? UtmContent = null
+);
 public record DisconnectOAuthRequest( [MaxLength(50)] string Provider, [MaxLength(128)] string Password );
 
 /// <summary>

@@ -4,8 +4,8 @@ namespace EffortlessInsight.Api.Services.Auth;
 
 public interface IAuthService
 {
-    Task<RegisterResponse> RegisterAsync(RegisterRequest request, string ipAddress, string? userAgent);
-    Task<object> LoginAsync(LoginRequest request, string ipAddress, string? userAgent);
+    Task<RegisterResponse> RegisterAsync(RegisterRequest request, string ipAddress, string? userAgent, string? acceptLanguage = null);
+    Task<object> LoginAsync(LoginRequest request, string ipAddress, string? userAgent, string? acceptLanguage = null);
     Task<TokenResponse> RefreshTokenAsync(string refreshToken, string ipAddress, string? userAgent);
     Task VerifyEmailAsync(string token);
     Task ForgotPasswordAsync(string email, string ipAddress);
@@ -46,7 +46,7 @@ public interface IAuthService
     /// Handle OAuth callback from provider. State is required for CSRF protection.
     /// </summary>
     /// <exception cref="InvalidOperationException">Thrown when state is missing, invalid, expired, or provider mismatches.</exception>
-    Task<object> HandleOAuthCallbackAsync(string provider, string code, string state, string ipAddress, string? userAgent);
+    Task<object> HandleOAuthCallbackAsync(string provider, OAuthCallbackRequest request, string ipAddress, string? userAgent, string? acceptLanguage = null);
 
     /// <summary>
     /// Disconnect an OAuth provider from the user's account.

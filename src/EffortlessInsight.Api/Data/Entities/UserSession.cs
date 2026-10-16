@@ -41,6 +41,63 @@ public class UserSession
     [MaxLength(100)]
     public string? LocationCountry { get; set; }
 
+    // Device/browser metadata
+    /// <summary>
+    /// IANA timezone identifier for this session (e.g., "Asia/Kolkata").
+    /// </summary>
+    [MaxLength(50)]
+    public string? Timezone { get; set; }
+
+    /// <summary>
+    /// Preferred language from Accept-Language header (e.g., "en-IN").
+    /// </summary>
+    [MaxLength(10)]
+    public string? Language { get; set; }
+
+    /// <summary>
+    /// Operating system name parsed from User-Agent (e.g., "Windows 11", "macOS").
+    /// </summary>
+    [MaxLength(50)]
+    public string? OsName { get; set; }
+
+    /// <summary>
+    /// Operating system version parsed from User-Agent.
+    /// </summary>
+    [MaxLength(20)]
+    public string? OsVersion { get; set; }
+
+    /// <summary>
+    /// Browser name parsed from User-Agent (e.g., "Chrome", "Safari").
+    /// </summary>
+    [MaxLength(50)]
+    public string? BrowserName { get; set; }
+
+    /// <summary>
+    /// Browser version parsed from User-Agent.
+    /// </summary>
+    [MaxLength(20)]
+    public string? BrowserVersion { get; set; }
+
+    /// <summary>
+    /// Screen width in pixels.
+    /// </summary>
+    public int? ScreenWidth { get; set; }
+
+    /// <summary>
+    /// Screen height in pixels.
+    /// </summary>
+    public int? ScreenHeight { get; set; }
+
+    /// <summary>
+    /// Screen color depth in bits.
+    /// </summary>
+    public int? ColorDepth { get; set; }
+
+    /// <summary>
+    /// Whether the device supports touch input.
+    /// </summary>
+    public bool IsTouchDevice { get; set; }
+
     public DateTime ExpiresAt { get; set; }
 
     public DateTime LastActiveAt { get; set; } = DateTime.UtcNow;
