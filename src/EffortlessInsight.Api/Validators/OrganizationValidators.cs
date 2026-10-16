@@ -84,8 +84,11 @@ public class UpdateOrganizationRequestValidator : AbstractValidator<UpdateOrgani
 {
     public UpdateOrganizationRequestValidator()
     {
+        // The service trims Name before saving, so a space-only value would blank the organization name.
         RuleFor(x => x.Name)
-            .MinimumLength(2).WithMessage("Organization name must be at least 2 characters")
+            .Cascade(CascadeMode.Stop)
+            .Must(name => !string.IsNullOrWhiteSpace(name)).WithMessage("Organization name cannot be only spaces")
+            .Must(name => name!.Trim().Length >= 2).WithMessage("Organization name must be at least 2 characters")
             .MaximumLength(255).WithMessage("Organization name cannot exceed 255 characters")
             .When(x => !string.IsNullOrEmpty(x.Name));
 

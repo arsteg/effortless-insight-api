@@ -100,7 +100,7 @@ public class AuthService : IAuthService
         {
             UserName = request.Email,
             Email = request.Email,
-            Name = request.Name,
+            Name = request.Name.Trim(),
             Mobile = request.Mobile,
             MobileNormalized = NormalizeMobile(request.Mobile),
             IsMobileVerified = requireMobileVerification,
