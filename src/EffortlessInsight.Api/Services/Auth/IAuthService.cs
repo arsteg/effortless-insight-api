@@ -49,6 +49,19 @@ public interface IAuthService
     Task<object> HandleOAuthCallbackAsync(string provider, string code, string state, string ipAddress, string? userAgent);
 
     /// <summary>
+    /// Send the OTP that verifies the mobile number of a signed-in user who has none
+    /// verified yet (Google/Microsoft sign-ups).
+    /// </summary>
+    /// <exception cref="InvalidOperationException">ALREADY_VERIFIED, INVALID_MOBILE, MOBILE_EXISTS, RATE_LIMIT_EXCEEDED, SMS_SEND_FAILED.</exception>
+    Task<OtpResponse> RequestCompleteSignupOtpAsync(Guid userId, string mobile, string ipAddress);
+
+    /// <summary>
+    /// Verify the OTP and save the mobile as verified, plus terms acceptance and the CA flag.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">ALREADY_VERIFIED, INVALID_MOBILE, TERMS_REQUIRED, MOBILE_EXISTS, INVALID_OTP, MAX_ATTEMPTS_EXCEEDED.</exception>
+    Task CompleteSignupAsync(Guid userId, CompleteSignupRequest request);
+
+    /// <summary>
     /// Disconnect an OAuth provider from the user's account.
     /// Requires the user to have a password set or another OAuth provider linked.
     /// </summary>
