@@ -189,10 +189,10 @@ public class OrganizationManagementService : IOrganizationManagementService
         {
             Name = request.Name.Trim(),
             NameNormalized = normalizedName,
-            LegalName = request.LegalName?.Trim(),
+            LegalName = string.IsNullOrWhiteSpace(request.LegalName) ? null : request.LegalName.Trim(),
             Industry = request.Industry,
             State = request.State,
-            City = request.City,
+            City = string.IsNullOrWhiteSpace(request.City) ? null : request.City.Trim(),
             AnnualTurnoverRange = request.AnnualTurnoverRange,
             SubscriptionStatus = "none",
             TrialEndsAt = null,

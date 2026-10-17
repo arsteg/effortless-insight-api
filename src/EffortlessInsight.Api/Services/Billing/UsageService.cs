@@ -266,7 +266,16 @@ public class UsageService : IUsageService
     public async Task DecrementNoticeCountAsync(Guid organizationId)
     {
         var usage = await GetOrCreateCurrentUsageAsync(organizationId);
-        if (usage.NoticesCount > 0)
+        if (_dbContext.Database.IsRelational())
+        {
+            // Conditional update so concurrent releases (e.g. bulk delete) never lose a decrement or go below zero.
+            await _dbContext.UsageRecords.Where(u => u.Id == usage.Id && u.NoticesCount > 0)
+                .ExecuteUpdateAsync(s => s.SetProperty(u => u.NoticesCount, u => u.NoticesCount - 1)
+                    .SetProperty(u => u.LastCalculatedAt, DateTime.UtcNow));
+            await _dbContext.Entry(usage).ReloadAsync();
+            await InvalidateCacheAsync(organizationId);
+        }
+        else if (usage.NoticesCount > 0)
         {
             usage.NoticesCount--;
             usage.LastCalculatedAt = DateTime.UtcNow;

@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using EffortlessInsight.Api.Data;
 using EffortlessInsight.Api.DTOs;
+using EffortlessInsight.Api.Filters;
 using EffortlessInsight.Api.Services;
 using EffortlessInsight.Api.Services.Auth;
 using EffortlessInsight.Api.Services.Organizations;
@@ -20,6 +21,7 @@ public class AuthController : ControllerBase
     private readonly IOtpService _otpService;
     private readonly ApplicationDbContext _dbContext;
     private readonly IFileStorageService _storage;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<AuthController> _logger;
 
     public AuthController(
@@ -29,6 +31,7 @@ public class AuthController : ControllerBase
         IOtpService otpService,
         ApplicationDbContext dbContext,
         IFileStorageService storage,
+        IConfiguration configuration,
         ILogger<AuthController> logger )
     {
         _authService = authService;
@@ -37,6 +40,7 @@ public class AuthController : ControllerBase
         _otpService = otpService;
         _dbContext = dbContext;
         _storage = storage;
+        _configuration = configuration;
         _logger = logger;
     }
 
@@ -328,6 +332,7 @@ public class AuthController : ControllerBase
     /// Logout current session
     /// </summary>
     [Authorize]
+    [AllowUnverifiedMobile]
     [HttpPost("logout")]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
     public async Task<IActionResult> Logout( [FromBody] LogoutRequest? request )
@@ -443,6 +448,7 @@ public class AuthController : ControllerBase
     /// Get current user profile
     /// </summary>
     [Authorize]
+    [AllowUnverifiedMobile]
     [HttpGet("me")]
     [ProducesResponseType(typeof(ApiResponse<UserProfileDto>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetCurrentUser()
@@ -520,7 +526,9 @@ public class AuthController : ControllerBase
                 Preferences: user.Preferences,
                 CreatedAt: user.CreatedAt,
                 LastLogin: user.LastLoginAt,
-                IsCA: user.IsCA
+                IsCA: user.IsCA,
+                MobileVerificationRequired: !user.IsMobileVerified &&
+                    _configuration.GetValue("MobileVerification:RequiredForSignup", true)
             );
 
             return Ok(new ApiResponse<UserProfileDto>(true, profile));
@@ -717,6 +725,96 @@ public class AuthController : ControllerBase
 
         await _dbContext.SaveChangesAsync();
     }
+
+    /// <summary>
+    /// Send the OTP that verifies the mobile number of a signed-in user who has none
+    /// verified yet (Google/Microsoft sign-ups).
+    /// </summary>
+    [Authorize]
+    [AllowUnverifiedMobile]
+    [HttpPost("complete-signup/otp")]
+    [ProducesResponseType(typeof(ApiResponse<OtpResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status409Conflict)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status429TooManyRequests)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status503ServiceUnavailable)]
+    public async Task<IActionResult> RequestCompleteSignupOtp( [FromBody] CompleteSignupOtpRequest request )
+    {
+        try
+        {
+            var result = await _authService.RequestCompleteSignupOtpAsync(
+                GetCurrentUserId(), request.Mobile, GetClientIpAddress());
+            return Ok(new ApiResponse<OtpResponse>(true, result));
+        }
+        catch (InvalidOperationException ex) when (ex.Message.StartsWith("RATE_LIMIT_EXCEEDED"))
+        {
+            var retryAfter = ex.Message.Split(':').Length > 1 ? ex.Message.Split(':')[1] : "3600";
+            return StatusCode(StatusCodes.Status429TooManyRequests,
+                new ApiErrorResponse(false, "RATE_LIMIT_EXCEEDED", $"Too many OTP requests. Try again in {retryAfter} seconds."));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "SMS_SEND_FAILED")
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                new ApiErrorResponse(false, "SMS_SEND_FAILED", "We could not send the OTP right now. Please try again in a moment."));
+        }
+        catch (InvalidOperationException ex) when (CompleteSignupError(ex.Message) is { } error)
+        {
+            return error;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Complete signup OTP request failed");
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
+        }
+    }
+
+    /// <summary>
+    /// Verify the OTP, save the mobile as verified, and record terms acceptance and the CA flag.
+    /// The client then refreshes its token so it carries mobile_verified=true.
+    /// </summary>
+    [Authorize]
+    [AllowUnverifiedMobile]
+    [HttpPost("complete-signup")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> CompleteSignup( [FromBody] CompleteSignupRequest request )
+    {
+        try
+        {
+            await _authService.CompleteSignupAsync(GetCurrentUserId(), request);
+            return Ok(new ApiResponse<object>(true, new { Message = "Mobile number verified" }));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "INVALID_OTP")
+        {
+            return Unauthorized(new ApiErrorResponse(false, "INVALID_OTP", "Invalid or expired OTP"));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "MAX_ATTEMPTS_EXCEEDED")
+        {
+            return BadRequest(new ApiErrorResponse(false, "MAX_ATTEMPTS_EXCEEDED", "Too many invalid OTP attempts. Please request a new OTP."));
+        }
+        catch (InvalidOperationException ex) when (CompleteSignupError(ex.Message) is { } error)
+        {
+            return error;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Complete signup failed");
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
+        }
+    }
+
+    private IActionResult? CompleteSignupError( string code ) => code switch
+    {
+        "ALREADY_VERIFIED" => BadRequest(new ApiErrorResponse(false, "ALREADY_VERIFIED", "Your mobile number is already verified")),
+        "INVALID_MOBILE" => BadRequest(new ApiErrorResponse(false, "INVALID_MOBILE", "Please enter a valid 10-digit Indian mobile number")),
+        "TERMS_REQUIRED" => BadRequest(new ApiErrorResponse(false, "TERMS_REQUIRED", "You must accept the terms and conditions")),
+        "MOBILE_EXISTS" => Conflict(new ApiErrorResponse(false, "MOBILE_EXISTS", "Mobile number is already registered")),
+        _ => null
+    };
 
     /// <summary>
     /// Request OTP for login

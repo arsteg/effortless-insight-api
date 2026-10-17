@@ -2045,6 +2045,30 @@ public class NoticeServiceImpl : INoticeServiceExtended
 
         await _db.SaveChangesAsync(cancellationToken);
 
+        // A notice that failed processing delivered nothing, so deleting it gives its
+        // monthly slot back (e.g. a Free user can upload a replacement). Successful
+        // notices are never refunded, otherwise upload/delete would bypass the limit.
+        var quotaReleased = false;
+        if (notice.ProcessingStatus == NoticeProcessingStatus.Failed)
+        {
+            try
+            {
+                var usage = await _usageService.GetOrCreateCurrentUsageAsync(organizationId);
+                var createdOn = DateOnly.FromDateTime(notice.CreatedAt);
+                if (createdOn >= usage.PeriodStart && createdOn <= usage.PeriodEnd)
+                {
+                    await _usageService.DecrementNoticeCountAsync(organizationId);
+                    quotaReleased = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "Failed to release notice quota for deleted failed notice {NoticeId} in organization {OrganizationId}",
+                    noticeId, organizationId);
+            }
+        }
+
         // Audit log
         await _auditService.LogAsync(new AuditLogEntry
         {
@@ -2060,7 +2084,8 @@ public class NoticeServiceImpl : INoticeServiceExtended
             },
             NewValues = new Dictionary<string, object>
             {
-                ["reason"] = reason ?? "not_provided"
+                ["reason"] = reason ?? "not_provided",
+                ["quota_released"] = quotaReleased
             }
         });
 

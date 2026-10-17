@@ -30,6 +30,9 @@ public class SubscriptionEnforcementMiddleware
         "/api/v1/auth/me",
         "/api/v1/auth/switch-organization",
         "/api/v1/auth/oauth",
+        // Mobile OTP step after Google/Microsoft sign-up - runs before the user has an organization
+        "/api/v1/auth/complete-signup/otp",
+        "/api/v1/auth/complete-signup",
 
         // Billing/subscription endpoints - specific paths only (not broad prefix)
         "/api/v1/plans",

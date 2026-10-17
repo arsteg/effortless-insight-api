@@ -408,6 +408,10 @@ if (app.Environment.IsProduction())
 app.UseAuthentication();
 app.UseAuthorization();
 
+// Mobile verification: signed-in users without a verified mobile (e.g. Google/Microsoft
+// sign-ups) can only reach [AllowUnverifiedMobile] endpoints until they complete OTP
+app.UseMobileVerification();
+
 // Tenant context (must come after authentication so the org_id claim is available)
 app.UseTenantContext();
 

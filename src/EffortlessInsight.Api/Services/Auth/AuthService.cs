@@ -101,7 +101,7 @@ public class AuthService : IAuthService
         {
             UserName = request.Email,
             Email = request.Email,
-            Name = request.Name,
+            Name = request.Name.Trim(),
             Mobile = request.Mobile,
             MobileNormalized = NormalizeMobile(request.Mobile),
             IsMobileVerified = requireMobileVerification,
@@ -1443,6 +1443,97 @@ public class AuthService : IAuthService
         }
 
         return loginResponse;
+    }
+
+    private const string CompleteSignupOtpPurpose = "complete_signup";
+
+    public async Task<OtpResponse> RequestCompleteSignupOtpAsync( Guid userId, string mobile, string ipAddress )
+    {
+        var user = await GetUserForCompleteSignupAsync(userId);
+        var normalizedMobile = ValidateCompleteSignupMobile(mobile);
+        await EnsureMobileAvailableAsync(normalizedMobile, user.Id);
+
+        return await _otpService.RequestOtpAsync(normalizedMobile, CompleteSignupOtpPurpose, ipAddress);
+    }
+
+    public async Task CompleteSignupAsync( Guid userId, CompleteSignupRequest request )
+    {
+        var user = await GetUserForCompleteSignupAsync(userId);
+        var normalizedMobile = ValidateCompleteSignupMobile(request.Mobile);
+
+        if (!request.AcceptTerms)
+        {
+            throw new InvalidOperationException("TERMS_REQUIRED");
+        }
+
+        if (!await _otpService.VerifyOtpAsync(normalizedMobile, request.Otp, CompleteSignupOtpPurpose))
+        {
+            throw new InvalidOperationException("INVALID_OTP");
+        }
+
+        // Re-checked after the OTP: another account may have claimed the number meanwhile
+        await EnsureMobileAvailableAsync(normalizedMobile, user.Id);
+
+        user.Mobile = normalizedMobile;
+        user.MobileNormalized = normalizedMobile;
+        user.IsMobileVerified = true;
+        user.MobileVerifiedAt = DateTime.UtcNow;
+        if (!user.TermsAccepted)
+        {
+            user.TermsAccepted = true;
+            user.TermsAcceptedAt = DateTime.UtcNow;
+        }
+
+        // The CA choice decides the onboarding form, so it only applies before an organization exists
+        if (user.OrganizationId == null && request.IsCA)
+        {
+            user.IsCA = true;
+        }
+
+        var result = await _userManager.UpdateAsync(user);
+        if (!result.Succeeded)
+        {
+            var errors = string.Join(", ", result.Errors.Select(e => e.Description));
+            _logger.LogWarning("Complete signup failed for user {UserId}: {Errors}", user.Id, errors);
+            throw new InvalidOperationException($"COMPLETE_SIGNUP_FAILED: {errors}");
+        }
+
+        _logger.LogInformation("User {UserId} verified mobile and completed signup", user.Id);
+    }
+
+    private async Task<ApplicationUser> GetUserForCompleteSignupAsync( Guid userId )
+    {
+        var user = await _dbContext.Users.FirstOrDefaultAsync(u => u.Id == userId && u.DeletedAt == null)
+            ?? throw new UnauthorizedAccessException("USER_NOT_FOUND");
+
+        if (user.IsMobileVerified)
+        {
+            throw new InvalidOperationException("ALREADY_VERIFIED");
+        }
+
+        return user;
+    }
+
+    // Same rule as registration: 10-digit Indian mobile starting with 6-9
+    private static string ValidateCompleteSignupMobile( string? mobile )
+    {
+        var normalizedMobile = NormalizeMobile(mobile);
+        if (normalizedMobile == null || !System.Text.RegularExpressions.Regex.IsMatch(normalizedMobile, @"^[6-9]\d{9}$"))
+        {
+            throw new InvalidOperationException("INVALID_MOBILE");
+        }
+
+        return normalizedMobile;
+    }
+
+    private async Task EnsureMobileAvailableAsync( string normalizedMobile, Guid userId )
+    {
+        var mobileTaken = await _dbContext.Users
+            .AnyAsync(u => u.MobileNormalized == normalizedMobile && u.Id != userId && u.DeletedAt == null);
+        if (mobileTaken)
+        {
+            throw new InvalidOperationException("MOBILE_EXISTS");
+        }
     }
 
     private async Task<OAuthUserInfo?> ExchangeGoogleCodeAsync( string code, string callbackBaseUrl )

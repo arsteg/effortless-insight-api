@@ -132,6 +132,14 @@ public record SignupOtpVerifyRequest(
     [MaxLength(100)] string? UtmContent = null
 );
 
+// Complete signup (Google/Microsoft accounts): verify mobile with OTP and accept terms
+public record CompleteSignupOtpRequest( [MaxLength(20)] string Mobile );
+public record CompleteSignupRequest(
+    [MaxLength(20)] string Mobile,
+    [MaxLength(10)] string Otp,
+    bool AcceptTerms,
+    bool IsCA = false );
+
 // Admin: incomplete-signup lead list
 public record SignupAttemptDto(
     Guid Id,
@@ -301,7 +309,9 @@ public record UserProfileDto(
     Dictionary<string, object>? Preferences,
     DateTime CreatedAt,
     DateTime? LastLogin,
-    bool IsCA = false
+    bool IsCA = false,
+    // True when the user must finish the mobile OTP step before using the app
+    bool MobileVerificationRequired = false
 );
 
 public record UserOrganizationDto( Guid Id, string Name, string Role );

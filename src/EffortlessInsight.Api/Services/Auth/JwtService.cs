@@ -118,6 +118,10 @@ public class JwtService : IJwtService
         // Add email verified claim
         claims.Add(new Claim("email_verified", user.EmailConfirmed.ToString().ToLower()));
 
+        // Read by MobileVerificationMiddleware; a Google/Microsoft sign-up starts as false
+        // and gets a fresh token (via refresh) once the mobile OTP is verified.
+        claims.Add(new Claim("mobile_verified", user.IsMobileVerified.ToString().ToLower()));
+
         SigningCredentials credentials;
         if (_useAsymmetricSigning && _rsaPrivateKey != null)
         {
