@@ -126,6 +126,24 @@ public class Notice : BaseEntity
     public decimal? InterestAmount { get; set; }
 
     /// <summary>
+    /// Late filing fee or late fee amount.
+    /// </summary>
+    [Column(TypeName = "decimal(15,2)")]
+    public decimal? LateFeeAmount { get; set; }
+
+    /// <summary>
+    /// Compensation cess amount.
+    /// </summary>
+    [Column(TypeName = "decimal(15,2)")]
+    public decimal? CessAmount { get; set; }
+
+    /// <summary>
+    /// Other charges or miscellaneous amounts.
+    /// </summary>
+    [Column(TypeName = "decimal(15,2)")]
+    public decimal? OtherChargesAmount { get; set; }
+
+    /// <summary>
     /// Computed total demand (Tax + Penalty + Interest).
     /// This is stored as a computed column in the database.
     /// </summary>

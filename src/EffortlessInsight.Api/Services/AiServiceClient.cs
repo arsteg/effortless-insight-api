@@ -255,6 +255,108 @@ public class AiServiceClientImpl : IAiServiceClient
     }
 
     /// <summary>
+    /// Generate a handover summary for a notice case transfer.
+    /// </summary>
+    /// <param name="request">Request containing notice details and activity history.</param>
+    /// <param name="organizationId">Owning organization — sent to the AI service for rate limiting.</param>
+    /// <returns>Generated handover summary.</returns>
+    public async Task<HandoverSummaryResult> GenerateHandoverSummaryAsync(HandoverSummaryRequest request, Guid organizationId)
+    {
+        _logger.LogInformation(
+            "Generating handover summary for notice {NoticeId}",
+            request.NoticeId);
+
+        var aiRequest = new HandoverSummaryAiRequest
+        {
+            NoticeId = request.NoticeId,
+            NoticeSummary = request.NoticeSummary,
+            NoticeType = request.NoticeType,
+            NoticeCategory = request.NoticeCategory,
+            RiskLevel = request.RiskLevel,
+            ResponseDeadline = request.ResponseDeadline,
+            ActivityHistory = request.ActivityHistory?
+                .Select(a => new Dictionary<string, string>
+                {
+                    ["action"] = a.Action,
+                    ["user"] = a.User,
+                    ["date"] = a.Date
+                })
+                .ToList(),
+            CurrentStatus = request.CurrentStatus,
+            AssignedTo = request.AssignedTo,
+            AdditionalContext = request.AdditionalContext
+        };
+
+        try
+        {
+            var response = await ExecuteWithRetryAsync<HandoverSummaryAiRequest, HandoverSummaryAiResponse>(
+                HttpMethod.Post,
+                "/api/v1/process/handover-summary",
+                aiRequest,
+                organizationId);
+
+            if (response == null)
+            {
+                _logger.LogWarning("Handover summary generation returned null for notice {NoticeId}", request.NoticeId);
+                return new HandoverSummaryResult
+                {
+                    Success = false,
+                    Error = "Empty response from AI service"
+                };
+            }
+
+            if (!response.Success)
+            {
+                _logger.LogWarning("Handover summary generation failed for notice {NoticeId}: {Error}", request.NoticeId, response.Error);
+                return new HandoverSummaryResult
+                {
+                    Success = false,
+                    Error = response.Error ?? "Unknown error",
+                    ProcessingTimeMs = response.ProcessingTimeMs
+                };
+            }
+
+            _logger.LogInformation(
+                "Handover summary generated for notice {NoticeId}. Time: {Time}ms",
+                request.NoticeId, response.ProcessingTimeMs);
+
+            return new HandoverSummaryResult
+            {
+                Success = true,
+                Summary = response.Summary != null
+                    ? new HandoverSummaryData
+                    {
+                        Background = response.Summary.Background ?? string.Empty,
+                        WorkCompleted = response.Summary.WorkCompleted ?? [],
+                        PendingItems = response.Summary.PendingItems ?? [],
+                        NextSteps = response.Summary.NextSteps ?? [],
+                        KeyDeadlines = response.Summary.KeyDeadlines?
+                            .Select(d => new HandoverDeadline
+                            {
+                                Date = d.TryGetValue("date", out var date) ? date : string.Empty,
+                                Description = d.TryGetValue("description", out var desc) ? desc : string.Empty
+                            })
+                            .ToList() ?? [],
+                        KeyContacts = response.Summary.KeyContacts ?? [],
+                        RiskSummary = response.Summary.RiskSummary,
+                        GeneratedAt = response.Summary.GeneratedAt ?? DateTime.UtcNow
+                    }
+                    : null,
+                ProcessingTimeMs = response.ProcessingTimeMs
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Exception generating handover summary for notice {NoticeId}", request.NoticeId);
+            return new HandoverSummaryResult
+            {
+                Success = false,
+                Error = $"AI service error: {ex.Message}"
+            };
+        }
+    }
+
+    /// <summary>
     /// Execute an HTTP request with exponential backoff retry logic.
     /// </summary>
     private async Task<TResponse?> ExecuteWithRetryAsync<TRequest, TResponse>(
@@ -457,6 +559,42 @@ public class AiServiceClientImpl : IAiServiceClient
     {
         if (response == null) return null;
 
+        // Map risk assessment
+        RiskAssessmentDto? riskAssessment = null;
+        if (response.RiskAssessment != null)
+        {
+            riskAssessment = new RiskAssessmentDto(
+                response.RiskAssessment.Score,
+                response.RiskAssessment.Level,
+                response.RiskAssessment.NoticeCategoryScore,
+                response.RiskAssessment.TaxAmountScore,
+                response.RiskAssessment.DeadlineUrgencyScore,
+                response.RiskAssessment.PenaltyPotentialScore,
+                response.RiskAssessment.PriorHistoryScore,
+                response.RiskAssessment.ComplexityScore,
+                response.RiskAssessment.Reasoning
+            );
+        }
+
+        // Map calculation discrepancies
+        var discrepancies = response.CalculationDiscrepancies?.Select(d => new CalculationDiscrepancyDto(
+            d.Field,
+            d.Expected,
+            d.Actual,
+            d.Difference,
+            d.Message,
+            d.Severity
+        )).ToList();
+
+        // Map prefiling checklist
+        var checklist = response.PrefilingChecklist?.Select(c => new PrefilingChecklistItemDto(
+            c.Category,
+            c.Item,
+            c.Status,
+            c.Details,
+            c.Priority
+        )).ToList();
+
         return new AiReportData(
             response.RiskScore,
             response.RiskLevel ?? "unknown",
@@ -473,6 +611,9 @@ public class AiServiceClientImpl : IAiServiceClient
                 response.Metadata?.TaxAmount,
                 response.Metadata?.PenaltyAmount,
                 response.Metadata?.InterestAmount,
+                response.Metadata?.LateFeeAmount,
+                response.Metadata?.CessAmount,
+                response.Metadata?.OtherChargesAmount,
                 response.Metadata?.PeriodFrom,
                 response.Metadata?.PeriodTo,
                 response.Metadata?.IssuingAuthority
@@ -492,7 +633,11 @@ public class AiServiceClientImpl : IAiServiceClient
                 l.Section ?? string.Empty,
                 l.Description ?? string.Empty
             )).ToList() ?? [],
-            response.ConfidenceScores ?? new Dictionary<string, int>()
+            response.ConfidenceScores ?? new Dictionary<string, int>(),
+            response.RiskFactors,
+            riskAssessment,
+            discrepancies,
+            checklist
         );
     }
 
@@ -535,6 +680,8 @@ public class AiServiceClientImpl : IAiServiceClient
     {
         public int RiskScore { get; init; }
         public string? RiskLevel { get; init; }
+        public List<string>? RiskFactors { get; init; }
+        public RiskAssessmentResponse? RiskAssessment { get; init; }
         public string? SummaryEn { get; init; }
         public string? SummaryHi { get; init; }
         public string? PlainEnglish { get; init; }
@@ -543,6 +690,40 @@ public class AiServiceClientImpl : IAiServiceClient
         public List<RequiredDocumentResponse>? RequiredDocuments { get; init; }
         public List<LegalReferenceResponse>? LegalReferences { get; init; }
         public Dictionary<string, int>? ConfidenceScores { get; init; }
+        public List<CalculationDiscrepancyResponse>? CalculationDiscrepancies { get; init; }
+        public List<PrefilingChecklistItemResponse>? PrefilingChecklist { get; init; }
+    }
+
+    private record RiskAssessmentResponse
+    {
+        public int Score { get; init; }
+        public string Level { get; init; } = "medium";
+        public int NoticeCategoryScore { get; init; }
+        public int TaxAmountScore { get; init; }
+        public int DeadlineUrgencyScore { get; init; }
+        public int PenaltyPotentialScore { get; init; }
+        public int PriorHistoryScore { get; init; }
+        public int ComplexityScore { get; init; }
+        public List<string>? Reasoning { get; init; }
+    }
+
+    private record CalculationDiscrepancyResponse
+    {
+        public string Field { get; init; } = string.Empty;
+        public decimal Expected { get; init; }
+        public decimal Actual { get; init; }
+        public decimal Difference { get; init; }
+        public string Message { get; init; } = string.Empty;
+        public string Severity { get; init; } = "warning";
+    }
+
+    private record PrefilingChecklistItemResponse
+    {
+        public string Category { get; init; } = string.Empty;
+        public string Item { get; init; } = string.Empty;
+        public string Status { get; init; } = "unknown";
+        public string? Details { get; init; }
+        public int Priority { get; init; } = 2;
     }
 
     private record NoticeMetadataResponse
@@ -556,6 +737,9 @@ public class AiServiceClientImpl : IAiServiceClient
         public decimal? TaxAmount { get; init; }
         public decimal? PenaltyAmount { get; init; }
         public decimal? InterestAmount { get; init; }
+        public decimal? LateFeeAmount { get; init; }
+        public decimal? CessAmount { get; init; }
+        public decimal? OtherChargesAmount { get; init; }
         public DateOnly? PeriodFrom { get; init; }
         public DateOnly? PeriodTo { get; init; }
         public string? IssuingAuthority { get; init; }
@@ -611,6 +795,40 @@ public class AiServiceClientImpl : IAiServiceClient
         public float SimilarityScore { get; init; }
         public string? NoticeType { get; init; }
         public string? Summary { get; init; }
+    }
+
+    private record HandoverSummaryAiRequest
+    {
+        public string NoticeId { get; init; } = string.Empty;
+        public string? NoticeSummary { get; init; }
+        public string? NoticeType { get; init; }
+        public string? NoticeCategory { get; init; }
+        public string? RiskLevel { get; init; }
+        public string? ResponseDeadline { get; init; }
+        public List<Dictionary<string, string>>? ActivityHistory { get; init; }
+        public string? CurrentStatus { get; init; }
+        public string? AssignedTo { get; init; }
+        public string? AdditionalContext { get; init; }
+    }
+
+    private record HandoverSummaryAiResponse
+    {
+        public bool Success { get; init; }
+        public string? Error { get; init; }
+        public HandoverSummaryResponseData? Summary { get; init; }
+        public int ProcessingTimeMs { get; init; }
+    }
+
+    private record HandoverSummaryResponseData
+    {
+        public string? Background { get; init; }
+        public List<string>? WorkCompleted { get; init; }
+        public List<string>? PendingItems { get; init; }
+        public List<string>? NextSteps { get; init; }
+        public List<Dictionary<string, string>>? KeyDeadlines { get; init; }
+        public List<string>? KeyContacts { get; init; }
+        public string? RiskSummary { get; init; }
+        public DateTime? GeneratedAt { get; init; }
     }
 
     #endregion

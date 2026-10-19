@@ -47,6 +47,69 @@ public interface IAiServiceClient
     Task<string> GenerateResponseDraftAsync(Guid noticeId, Guid organizationId);
     Task<GenerateResponseResult> GenerateResponseDraftAsync(Guid noticeId, Guid organizationId, GenerateResponseOptions options);
     Task<List<SimilarNotice>> FindSimilarNoticesAsync(Guid noticeId, Guid organizationId, int limit = 5);
+    Task<HandoverSummaryResult> GenerateHandoverSummaryAsync(HandoverSummaryRequest request, Guid organizationId);
+}
+
+/// <summary>
+/// Request for generating a handover summary.
+/// </summary>
+public record HandoverSummaryRequest
+{
+    public string NoticeId { get; init; } = string.Empty;
+    public string? NoticeSummary { get; init; }
+    public string? NoticeType { get; init; }
+    public string? NoticeCategory { get; init; }
+    public string? RiskLevel { get; init; }
+    public string? ResponseDeadline { get; init; }
+    public List<ActivityHistoryItem>? ActivityHistory { get; init; }
+    public string? CurrentStatus { get; init; }
+    public string? AssignedTo { get; init; }
+    public string? AdditionalContext { get; init; }
+}
+
+/// <summary>
+/// Activity history item for handover summary.
+/// </summary>
+public record ActivityHistoryItem
+{
+    public string Action { get; init; } = string.Empty;
+    public string User { get; init; } = string.Empty;
+    public string Date { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// Result of handover summary generation.
+/// </summary>
+public record HandoverSummaryResult
+{
+    public bool Success { get; init; }
+    public HandoverSummaryData? Summary { get; init; }
+    public string? Error { get; init; }
+    public int ProcessingTimeMs { get; init; }
+}
+
+/// <summary>
+/// Generated handover summary data.
+/// </summary>
+public record HandoverSummaryData
+{
+    public string Background { get; init; } = string.Empty;
+    public List<string> WorkCompleted { get; init; } = [];
+    public List<string> PendingItems { get; init; } = [];
+    public List<string> NextSteps { get; init; } = [];
+    public List<HandoverDeadline> KeyDeadlines { get; init; } = [];
+    public List<string> KeyContacts { get; init; } = [];
+    public string? RiskSummary { get; init; }
+    public DateTime GeneratedAt { get; init; }
+}
+
+/// <summary>
+/// Key deadline in handover summary.
+/// </summary>
+public record HandoverDeadline
+{
+    public string Date { get; init; } = string.Empty;
+    public string Description { get; init; } = string.Empty;
 }
 
 /// <summary>

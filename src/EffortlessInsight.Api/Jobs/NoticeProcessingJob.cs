@@ -287,6 +287,9 @@ public class NoticeProcessingJob : INoticeProcessingJob
         notice.TaxAmount = report.Metadata.TaxAmount;
         notice.PenaltyAmount = report.Metadata.PenaltyAmount;
         notice.InterestAmount = report.Metadata.InterestAmount;
+        notice.LateFeeAmount = report.Metadata.LateFeeAmount;
+        notice.CessAmount = report.Metadata.CessAmount;
+        notice.OtherChargesAmount = report.Metadata.OtherChargesAmount;
         notice.PeriodFrom = report.Metadata.PeriodFrom;
         notice.PeriodTo = report.Metadata.PeriodTo;
         notice.IssuingAuthority = report.Metadata.IssuingAuthority;
@@ -322,6 +325,10 @@ public class NoticeProcessingJob : INoticeProcessingJob
 
         notice.AiReport.RiskScore = report.RiskScore;
         notice.AiReport.RiskLevel = report.RiskLevel;
+        notice.AiReport.RiskReasons = report.RiskFactors;
+        notice.AiReport.RiskAssessment = SerializeJson<Dictionary<string, object>>(report.RiskAssessment);
+        notice.AiReport.CalculationDiscrepancies = SerializeJson<List<Dictionary<string, object>>>(report.CalculationDiscrepancies);
+        notice.AiReport.PrefilingChecklist = SerializeJson<List<Dictionary<string, object>>>(report.PrefilingChecklist);
         notice.AiReport.SummaryEn = report.SummaryEn;
         notice.AiReport.SummaryHi = report.SummaryHi;
         notice.AiReport.PlainEnglish = report.PlainEnglish;
@@ -491,6 +498,17 @@ public class NoticeProcessingJob : INoticeProcessingJob
         {
             ["items"] = items.Cast<object>().ToList()
         };
+    }
+
+    private static T? SerializeJson<T>(object? value) where T : class
+    {
+        if (value == null) return null;
+        var options = new System.Text.Json.JsonSerializerOptions
+        {
+            PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.SnakeCaseLower
+        };
+        return System.Text.Json.JsonSerializer.Deserialize<T>(
+            System.Text.Json.JsonSerializer.Serialize(value, options), options);
     }
 }
 

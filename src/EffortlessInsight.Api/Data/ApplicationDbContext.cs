@@ -345,6 +345,18 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, Applicati
             .Property(r => r.FullReportJson)
             .HasColumnType("jsonb");
 
+        modelBuilder.Entity<NoticeAiReport>()
+            .Property(r => r.CalculationDiscrepancies)
+            .HasColumnType("jsonb");
+
+        modelBuilder.Entity<NoticeAiReport>()
+            .Property(r => r.PrefilingChecklist)
+            .HasColumnType("jsonb");
+
+        modelBuilder.Entity<NoticeAiReport>()
+            .Property(r => r.RiskAssessment)
+            .HasColumnType("jsonb");
+
         // Workflow Engine JSON columns
         modelBuilder.Entity<WorkflowTemplate>()
             .Property(w => w.ApplicableNoticeTypes)

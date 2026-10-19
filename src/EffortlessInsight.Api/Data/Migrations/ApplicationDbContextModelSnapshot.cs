@@ -5775,6 +5775,9 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Property<Guid?>("CaProspectClientId")
                         .HasColumnType("uuid");
 
+                    b.Property<decimal?>("CessAmount")
+                        .HasColumnType("decimal(15,2)");
+
                     b.Property<Guid?>("ConnectedEmailAccountId")
                         .HasColumnType("uuid");
 
@@ -5921,6 +5924,9 @@ namespace EffortlessInsight.Api.Data.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
 
+                    b.Property<decimal?>("LateFeeAmount")
+                        .HasColumnType("decimal(15,2)");
+
                     b.Property<Dictionary<string, object>>("Metadata")
                         .HasColumnType("jsonb");
 
@@ -5960,6 +5966,9 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Property<Guid>("OrganizationId")
                         .IsConcurrencyToken()
                         .HasColumnType("uuid");
+
+                    b.Property<decimal?>("OtherChargesAmount")
+                        .HasColumnType("decimal(15,2)");
 
                     b.Property<int?>("PageCount")
                         .HasColumnType("integer");
@@ -6130,6 +6139,9 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Property<Dictionary<string, object>>("ActionItems")
                         .HasColumnType("jsonb");
 
+                    b.Property<List<Dictionary<string, object>>>("CalculationDiscrepancies")
+                        .HasColumnType("jsonb");
+
                     b.Property<Dictionary<string, object>>("ConfidenceScores")
                         .HasColumnType("jsonb");
 
@@ -6155,6 +6167,9 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Property<string>("PlainEnglish")
                         .HasColumnType("text");
 
+                    b.Property<List<Dictionary<string, object>>>("PrefilingChecklist")
+                        .HasColumnType("jsonb");
+
                     b.Property<int?>("ProcessingTimeMs")
                         .HasColumnType("integer");
 
@@ -6164,9 +6179,15 @@ namespace EffortlessInsight.Api.Data.Migrations
                     b.Property<Dictionary<string, object>>("RequiredDocuments")
                         .HasColumnType("jsonb");
 
+                    b.Property<Dictionary<string, object>>("RiskAssessment")
+                        .HasColumnType("jsonb");
+
                     b.Property<string>("RiskLevel")
                         .HasMaxLength(20)
                         .HasColumnType("character varying(20)");
+
+                    b.PrimitiveCollection<List<string>>("RiskReasons")
+                        .HasColumnType("text[]");
 
                     b.Property<int?>("RiskScore")
                         .HasColumnType("integer");

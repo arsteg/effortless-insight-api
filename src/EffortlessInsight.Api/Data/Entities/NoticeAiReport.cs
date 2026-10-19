@@ -29,6 +29,26 @@ public class NoticeAiReport : BaseEntity
 
     public Dictionary<string, object>? ConfidenceScores { get; set; }
 
+    /// <summary>
+    /// List of reasons explaining why this risk level was assigned.
+    /// </summary>
+    public List<string>? RiskReasons { get; set; }
+
+    /// <summary>
+    /// Detailed risk assessment breakdown with component scores.
+    /// </summary>
+    public Dictionary<string, object>? RiskAssessment { get; set; }
+
+    /// <summary>
+    /// List of calculation discrepancies found in the notice.
+    /// </summary>
+    public List<Dictionary<string, object>>? CalculationDiscrepancies { get; set; }
+
+    /// <summary>
+    /// Pre-filing review checklist items.
+    /// </summary>
+    public List<Dictionary<string, object>>? PrefilingChecklist { get; set; }
+
     [MaxLength(50)]
     public string? ModelUsed { get; set; }
 

@@ -1418,6 +1418,121 @@ public class NoticesController : ControllerBase
     }
 
     /// <summary>
+    /// Generate an AI-powered handover summary for a notice case transfer.
+    /// Provides a comprehensive summary including background, work completed, pending items, and next steps.
+    /// </summary>
+    [HttpPost("{noticeId:guid}/generate-handover-summary")]
+    [ProducesResponseType(typeof(ApiResponse<HandoverSummaryDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> GenerateHandoverSummary(
+        Guid noticeId,
+        [FromBody] GenerateHandoverSummaryRequest? request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var orgId = GetCurrentOrganizationId();
+            var userId = GetCurrentUserId();
+
+            // Check permission
+            if (!_currentOrg.HasPermission("notices.view"))
+            {
+                return StatusCode(StatusCodes.Status403Forbidden,
+                    new ApiErrorResponse(false, "FORBIDDEN", "You don't have permission to generate handover summaries"));
+            }
+
+            // Get notice details
+            var notice = await _noticeService.GetByIdAsync(noticeId, orgId, cancellationToken);
+            if (notice == null)
+            {
+                return NotFound(new ApiErrorResponse(false, "NOT_FOUND", "Notice not found"));
+            }
+
+            // Get activity history for the notice
+            var activityFeed = await GetActivityHistoryForHandover(noticeId, userId);
+
+            // Build handover summary request
+            var aiRequest = new HandoverSummaryRequest
+            {
+                NoticeId = noticeId.ToString(),
+                NoticeSummary = notice.AiReport?.SummaryEn ?? notice.AiReport?.PlainEnglish,
+                NoticeType = notice.NoticeType,
+                NoticeCategory = notice.NoticeCategory,
+                RiskLevel = notice.AiReport?.RiskLevel,
+                ResponseDeadline = notice.ResponseDeadline?.ToString("yyyy-MM-dd"),
+                ActivityHistory = activityFeed,
+                CurrentStatus = notice.Status,
+                AssignedTo = notice.AssignedTo?.Name,
+                AdditionalContext = request?.AdditionalContext
+            };
+
+            var result = await _aiServiceClient.GenerateHandoverSummaryAsync(aiRequest, orgId);
+
+            if (!result.Success)
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError,
+                    new ApiErrorResponse(false, "AI_ERROR", result.Error ?? "Failed to generate handover summary"));
+            }
+
+            var dto = new HandoverSummaryDto(
+                Background: result.Summary?.Background ?? string.Empty,
+                WorkCompleted: result.Summary?.WorkCompleted ?? [],
+                PendingItems: result.Summary?.PendingItems ?? [],
+                NextSteps: result.Summary?.NextSteps ?? [],
+                KeyDeadlines: result.Summary?.KeyDeadlines?.Select(d => new HandoverDeadlineDto(d.Date, d.Description)).ToList() ?? [],
+                KeyContacts: result.Summary?.KeyContacts ?? [],
+                RiskSummary: result.Summary?.RiskSummary,
+                GeneratedAt: result.Summary?.GeneratedAt ?? DateTime.UtcNow,
+                ProcessingTimeMs: result.ProcessingTimeMs
+            );
+
+            return Ok(new ApiResponse<HandoverSummaryDto>(true, dto));
+        }
+        catch (OperationCanceledException)
+        {
+            return StatusCode(499, new ApiErrorResponse(false, "REQUEST_CANCELLED", "Request was cancelled"));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to generate handover summary for notice {NoticeId}", noticeId);
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
+        }
+    }
+
+    private async Task<List<ActivityHistoryItem>> GetActivityHistoryForHandover(Guid noticeId, Guid userId)
+    {
+        try
+        {
+            // Get the activity service via DI if available
+            var activityService = HttpContext.RequestServices.GetService<Services.Collaboration.IActivityService>();
+            if (activityService == null)
+            {
+                return [];
+            }
+
+            var activityFeed = await activityService.GetActivityFeedForNoticeAsync(noticeId, userId, limit: 20);
+
+            return activityFeed.Activities
+                .Select(a => new ActivityHistoryItem
+                {
+                    Action = a.Message,
+                    User = a.Actor?.Name ?? "System",
+                    Date = a.Timestamp.ToString("yyyy-MM-dd HH:mm")
+                })
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to get activity history for handover summary");
+            return [];
+        }
+    }
+
+    /// <summary>
     /// Submit a response for review
     /// </summary>
     [HttpPost("{noticeId:guid}/responses/{responseId:guid}/submit-for-review")]
@@ -2181,6 +2296,9 @@ public class NoticesController : ControllerBase
             TaxAmount: notice.TaxAmount,
             PenaltyAmount: notice.PenaltyAmount,
             InterestAmount: notice.InterestAmount,
+            LateFeeAmount: notice.LateFeeAmount,
+            CessAmount: notice.CessAmount,
+            OtherChargesAmount: notice.OtherChargesAmount,
             Status: notice.Status,
             Priority: notice.Priority,
             ProcessingStatus: notice.ProcessingStatus,
@@ -2213,6 +2331,9 @@ public class NoticesController : ControllerBase
             TaxAmount: notice.TaxAmount,
             PenaltyAmount: notice.PenaltyAmount,
             InterestAmount: notice.InterestAmount,
+            LateFeeAmount: notice.LateFeeAmount,
+            CessAmount: notice.CessAmount,
+            OtherChargesAmount: notice.OtherChargesAmount,
             Status: notice.Status,
             Priority: notice.Priority,
             ProcessingStatus: notice.ProcessingStatus,
@@ -2249,6 +2370,9 @@ public class NoticesController : ControllerBase
             TaxAmount: notice.TaxAmount,
             PenaltyAmount: notice.PenaltyAmount,
             InterestAmount: notice.InterestAmount,
+            LateFeeAmount: notice.LateFeeAmount,
+            CessAmount: notice.CessAmount,
+            OtherChargesAmount: notice.OtherChargesAmount,
             PeriodFrom: notice.PeriodFrom,
             PeriodTo: notice.PeriodTo,
             IssuingAuthority: notice.IssuingAuthority,
@@ -2285,6 +2409,9 @@ public class NoticesController : ControllerBase
             TaxAmount: notice.TaxAmount,
             PenaltyAmount: notice.PenaltyAmount,
             InterestAmount: notice.InterestAmount,
+            LateFeeAmount: notice.LateFeeAmount,
+            CessAmount: notice.CessAmount,
+            OtherChargesAmount: notice.OtherChargesAmount,
             PeriodFrom: notice.PeriodFrom,
             PeriodTo: notice.PeriodTo,
             IssuingAuthority: notice.IssuingAuthority,
@@ -2327,9 +2454,116 @@ public class NoticesController : ControllerBase
                 : null,
             ConfidenceScores: report.ConfidenceScores?
                 .ToDictionary(kvp => kvp.Key, kvp => ConvertToInt(kvp.Value)),
+            RiskReasons: report.RiskReasons,
+            RiskAssessment: report.RiskAssessment != null
+                ? MapRiskAssessment(report.RiskAssessment)
+                : null,
+            CalculationDiscrepancies: report.CalculationDiscrepancies != null
+                ? MapCalculationDiscrepancies(report.CalculationDiscrepancies)
+                : null,
+            PrefilingChecklist: report.PrefilingChecklist != null
+                ? MapPrefilingChecklist(report.PrefilingChecklist)
+                : null,
             ModelUsed: report.ModelUsed,
             ProcessingTimeMs: report.ProcessingTimeMs,
             CreatedAt: report.CreatedAt);
+    }
+
+    private static RiskAssessmentDto? MapRiskAssessment(Dictionary<string, object> riskAssessment)
+    {
+        try
+        {
+            return new RiskAssessmentDto(
+                Score: riskAssessment.TryGetValue("score", out var score) ? ConvertToInt(score) : 0,
+                Level: riskAssessment.TryGetValue("level", out var level) ? level?.ToString() ?? "medium" : "medium",
+                NoticeCategoryScore: riskAssessment.TryGetValue("notice_category_score", out var cat) ? ConvertToInt(cat) : 0,
+                TaxAmountScore: riskAssessment.TryGetValue("tax_amount_score", out var tax) ? ConvertToInt(tax) : 0,
+                DeadlineUrgencyScore: riskAssessment.TryGetValue("deadline_urgency_score", out var deadline) ? ConvertToInt(deadline) : 0,
+                PenaltyPotentialScore: riskAssessment.TryGetValue("penalty_potential_score", out var penalty) ? ConvertToInt(penalty) : 0,
+                PriorHistoryScore: riskAssessment.TryGetValue("prior_history_score", out var history) ? ConvertToInt(history) : 0,
+                ComplexityScore: riskAssessment.TryGetValue("complexity_score", out var complexity) ? ConvertToInt(complexity) : 0,
+                Reasoning: riskAssessment.TryGetValue("reasoning", out var reasoning)
+                    ? ConvertToStringList(reasoning)
+                    : null
+            );
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static List<string>? ConvertToStringList(object? value)
+    {
+        if (value == null) return null;
+        if (value is List<string> list) return list;
+        if (value is System.Text.Json.JsonElement jsonElement && jsonElement.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            return jsonElement.EnumerateArray()
+                .Select(e => e.GetString() ?? "")
+                .Where(s => !string.IsNullOrEmpty(s))
+                .ToList();
+        }
+        if (value is IEnumerable<object> enumerable)
+        {
+            return enumerable.Select(o => o?.ToString() ?? "").Where(s => !string.IsNullOrEmpty(s)).ToList();
+        }
+        return null;
+    }
+
+    private static List<CalculationDiscrepancyDto>? MapCalculationDiscrepancies(List<Dictionary<string, object>> discrepancies)
+    {
+        try
+        {
+            return discrepancies.Select(d => new CalculationDiscrepancyDto(
+                Field: d.TryGetValue("field", out var field) ? field?.ToString() ?? "" : "",
+                Expected: d.TryGetValue("expected", out var expected) ? ConvertToDecimal(expected) : 0,
+                Actual: d.TryGetValue("actual", out var actual) ? ConvertToDecimal(actual) : 0,
+                Difference: d.TryGetValue("difference", out var diff) ? ConvertToDecimal(diff) : 0,
+                Message: d.TryGetValue("message", out var msg) ? msg?.ToString() ?? "" : "",
+                Severity: d.TryGetValue("severity", out var sev) ? sev?.ToString() ?? "warning" : "warning"
+            )).ToList();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static List<PrefilingChecklistItemDto>? MapPrefilingChecklist(List<Dictionary<string, object>> checklist)
+    {
+        try
+        {
+            return checklist.Select(item => new PrefilingChecklistItemDto(
+                Category: item.TryGetValue("category", out var cat) ? cat?.ToString() ?? "" : "",
+                Item: item.TryGetValue("item", out var itm) ? itm?.ToString() ?? "" : "",
+                Status: item.TryGetValue("status", out var status) ? status?.ToString() ?? "unknown" : "unknown",
+                Details: item.TryGetValue("details", out var details) ? details?.ToString() : null,
+                Priority: item.TryGetValue("priority", out var priority) ? ConvertToInt(priority) : 2
+            )).ToList();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static decimal ConvertToDecimal(object? value)
+    {
+        if (value == null) return 0;
+        if (value is System.Text.Json.JsonElement jsonElement)
+        {
+            if (jsonElement.ValueKind == System.Text.Json.JsonValueKind.Number)
+            {
+                return jsonElement.GetDecimal();
+            }
+            if (decimal.TryParse(jsonElement.GetString(), out var parsed))
+            {
+                return parsed;
+            }
+            return 0;
+        }
+        return Convert.ToDecimal(value);
     }
 
     /// <summary>

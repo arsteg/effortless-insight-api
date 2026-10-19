@@ -50,7 +50,7 @@ public record DeviceInfo(
     [MaxLength(100)] string? DeviceId,
     [MaxLength(100)] string? DeviceName,
     [MaxLength(20)] string Platform, // web, ios, android
-    // Device/browser metadata
+                                     // Device/browser metadata
     [MaxLength(50)] string? Timezone = null,
     int? ScreenWidth = null,
     int? ScreenHeight = null,
@@ -836,6 +836,9 @@ public record NoticeDto(
     decimal? TaxAmount,
     decimal? PenaltyAmount,
     decimal? InterestAmount,
+    decimal? LateFeeAmount,
+    decimal? CessAmount,
+    decimal? OtherChargesAmount,
     string Status,
     string Priority,
     string ProcessingStatus,
@@ -875,6 +878,9 @@ public record NoticeDetailDto(
     decimal? TaxAmount,
     decimal? PenaltyAmount,
     decimal? InterestAmount,
+    decimal? LateFeeAmount,
+    decimal? CessAmount,
+    decimal? OtherChargesAmount,
     DateOnly? PeriodFrom,
     DateOnly? PeriodTo,
     string? IssuingAuthority,
@@ -972,9 +978,66 @@ public record NoticeAiReportDto(
     List<RequiredDocumentDto>? RequiredDocuments,
     List<LegalReferenceDto>? LegalReferences,
     Dictionary<string, int>? ConfidenceScores,
+    /// <summary>List of reasons explaining why this risk level was assigned.</summary>
+    List<string>? RiskReasons,
+    /// <summary>Detailed risk assessment breakdown with component scores.</summary>
+    RiskAssessmentDto? RiskAssessment,
+    /// <summary>List of calculation discrepancies found in the notice.</summary>
+    List<CalculationDiscrepancyDto>? CalculationDiscrepancies,
+    /// <summary>Pre-filing review checklist items.</summary>
+    List<PrefilingChecklistItemDto>? PrefilingChecklist,
     string? ModelUsed,
     int? ProcessingTimeMs,
     DateTime CreatedAt
+);
+
+/// <summary>
+/// Detailed risk assessment breakdown with component scores and reasoning.
+/// </summary>
+public record RiskAssessmentDto(
+    int Score,
+    string Level,
+    int NoticeCategoryScore,
+    int TaxAmountScore,
+    int DeadlineUrgencyScore,
+    int PenaltyPotentialScore,
+    int PriorHistoryScore,
+    int ComplexityScore,
+    List<string>? Reasoning
+);
+
+/// <summary>
+/// Represents a calculation discrepancy found in the notice.
+/// </summary>
+public record CalculationDiscrepancyDto(
+    /// <summary>Field with discrepancy (e.g., "total_demand").</summary>
+    string Field,
+    /// <summary>Expected calculated value.</summary>
+    decimal Expected,
+    /// <summary>Actual value from notice.</summary>
+    decimal Actual,
+    /// <summary>Difference between expected and actual.</summary>
+    decimal Difference,
+    /// <summary>Human-readable description of the discrepancy.</summary>
+    string Message,
+    /// <summary>Severity: "warning" or "error".</summary>
+    string Severity
+);
+
+/// <summary>
+/// Pre-filing review checklist item.
+/// </summary>
+public record PrefilingChecklistItemDto(
+    /// <summary>Category: limitation, documents, calculations, deadlines, procedural, compliance.</summary>
+    string Category,
+    /// <summary>Description of the checklist item.</summary>
+    string Item,
+    /// <summary>Status: pass, warning, fail, unknown.</summary>
+    string Status,
+    /// <summary>Additional details or explanation.</summary>
+    string? Details,
+    /// <summary>Priority: 1=critical, 2=important, 3=informational.</summary>
+    int Priority
 );
 
 public record ActionItemDto( int Priority, string Action, string Description, int? DueInDays, string? AssigneeSuggestion );
@@ -1001,7 +1064,15 @@ public record AiReportData(
     List<ActionItemDto> ActionItems,
     List<RequiredDocumentDto> RequiredDocuments,
     List<LegalReferenceDto> LegalReferences,
-    Dictionary<string, int> ConfidenceScores
+    Dictionary<string, int> ConfidenceScores,
+    /// <summary>Human-readable risk factors explaining the risk classification.</summary>
+    List<string>? RiskFactors = null,
+    /// <summary>Detailed risk assessment breakdown.</summary>
+    RiskAssessmentDto? RiskAssessment = null,
+    /// <summary>Calculation discrepancies found in the notice.</summary>
+    List<CalculationDiscrepancyDto>? CalculationDiscrepancies = null,
+    /// <summary>Pre-filing review checklist items.</summary>
+    List<PrefilingChecklistItemDto>? PrefilingChecklist = null
 );
 
 public record NoticeMetadata(
@@ -1014,6 +1085,9 @@ public record NoticeMetadata(
     decimal? TaxAmount,
     decimal? PenaltyAmount,
     decimal? InterestAmount,
+    decimal? LateFeeAmount,
+    decimal? CessAmount,
+    decimal? OtherChargesAmount,
     DateOnly? PeriodFrom,
     DateOnly? PeriodTo,
     string? IssuingAuthority

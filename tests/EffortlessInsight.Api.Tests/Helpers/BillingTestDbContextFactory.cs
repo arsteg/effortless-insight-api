@@ -196,6 +196,13 @@ public class TestableApplicationDbContext : ApplicationDbContext
             entity.Property(e => e.LegalReferences).HasConversion(jsonConverterNullable);
             entity.Property(e => e.ConfidenceScores).HasConversion(jsonConverterNullable);
             entity.Property(e => e.FullReportJson).HasConversion(jsonConverterNullable);
+            entity.Property(e => e.RiskAssessment).HasConversion(jsonConverterNullable);
+            entity.Property(e => e.CalculationDiscrepancies).HasConversion(
+                v => JsonSerializer.Serialize(v, (JsonSerializerOptions?)null),
+                v => JsonSerializer.Deserialize<List<Dictionary<string, object>>>(v, (JsonSerializerOptions?)null));
+            entity.Property(e => e.PrefilingChecklist).HasConversion(
+                v => JsonSerializer.Serialize(v, (JsonSerializerOptions?)null),
+                v => JsonSerializer.Deserialize<List<Dictionary<string, object>>>(v, (JsonSerializerOptions?)null));
         });
 
         // Fix NoticeWorkflowInstance.Metadata for InMemory
