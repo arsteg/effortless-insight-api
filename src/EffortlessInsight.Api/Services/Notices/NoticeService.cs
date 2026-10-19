@@ -1501,6 +1501,9 @@ public class NoticeServiceImpl : INoticeServiceExtended
             "amount" or "taxamount" => filter.SortDesc
                 ? query.OrderByDescending(n => n.TaxAmount)
                 : query.OrderBy(n => n.TaxAmount),
+            "totaldemand" => filter.SortDesc
+                ? query.OrderByDescending(n => n.TotalDemand)
+                : query.OrderBy(n => n.TotalDemand),
             "noticenumber" => filter.SortDesc
                 ? query.OrderByDescending(n => n.NoticeNumber)
                 : query.OrderBy(n => n.NoticeNumber),
@@ -1831,6 +1834,9 @@ public class NoticeServiceImpl : INoticeServiceExtended
             "amount" or "taxamount" => filter.SortDesc
                 ? notices.OrderByDescending(n => n.Notice.TaxAmount).ToList()
                 : notices.OrderBy(n => n.Notice.TaxAmount).ToList(),
+            "totaldemand" => filter.SortDesc
+                ? notices.OrderByDescending(n => n.Notice.TotalDemand).ToList()
+                : notices.OrderBy(n => n.Notice.TotalDemand).ToList(),
             "noticenumber" => filter.SortDesc
                 ? notices.OrderByDescending(n => n.Notice.NoticeNumber, StringComparer.OrdinalIgnoreCase).ToList()
                 : notices.OrderBy(n => n.Notice.NoticeNumber, StringComparer.OrdinalIgnoreCase).ToList(),

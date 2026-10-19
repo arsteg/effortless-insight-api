@@ -367,7 +367,6 @@ public class AuthController : ControllerBase
     [HttpPatch("me")]
     [ProducesResponseType(typeof(ApiResponse<UserProfileDto>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> UpdateCurrentUser( [FromBody] UpdateProfileRequest request )
     {
         var userId = GetCurrentUserId();
@@ -389,46 +388,8 @@ public class AuthController : ControllerBase
             user.Name = name;
         }
 
-        if (request.Mobile != null)
-        {
-            var digits = new string(request.Mobile.Where(char.IsDigit).ToArray());
-
-            if (digits.Length == 0)
-            {
-                user.Mobile = null;
-                user.MobileNormalized = null;
-                user.IsMobileVerified = false;
-            }
-            else
-            {
-                var normalized = digits.Length >= 10 ? digits[^10..] : digits;
-                if (normalized.Length != 10)
-                {
-                    return BadRequest(new ApiErrorResponse(
-                        false, "INVALID_MOBILE", "Enter a valid 10-digit mobile number"));
-                }
-
-                // The number is how account recovery and OTP login find a user,
-                // so it has to stay unique across accounts.
-                var taken = await _dbContext.Users.AnyAsync(u =>
-                    u.MobileNormalized == normalized && u.Id != userId && u.DeletedAt == null);
-                if (taken)
-                {
-                    return Conflict(new ApiErrorResponse(
-                        false, "MOBILE_IN_USE", "That mobile number is already registered"));
-                }
-
-                // Changing the number invalidates the previous verification.
-                if (user.MobileNormalized != normalized)
-                {
-                    user.IsMobileVerified = false;
-                    user.MobileVerifiedAt = null;
-                }
-
-                user.Mobile = request.Mobile.Trim();
-                user.MobileNormalized = normalized;
-            }
-        }
+        // Email and mobile are not editable here (like email, the mobile is only
+        // set through the OTP-verified signup flows); support changes them if needed.
 
         if (request.AvatarUrl != null)
         {

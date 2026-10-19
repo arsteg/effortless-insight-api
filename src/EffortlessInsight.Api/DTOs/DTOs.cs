@@ -91,7 +91,6 @@ public record ChangePasswordRequest(
 /// </summary>
 public record UpdateProfileRequest(
     [MaxLength(200)] string? Name = null,
-    [MaxLength(20)] string? Mobile = null,
     [MaxLength(500)] string? AvatarUrl = null
 );
 

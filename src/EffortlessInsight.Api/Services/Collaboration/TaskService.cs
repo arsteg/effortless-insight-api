@@ -70,11 +70,13 @@ public class TaskService : ITaskService
                 throw new InvalidOperationException("Team not found or not active");
         }
 
+        await EnsureUniqueTitleAsync(noticeId, dto.Title);
+
         var task = new NoticeTask
         {
             NoticeId = noticeId,
             ParentTaskId = dto.ParentTaskId,
-            Title = dto.Title,
+            Title = dto.Title.Trim(),
             Description = dto.Description ?? template?.DefaultDescription,
             Priority = dto.Priority ?? template?.DefaultPriority ?? TaskPriorityValues.Medium,
             Status = TaskStatusValues.Todo,
@@ -317,8 +319,10 @@ public class TaskService : ITaskService
 
         if (dto.Title != null)
         {
-            changes["title"] = new { from = task.Title, to = dto.Title };
-            task.Title = dto.Title;
+            var title = dto.Title.Trim();
+            await EnsureUniqueTitleAsync(task.NoticeId, title, excludeTaskId: task.Id);
+            changes["title"] = new { from = task.Title, to = title };
+            task.Title = title;
         }
 
         if (dto.Description != null)
@@ -722,6 +726,18 @@ public class TaskService : ITaskService
         {
             throw new InvalidOperationException($"Invalid status transition from {currentStatus} to {newStatus}");
         }
+    }
+
+    // Task titles must be unique within a notice (case-insensitive; deleted tasks don't count)
+    private async Task EnsureUniqueTitleAsync(Guid noticeId, string title, Guid? excludeTaskId = null)
+    {
+        var normalized = title.Trim().ToLower();
+        var exists = await _context.Tasks.AnyAsync(t =>
+            t.NoticeId == noticeId &&
+            t.Id != excludeTaskId &&
+            t.Title.Trim().ToLower() == normalized);
+        if (exists)
+            throw new InvalidOperationException("A task with this title already exists for this notice");
     }
 
     private async Task<bool> HasCircularDependency(Guid parentTaskId, Guid noticeId)
