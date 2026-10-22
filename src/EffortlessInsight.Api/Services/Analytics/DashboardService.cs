@@ -63,6 +63,7 @@ public record NoticeMetrics
     public decimal TotalDemandAmount { get; init; }
     public Dictionary<string, int> ByType { get; init; } = new();
     public Dictionary<string, int> ByPriority { get; init; } = new();
+    public Dictionary<string, int> ByStatus { get; init; } = new();
 }
 
 /// <summary>
@@ -280,7 +281,11 @@ public class DashboardService : IDashboardService
                 closedStatuses.Contains(n.Status) && n.CreatedAt >= weekAgo),
             TotalDemandAmount = notices.Sum(n => n.TotalDemand ?? 0),
             ByType = byType,
-            ByPriority = byPriority
+            ByPriority = byPriority,
+            // One count per actual status (Open already includes processing/in_progress)
+            ByStatus = notices
+                .GroupBy(n => n.Status)
+                .ToDictionary(g => g.Key, g => g.Count())
         };
     }
 

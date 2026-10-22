@@ -172,6 +172,8 @@ public static class ServiceExtensions
         services.AddScoped<Services.Reporting.IReportBuilderService, Services.Reporting.ReportBuilderService>();
         services.AddScoped<Services.Reporting.IReportQueryBuilder, Services.Reporting.ReportQueryBuilder>();
         services.AddScoped<Services.Reporting.IReportExportService, Services.Reporting.ReportExportService>();
+        services.AddScoped<Services.Reporting.IComplianceReportService, Services.Reporting.ComplianceReportService>();
+        services.AddScoped<Services.Reporting.IReportsOverviewService, Services.Reporting.ReportsOverviewService>();
 
         // Register analytics services (GAP-RPT-001, GAP-RPT-002)
         services.AddScoped<IDashboardService, DashboardService>();

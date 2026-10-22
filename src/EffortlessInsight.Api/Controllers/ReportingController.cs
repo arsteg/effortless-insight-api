@@ -20,17 +20,20 @@ namespace EffortlessInsight.Api.Controllers;
 public class ReportingController : ControllerBase
 {
     private readonly IReportBuilderService _reportService;
+    private readonly IReportsOverviewService _reportsOverviewService;
     private readonly ICurrentOrganizationService _orgService;
     private readonly ApplicationDbContext _dbContext;
     private readonly ILogger<ReportingController> _logger;
 
     public ReportingController(
         IReportBuilderService reportService,
+        IReportsOverviewService reportsOverviewService,
         ICurrentOrganizationService orgService,
         ApplicationDbContext dbContext,
         ILogger<ReportingController> logger)
     {
         _reportService = reportService;
+        _reportsOverviewService = reportsOverviewService;
         _orgService = orgService;
         _dbContext = dbContext;
         _logger = logger;
@@ -41,6 +44,128 @@ public class ReportingController : ControllerBase
 
     private Guid GetOrganizationId() =>
         _orgService.OrganizationId ?? throw new InvalidOperationException("No organization context");
+
+    // ==========================================================================
+    // Reports Page (web /reports)
+    // ==========================================================================
+
+    /// <summary>
+    /// Get report data for the reports page: overview, charts and GSTIN summary.
+    /// </summary>
+    [HttpGet]
+    [ProducesResponseType(typeof(ApiResponse<ReportsResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> GetReports(
+        [FromQuery] DateOnly? startDate = null,
+        [FromQuery] DateOnly? endDate = null,
+        CancellationToken ct = default)
+    {
+        if (!_orgService.HasPermission("reports.view"))
+            return Forbid();
+
+        if (startDate.HasValue && endDate.HasValue && startDate.Value > endDate.Value)
+            return BadRequest(new { error = "Start date cannot be after end date" });
+
+        var report = await _reportsOverviewService.GetReportsAsync(GetOrganizationId(), startDate, endDate, ct);
+
+        return Ok(new ApiResponse<ReportsResponse>(true, report));
+    }
+
+    /// <summary>
+    /// Export the reports page data to CSV, Excel, or PDF.
+    /// </summary>
+    [HttpGet("export")]
+    [ProducesResponseType(typeof(FileResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ExportReports(
+        [FromQuery] DateOnly? startDate = null,
+        [FromQuery] DateOnly? endDate = null,
+        [FromQuery] string format = "csv",
+        CancellationToken ct = default)
+    {
+        if (!_orgService.HasPermission("reports.export"))
+            return Forbid();
+
+        var validFormats = new[] { "csv", "xlsx", "pdf" };
+        if (!validFormats.Contains(format.ToLower()))
+            return BadRequest(new { error = "Format must be one of: csv, xlsx, pdf" });
+
+        if (startDate.HasValue && endDate.HasValue && startDate.Value > endDate.Value)
+            return BadRequest(new { error = "Start date cannot be after end date" });
+
+        var report = await _reportsOverviewService.GetReportsAsync(GetOrganizationId(), startDate, endDate, ct);
+        var sections = ReportsExportSections.Build(report);
+
+        var (fileBytes, contentType, fileName) = format.ToLower() switch
+        {
+            "csv" => GenerateReportsCsv(sections),
+            "xlsx" => GenerateReportsExcel(sections),
+            "pdf" => (new ReportsPdfExportGenerator().Generate(report, sections), "application/pdf",
+                $"reports-export-{DateTime.UtcNow:yyyy-MM-dd}.pdf"),
+            _ => throw new InvalidOperationException("Invalid format")
+        };
+
+        return File(fileBytes, contentType, fileName);
+    }
+
+    private static (byte[] FileBytes, string ContentType, string FileName) GenerateReportsCsv(List<ReportsExportSection> sections)
+    {
+        var sb = new System.Text.StringBuilder();
+
+        foreach (var section in sections)
+        {
+            sb.AppendLine($"\"{section.Title}\"");
+            sb.AppendLine(string.Join(",", section.Headers.Select(h => $"\"{h}\"")));
+            foreach (var row in section.Rows)
+            {
+                sb.AppendLine(string.Join(",", row.Select(v => v is string s
+                    ? $"\"{s.Replace("\"", "\"\"")}\""
+                    : Convert.ToString(v, System.Globalization.CultureInfo.InvariantCulture))));
+            }
+            sb.AppendLine();
+        }
+
+        return (System.Text.Encoding.UTF8.GetBytes(sb.ToString()), "text/csv", $"reports-export-{DateTime.UtcNow:yyyy-MM-dd}.csv");
+    }
+
+    private static (byte[] FileBytes, string ContentType, string FileName) GenerateReportsExcel(List<ReportsExportSection> sections)
+    {
+        using var workbook = new ClosedXML.Excel.XLWorkbook();
+
+        // One sheet per section
+        foreach (var section in sections)
+        {
+            var worksheet = workbook.Worksheets.Add(section.Title);
+
+            for (int i = 0; i < section.Headers.Length; i++)
+            {
+                worksheet.Cell(1, i + 1).Value = section.Headers[i];
+                worksheet.Cell(1, i + 1).Style.Font.Bold = true;
+            }
+
+            for (int row = 0; row < section.Rows.Count; row++)
+            {
+                for (int col = 0; col < section.Rows[row].Length; col++)
+                {
+                    worksheet.Cell(row + 2, col + 1).Value = ToCellValue(section.Rows[row][col]);
+                }
+            }
+
+            worksheet.Columns().AdjustToContents();
+        }
+
+        using var stream = new MemoryStream();
+        workbook.SaveAs(stream);
+        return (stream.ToArray(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            $"reports-export-{DateTime.UtcNow:yyyy-MM-dd}.xlsx");
+    }
+
+    private static ClosedXML.Excel.XLCellValue ToCellValue(object value) => value switch
+    {
+        decimal d => (double)d,
+        int i => i,
+        _ => value?.ToString() ?? ""
+    };
 
     // ==========================================================================
     // Report Types & Schema

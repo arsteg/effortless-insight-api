@@ -327,9 +327,12 @@ public class OrganizationManagementService : IOrganizationManagementService
 
         var orgIds = memberships.Select(m => m.OrganizationId).ToList();
 
-        // Get notice counts
+        // Get notice counts. The tenant query filter only lets the current org's notices through,
+        // so bypass it here (already scoped to the user's orgs). Archived notices are excluded
+        // to match the /notices list default.
         var noticeCounts = await _dbContext.Notices
-            .Where(n => orgIds.Contains(n.OrganizationId))
+            .IgnoreQueryFilters()
+            .Where(n => orgIds.Contains(n.OrganizationId) && n.DeletedAt == null && n.Status != NoticeStatus.Archived)
             .GroupBy(n => n.OrganizationId)
             .Select(g => new { OrganizationId = g.Key, Total = g.Count(), Pending = g.Count(n => n.Status == "pending") })
             .ToDictionaryAsync(x => x.OrganizationId, x => (x.Total, x.Pending));
