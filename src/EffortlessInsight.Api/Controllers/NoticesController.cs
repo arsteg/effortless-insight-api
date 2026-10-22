@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using System.Security.Claims;
 using EffortlessInsight.Api.Data.Entities;
 using EffortlessInsight.Api.DTOs;
@@ -1298,8 +1299,34 @@ public class NoticesController : ControllerBase
                 return Forbid();
             }
 
+            if (request.AllegationDraft is { } draft)
+            {
+                if (draft.Allegations == null || draft.Responses == null || draft.Allegations.Count == 0
+                    || draft.Allegations.Count > 100
+                    || draft.Allegations.Any(a => a == null || string.IsNullOrWhiteSpace(a.Id) || string.IsNullOrWhiteSpace(a.Description))
+                    || draft.Responses.Any(r => r == null || string.IsNullOrWhiteSpace(r.ResponseText))
+                    || draft.Allegations.Select(a => a.Id).Distinct().Count() != draft.Allegations.Count
+                    || draft.Responses.Count != draft.Allegations.Count
+                    || !draft.Allegations.Select(a => a.Id).Order().SequenceEqual(draft.Responses.Select(r => r.AllegationId).Order()))
+                    return BadRequest(new ApiErrorResponse(false, "INVALID_DRAFT", "Every allegation must have exactly one non-empty response."));
+            }
+
+            // Rebuild from the actual responses rather than trusting a stale client preview.
+            if (request.AllegationDraft is { } structured)
+            {
+                var combined = string.Join("\n\n────────────────────\n\n", structured.Allegations.Select(a => {
+                    var reply = structured.Responses.Single(r => r.AllegationId == a.Id);
+                    return $"ALLEGATION {a.SerialNumber}: {a.Description}\n\n{reply.ResponseText}"
+                        + (reply.LegalBasis?.Count > 0 ? $"\n\nLegal Basis: {string.Join("; ", reply.LegalBasis)}" : "");
+                }));
+                var missing = structured.Responses.SelectMany(r => (r.MissingInformation ?? [])
+                    .Select(item => $"{item} (Allegation {r.AllegationId})")).Distinct().ToList();
+                request = request with { DraftContent = combined, AllegationDraft = structured with { CombinedDraft = combined, MissingInfoSummary = missing } };
+            }
+
             var response = await _noticeService.SaveResponseDraftAsync(
-                noticeId, orgId, userId, request.DraftContent, cancellationToken);
+                noticeId, orgId, userId, request.DraftContent, cancellationToken,
+                request.AllegationDraft == null ? null : System.Text.Json.JsonSerializer.Serialize(request.AllegationDraft));
 
             return Ok(new ApiResponse<NoticeResponseDto>(true, MapResponseToDto(response)));
         }
@@ -1415,6 +1442,276 @@ public class NoticesController : ControllerBase
             return StatusCode(StatusCodes.Status500InternalServerError,
                 new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
         }
+    }
+
+    /// <summary>
+    /// Generate an AI-powered allegation-wise (point-wise) draft response.
+    /// Extracts individual allegations from the notice and generates a structured response for each.
+    /// </summary>
+    /// <remarks>
+    /// This endpoint:
+    /// - Extracts individual allegations/charges from the notice
+    /// - Generates a targeted response for each allegation
+    /// - Links each response to relevant legal provisions and evidence
+    /// - Identifies missing information needed to finalize each response
+    /// - Provides a combined draft document
+    ///
+    /// Request body options:
+    /// - tone: Response tone - formal (default), conciliatory, or defensive
+    /// - language: Response language - en (English, default) or hi (Hindi)
+    /// - allegationOverrides: Custom instructions per allegation ID
+    /// - includeCaseLaw: Whether to include case law references (default: true)
+    /// - taxpayerContext: Additional context about the taxpayer's situation
+    ///
+    /// Requires 'notices.edit' permission and DraftReply feature access.
+    /// </remarks>
+    [HttpPost("{noticeId:guid}/responses/allegation-wise-draft")]
+    [ProducesResponseType(typeof(ApiResponse<AllegationWiseDraftResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status429TooManyRequests)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status500InternalServerError)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> GenerateAllegationWiseDraft(
+        Guid noticeId,
+        [FromBody] AllegationWiseDraftRequest? request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var orgId = GetCurrentOrganizationId();
+            var userId = GetCurrentUserId();
+
+            // Check feature access - draft reply requires paid plan
+            if (!await _featureAccessService.HasFeatureAccessAsync(orgId, FeatureCodes.DraftReply, cancellationToken))
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new ApiErrorResponse(
+                    false,
+                    "FEATURE_NOT_AVAILABLE",
+                    "AI draft reply feature is not available in your current plan. Upgrade to access AI-generated response drafts."));
+            }
+
+            if (!_currentOrg.HasPermission("notices.edit"))
+            {
+                return StatusCode(StatusCodes.Status403Forbidden,
+                    new ApiErrorResponse(false, "FORBIDDEN", "You don't have permission to generate allegation-wise drafts"));
+            }
+
+            // Verify notice exists and belongs to organization
+            var notice = await _noticeService.GetByIdAsync(noticeId, orgId, cancellationToken);
+            if (notice == null)
+            {
+                return NotFound(new ApiErrorResponse(false, "NOT_FOUND", "Notice not found"));
+            }
+
+            // Read OCR through the authorized API context, not a second service's database.
+            var noticeText = notice.OcrText;
+            if (string.IsNullOrWhiteSpace(noticeText) && notice.AiReport?.FullReportJson is { } legacyReport
+                && legacyReport.TryGetValue("raw_text", out var legacyText))
+                noticeText = legacyText?.ToString();
+            if (string.IsNullOrWhiteSpace(noticeText))
+                return Conflict(new ApiErrorResponse(false, "NOTICE_TEXT_UNAVAILABLE",
+                    "Full notice text is unavailable. Reprocess this notice, wait for analysis to finish, then generate the reply again."));
+
+            // Build options from request
+            var options = new AllegationWiseDraftOptions
+            {
+                NoticeText = noticeText,
+                Tone = request?.Tone ?? "formal",
+                Language = request?.Language ?? "en",
+                AllegationOverrides = request?.AllegationOverrides,
+                IncludeCaseLaw = request?.IncludeCaseLaw ?? true,
+                TaxpayerContext = request?.TaxpayerContext
+            };
+
+            var result = await _aiServiceClient.GenerateAllegationWiseDraftAsync(noticeId, orgId, options);
+
+            if (result.ErrorCode == "USAGE_CAP_EXCEEDED")
+                return StatusCode(StatusCodes.Status429TooManyRequests,
+                    new ApiErrorResponse(false, result.ErrorCode, result.Error ?? "Monthly AI usage limit reached."));
+
+            if (!result.Success)
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError,
+                    new ApiErrorResponse(false, "AI_ERROR", result.Error ?? "Failed to generate allegation-wise draft"));
+            }
+
+            // Map to DTO
+            var response = new AllegationWiseDraftResponse(
+                Allegations: result.Allegations.Select(a => new AllegationDto(
+                    Id: a.Id,
+                    SerialNumber: a.SerialNumber,
+                    Description: a.Description,
+                    Category: a.Category,
+                    LegalProvision: a.LegalProvision,
+                    AmountInvolved: a.AmountInvolved,
+                    Period: a.Period,
+                    EvidenceCited: a.EvidenceCited ?? [],
+                    PageReference: a.PageReference
+                )).ToList(),
+                Responses: result.Responses.Select(r => new AllegationResponseDto(
+                    AllegationId: r.AllegationId,
+                    ResponseText: r.ResponseText,
+                    LegalBasis: r.LegalBasis,
+                    SupportingEvidence: r.SupportingEvidence.Select(s => new SupportingDocumentDto(
+                        DocumentName: s.DocumentName,
+                        DocumentType: s.DocumentType,
+                        Relevance: s.Relevance,
+                        Available: s.Available
+                    )).ToList(),
+                    MissingInformation: r.MissingInformation,
+                    CaseLawReferences: r.CaseLawReferences?.Select(c => new CaseLawReferenceDto(
+                        Citation: c.Citation,
+                        Court: c.Court,
+                        Principle: c.Principle,
+                        Relevance: c.Relevance
+                    )).ToList(),
+                    Confidence: r.Confidence,
+                    Status: r.Status
+                )).ToList(),
+                CombinedDraft: result.CombinedDraft,
+                MissingInfoSummary: result.MissingInfoSummary,
+                Metadata: new AutoDraftMetadataDto(
+                    Model: result.Metadata?.Model ?? "unknown",
+                    ProcessingTimeMs: result.Metadata?.ProcessingTimeMs ?? 0,
+                    NoticeType: notice.NoticeType,
+                    InputTokens: result.Metadata?.InputTokens ?? 0,
+                    OutputTokens: result.Metadata?.OutputTokens ?? 0,
+                    EstimatedCost: CalculateEstimatedCost(result.Metadata?.InputTokens ?? 0, result.Metadata?.OutputTokens ?? 0)
+                )
+            );
+
+            return Ok(new ApiResponse<AllegationWiseDraftResponse>(true, response));
+        }
+        catch (OperationCanceledException)
+        {
+            return StatusCode(499, new ApiErrorResponse(false, "REQUEST_CANCELLED", "Request was cancelled"));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to generate allegation-wise draft for notice {NoticeId}", noticeId);
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
+        }
+    }
+
+    /// <summary>
+    /// Regenerate the response for a single allegation with custom instructions.
+    /// </summary>
+    /// <remarks>
+    /// Use this endpoint when you need to refine the response for a specific allegation.
+    /// You can provide custom instructions to guide the AI in generating a more appropriate response.
+    /// </remarks>
+    [HttpPost("{noticeId:guid}/responses/regenerate-allegation")]
+    [ProducesResponseType(typeof(ApiResponse<AllegationResponseDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> RegenerateAllegationResponse(
+        Guid noticeId,
+        [FromBody] RegenerateAllegationResponseRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var orgId = GetCurrentOrganizationId();
+
+            // Check feature access
+            if (!await _featureAccessService.HasFeatureAccessAsync(orgId, FeatureCodes.DraftReply, cancellationToken))
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new ApiErrorResponse(
+                    false,
+                    "FEATURE_NOT_AVAILABLE",
+                    "AI draft reply feature is not available in your current plan."));
+            }
+
+            if (!_currentOrg.HasPermission("notices.edit"))
+            {
+                return StatusCode(StatusCodes.Status403Forbidden,
+                    new ApiErrorResponse(false, "FORBIDDEN", "You don't have permission to regenerate allegation responses"));
+            }
+
+            // Verify notice exists
+            var notice = await _noticeService.GetByIdAsync(noticeId, orgId, cancellationToken);
+            if (notice == null)
+            {
+                return NotFound(new ApiErrorResponse(false, "NOT_FOUND", "Notice not found"));
+            }
+
+            var options = new RegenerateAllegationOptions
+            {
+                Allegation = new AllegationData
+                {
+                    Id = request.Allegation.Id,
+                    SerialNumber = request.Allegation.SerialNumber,
+                    Description = request.Allegation.Description,
+                    Category = request.Allegation.Category,
+                    LegalProvision = request.Allegation.LegalProvision,
+                    AmountInvolved = request.Allegation.AmountInvolved,
+                    Period = request.Allegation.Period,
+                    EvidenceCited = request.Allegation.EvidenceCited
+                },
+                Tone = request.Tone ?? "formal",
+                Language = request.Language ?? "en",
+                CustomInstructions = request.CustomInstructions,
+                TaxpayerContext = request.TaxpayerContext
+            };
+
+            var result = await _aiServiceClient.RegenerateAllegationResponseAsync(noticeId, orgId, options);
+
+            if (result.ErrorCode == "USAGE_CAP_EXCEEDED")
+                return StatusCode(StatusCodes.Status429TooManyRequests,
+                    new ApiErrorResponse(false, result.ErrorCode, result.Error ?? "Monthly AI usage limit reached."));
+
+            if (!result.Success || result.Response == null)
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError,
+                    new ApiErrorResponse(false, "AI_ERROR", result.Error ?? "Failed to regenerate allegation response"));
+            }
+
+            var response = new AllegationResponseDto(
+                AllegationId: result.Response.AllegationId,
+                ResponseText: result.Response.ResponseText,
+                LegalBasis: result.Response.LegalBasis,
+                SupportingEvidence: result.Response.SupportingEvidence.Select(s => new SupportingDocumentDto(
+                    DocumentName: s.DocumentName,
+                    DocumentType: s.DocumentType,
+                    Relevance: s.Relevance,
+                    Available: s.Available
+                )).ToList(),
+                MissingInformation: result.Response.MissingInformation,
+                CaseLawReferences: result.Response.CaseLawReferences?.Select(c => new CaseLawReferenceDto(
+                    Citation: c.Citation,
+                    Court: c.Court,
+                    Principle: c.Principle,
+                    Relevance: c.Relevance
+                )).ToList(),
+                Confidence: result.Response.Confidence,
+                Status: result.Response.Status
+            );
+
+            return Ok(new ApiResponse<AllegationResponseDto>(true, response));
+        }
+        catch (OperationCanceledException)
+        {
+            return StatusCode(499, new ApiErrorResponse(false, "REQUEST_CANCELLED", "Request was cancelled"));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to regenerate allegation response for notice {NoticeId}", noticeId);
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(false, "INTERNAL_ERROR", "An unexpected error occurred"));
+        }
+    }
+
+    private static decimal CalculateEstimatedCost(int inputTokens, int outputTokens)
+    {
+        // GPT-4o pricing: $5/1M input, $15/1M output
+        var inputCost = (inputTokens / 1_000_000m) * 5m;
+        var outputCost = (outputTokens / 1_000_000m) * 15m;
+        return Math.Round(inputCost + outputCost, 6);
     }
 
     /// <summary>
@@ -2761,7 +3058,8 @@ public class NoticesController : ControllerBase
             ApprovedById: response.ApprovedById,
             ApprovedByName: response.ApprovedBy?.Name,
             CreatedAt: response.CreatedAt,
-            UpdatedAt: response.UpdatedAt);
+            UpdatedAt: response.UpdatedAt,
+            AllegationDraft: response.AllegationDraftJson == null ? null : System.Text.Json.JsonSerializer.Deserialize<AllegationWiseDraftResponse>(response.AllegationDraftJson));
     }
 
     private static ReminderDto MapReminderToDto(Data.Entities.DeadlineReminder reminder)
@@ -2995,9 +3293,12 @@ public record NoticeResponseDto(
     Guid? ApprovedById,
     string? ApprovedByName,
     DateTime CreatedAt,
-    DateTime? UpdatedAt);
+    DateTime? UpdatedAt,
+    AllegationWiseDraftResponse? AllegationDraft = null);
 
-public record SaveDraftRequest(string DraftContent);
+public record SaveDraftRequest(
+    [Required, MaxLength(500000)] string DraftContent,
+    AllegationWiseDraftResponse? AllegationDraft = null);
 
 // AutoDraftRequest, AutoDraftResponseDto, AutoDraftMetadataDto moved to DTOs/NoticeDtos.cs
 

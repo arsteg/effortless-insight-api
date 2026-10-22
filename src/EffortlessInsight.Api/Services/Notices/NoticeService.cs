@@ -459,7 +459,8 @@ public interface INoticeServiceExtended : INoticeService
         Guid organizationId,
         Guid userId,
         string draftContent,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        string? allegationDraftJson = null);
 
     /// <summary>
     /// Submits a response for review.
@@ -3098,7 +3099,8 @@ public class NoticeServiceImpl : INoticeServiceExtended
         Guid organizationId,
         Guid userId,
         string draftContent,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? allegationDraftJson = null)
     {
         // Verify notice belongs to organization
         var noticeExists = await _db.Notices.AnyAsync(n =>
@@ -3121,6 +3123,10 @@ public class NoticeServiceImpl : INoticeServiceExtended
         if (existingDraft != null)
         {
             // Update existing draft
+            // An unchanged simple save must not erase the structured reply.
+            // Edited free text intentionally replaces it, since its cards no longer match.
+            existingDraft.AllegationDraftJson = allegationDraftJson
+                ?? (existingDraft.DraftContent == draftContent ? existingDraft.AllegationDraftJson : null);
             existingDraft.DraftContent = draftContent;
             existingDraft.UpdatedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync(cancellationToken);
@@ -3146,6 +3152,7 @@ public class NoticeServiceImpl : INoticeServiceExtended
             NoticeId = noticeId,
             CreatedById = userId,
             DraftContent = draftContent,
+            AllegationDraftJson = allegationDraftJson,
             Status = "draft",
             Version = maxVersion + 1,
             CreatedAt = DateTime.UtcNow,

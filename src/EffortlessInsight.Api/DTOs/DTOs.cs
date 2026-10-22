@@ -1051,7 +1051,8 @@ public record LegalReferenceDto( string Section, string Description );
 public record AiProcessingResult(
     bool Success,
     string? Error,
-    AiReportData? Report
+    AiReportData? Report,
+    string? RawText = null
 );
 
 public record AiReportData(

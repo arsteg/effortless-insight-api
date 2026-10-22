@@ -224,6 +224,8 @@ public class NoticeProcessingJob : INoticeProcessingJob
         CancellationToken cancellationToken)
     {
         var report = result.Report!;
+        if (!string.IsNullOrWhiteSpace(result.RawText))
+            notice.OcrText = result.RawText;
 
         var detectedGstin = report.Metadata.Gstin?.Trim().ToUpperInvariant();
         var isCaWorkspace = await _db.OrganizationMembers.AnyAsync(m => m.OrganizationId == notice.OrganizationId

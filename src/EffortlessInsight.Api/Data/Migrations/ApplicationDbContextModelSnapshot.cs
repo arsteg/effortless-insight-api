@@ -6555,6 +6555,9 @@ namespace EffortlessInsight.Api.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<string>("AllegationDraftJson")
+                        .HasColumnType("text");
+
                     b.Property<Guid?>("ApprovedById")
                         .HasColumnType("uuid");
 

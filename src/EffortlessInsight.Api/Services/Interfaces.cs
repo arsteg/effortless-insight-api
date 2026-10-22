@@ -48,6 +48,11 @@ public interface IAiServiceClient
     Task<GenerateResponseResult> GenerateResponseDraftAsync(Guid noticeId, Guid organizationId, GenerateResponseOptions options);
     Task<List<SimilarNotice>> FindSimilarNoticesAsync(Guid noticeId, Guid organizationId, int limit = 5);
     Task<HandoverSummaryResult> GenerateHandoverSummaryAsync(HandoverSummaryRequest request, Guid organizationId);
+
+    // Allegation-wise draft generation
+    Task<AllegationExtractionResponse> ExtractAllegationsAsync(Guid noticeId, Guid organizationId, string? noticeText = null);
+    Task<AllegationWiseDraftResult> GenerateAllegationWiseDraftAsync(Guid noticeId, Guid organizationId, AllegationWiseDraftOptions options);
+    Task<AllegationResponseResult> RegenerateAllegationResponseAsync(Guid noticeId, Guid organizationId, RegenerateAllegationOptions options);
 }
 
 /// <summary>
@@ -169,3 +174,124 @@ public interface IFileStorageService
 // S3FileStorageService implementation is in Services/Storage/S3FileStorageService.cs
 
 // AuditServiceImpl is defined in AuditService.cs
+
+// ============================================================================
+// Allegation-wise Draft Types
+// ============================================================================
+
+/// <summary>
+/// Options for generating allegation-wise draft responses.
+/// </summary>
+public record AllegationWiseDraftOptions
+{
+    public string? NoticeText { get; init; }
+    public string Tone { get; init; } = "formal";
+    public string Language { get; init; } = "en";
+    public List<AllegationData>? Allegations { get; init; }
+    public Dictionary<string, string>? AllegationOverrides { get; init; }
+    public bool IncludeCaseLaw { get; init; } = true;
+    public Dictionary<string, object>? TaxpayerContext { get; init; }
+}
+
+/// <summary>
+/// Individual allegation data from extraction or input.
+/// </summary>
+public record AllegationData
+{
+    public string Id { get; init; } = string.Empty;
+    public int SerialNumber { get; init; }
+    public string Description { get; init; } = string.Empty;
+    public string Category { get; init; } = string.Empty;
+    public string? LegalProvision { get; init; }
+    public decimal? AmountInvolved { get; init; }
+    public string? Period { get; init; }
+    public List<string>? EvidenceCited { get; init; }
+    public string? PageReference { get; init; }
+}
+
+/// <summary>
+/// Options for regenerating a single allegation response.
+/// </summary>
+public record RegenerateAllegationOptions
+{
+    public required AllegationData Allegation { get; init; }
+    public string Tone { get; init; } = "formal";
+    public string Language { get; init; } = "en";
+    public string? CustomInstructions { get; init; }
+    public Dictionary<string, object>? TaxpayerContext { get; init; }
+}
+
+/// <summary>
+/// Result of allegation extraction.
+/// </summary>
+public record AllegationExtractionResponse
+{
+    public bool Success { get; init; }
+    public string? Error { get; init; }
+    public List<AllegationData> Allegations { get; init; } = [];
+    public decimal? TotalAmount { get; init; }
+    public GenerateResponseMetadata? Metadata { get; init; }
+}
+
+/// <summary>
+/// Result of allegation-wise draft generation.
+/// </summary>
+public record AllegationWiseDraftResult
+{
+    public string? ErrorCode { get; init; }
+    public bool Success { get; init; }
+    public string? Error { get; init; }
+    public List<AllegationData> Allegations { get; init; } = [];
+    public List<AllegationResponseData> Responses { get; init; } = [];
+    public string? CombinedDraft { get; init; }
+    public List<string> MissingInfoSummary { get; init; } = [];
+    public GenerateResponseMetadata? Metadata { get; init; }
+}
+
+/// <summary>
+/// AI-generated response for a single allegation.
+/// </summary>
+public record AllegationResponseData
+{
+    public string AllegationId { get; init; } = string.Empty;
+    public string ResponseText { get; init; } = string.Empty;
+    public List<string> LegalBasis { get; init; } = [];
+    public List<SupportingDocumentData> SupportingEvidence { get; init; } = [];
+    public List<string> MissingInformation { get; init; } = [];
+    public List<CaseLawReferenceData>? CaseLawReferences { get; init; }
+    public double Confidence { get; init; }
+    public string Status { get; init; } = "needs_review";
+}
+
+/// <summary>
+/// Supporting document reference.
+/// </summary>
+public record SupportingDocumentData
+{
+    public string DocumentName { get; init; } = string.Empty;
+    public string DocumentType { get; init; } = string.Empty;
+    public string Relevance { get; init; } = string.Empty;
+    public bool Available { get; init; } = true;
+}
+
+/// <summary>
+/// Case law citation reference.
+/// </summary>
+public record CaseLawReferenceData
+{
+    public string Citation { get; init; } = string.Empty;
+    public string Court { get; init; } = string.Empty;
+    public string Principle { get; init; } = string.Empty;
+    public string Relevance { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// Result of regenerating a single allegation response.
+/// </summary>
+public record AllegationResponseResult
+{
+    public string? ErrorCode { get; init; }
+    public bool Success { get; init; }
+    public string? Error { get; init; }
+    public AllegationResponseData? Response { get; init; }
+}

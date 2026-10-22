@@ -179,6 +179,84 @@ public class NoticesControllerPhaseDTests
 
     #endregion
 
+    [Fact]
+    public async Task SaveStructuredDraft_RebuildsPreviewAndReturnsRestorableData()
+    {
+        var draft = new AllegationWiseDraftResponse(
+            [new AllegationDto("ALG-1", 1, "Unpaid tax", "Tax", null, 200000, null, [], null)],
+            [new AllegationResponseDto("ALG-1", "Edited reply", ["Section 73"], [], ["Challan"], [], .5, "missing_info")],
+            "STALE", [], new AutoDraftMetadataDto("test", 0, null, 0, 0, 0));
+        string? savedJson = null;
+        _noticeService.Setup(x => x.SaveResponseDraftAsync(_noticeId, _orgId, _userId,
+                It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string>()))
+            .ReturnsAsync((Guid notice, Guid org, Guid user, string content, CancellationToken token, string? json) => {
+                savedJson = json;
+                return new NoticeResponse { NoticeId = notice, CreatedById = user, DraftContent = content, AllegationDraftJson = json };
+            });
+        var result = await _controller.SaveResponseDraft(_noticeId, new SaveDraftRequest("STALE", draft), CancellationToken.None);
+        var response = ((OkObjectResult)result).Value.Should().BeOfType<ApiResponse<NoticeResponseDto>>().Subject.Data;
+        response.DraftContent.Should().Contain("Edited reply").And.NotContain("STALE");
+        response.AllegationDraft!.Responses.Single().ResponseText.Should().Be("Edited reply");
+        response.AllegationDraft.MissingInfoSummary.Should().Contain("Challan (Allegation ALG-1)");
+        savedJson.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task SaveStructuredDraft_RejectsMissingResponses()
+    {
+        var draft = new AllegationWiseDraftResponse(
+            [new AllegationDto("ALG-1", 1, "Unpaid tax", "Tax", null, 200000, null, [], null)],
+            [], null, [], new AutoDraftMetadataDto("test", 0, null, 0, 0, 0));
+        var result = await _controller.SaveResponseDraft(_noticeId, new SaveDraftRequest("text", draft), CancellationToken.None);
+        result.Should().BeOfType<BadRequestObjectResult>();
+        _noticeService.Verify(x => x.SaveResponseDraftAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<Guid>(),
+            It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task AllegationDraft_MissingTranscript_ReturnsRecoverableConflictWithoutCallingAi()
+    {
+        _featureAccessService.Setup(x => x.HasFeatureAccessAsync(_orgId, It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        _noticeService.Setup(x => x.GetByIdAsync(_noticeId, _orgId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Notice { Id = _noticeId, OrganizationId = _orgId });
+        var result = await _controller.GenerateAllegationWiseDraft(_noticeId, null, CancellationToken.None);
+        var conflict = result.Should().BeOfType<ConflictObjectResult>().Subject;
+        conflict.Value.Should().BeOfType<ApiErrorResponse>().Which.Code.Should().Be("NOTICE_TEXT_UNAVAILABLE");
+        _aiServiceClient.Verify(x => x.GenerateAllegationWiseDraftAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<AllegationWiseDraftOptions>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AllegationDraft_PassesAuthorizedTranscriptToAi(bool legacy)
+    {
+        const string transcript = "First allegation: unpaid tax. Second allegation: wrong ITC.";
+        _featureAccessService.Setup(x => x.HasFeatureAccessAsync(_orgId, It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        _noticeService.Setup(x => x.GetByIdAsync(_noticeId, _orgId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Notice { Id = _noticeId, OrganizationId = _orgId,
+                OcrText = legacy ? null : transcript,
+                AiReport = legacy ? new NoticeAiReport { FullReportJson = new() { ["raw_text"] = transcript } } : null });
+        _aiServiceClient.Setup(x => x.GenerateAllegationWiseDraftAsync(_noticeId, _orgId,
+            It.Is<AllegationWiseDraftOptions>(o => o.NoticeText == transcript)))
+            .ReturnsAsync(new AllegationWiseDraftResult { Success = true });
+        (await _controller.GenerateAllegationWiseDraft(_noticeId, null, CancellationToken.None)).Should().BeOfType<OkObjectResult>();
+        _aiServiceClient.Verify(x => x.GenerateAllegationWiseDraftAsync(_noticeId, _orgId,
+            It.Is<AllegationWiseDraftOptions>(o => o.NoticeText == transcript)), Times.Once);
+    }
+
+    [Fact]
+    public async Task AllegationDraft_QuotaExceeded_Returns429WithOriginalCode()
+    {
+        _featureAccessService.Setup(x => x.HasFeatureAccessAsync(_orgId, It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        _noticeService.Setup(x => x.GetByIdAsync(_noticeId, _orgId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Notice { Id = _noticeId, OrganizationId = _orgId, OcrText = "Notice text" });
+        _aiServiceClient.Setup(x => x.GenerateAllegationWiseDraftAsync(_noticeId, _orgId, It.IsAny<AllegationWiseDraftOptions>()))
+            .ReturnsAsync(new AllegationWiseDraftResult { ErrorCode = "USAGE_CAP_EXCEEDED", Error = "Monthly limit reached" });
+        var result = (ObjectResult)await _controller.GenerateAllegationWiseDraft(_noticeId, null, CancellationToken.None);
+        result.StatusCode.Should().Be(429);
+        result.Value.Should().BeOfType<ApiErrorResponse>().Which.Code.Should().Be("USAGE_CAP_EXCEEDED");
+    }
+
     #region SaveResponseDraft Tests
 
     [Fact]
@@ -196,7 +274,7 @@ public class NoticesControllerPhaseDTests
             Version = 1,
             CreatedAt = DateTime.UtcNow
         };
-        _noticeService.Setup(x => x.SaveResponseDraftAsync(_noticeId, _orgId, _userId, request.DraftContent, It.IsAny<CancellationToken>()))
+        _noticeService.Setup(x => x.SaveResponseDraftAsync(_noticeId, _orgId, _userId, request.DraftContent, It.IsAny<CancellationToken>(), null))
             .ReturnsAsync(savedResponse);
 
         // Act

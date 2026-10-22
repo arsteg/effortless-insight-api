@@ -97,7 +97,7 @@ public class AiServiceClientImpl : IAiServiceClient
                 "AI processing completed for notice {NoticeId}. Risk: {RiskLevel} ({RiskScore})",
                 noticeId, report?.RiskLevel, report?.RiskScore);
 
-            return new AiProcessingResult(true, null, report);
+            return new AiProcessingResult(true, null, report, response.RawText);
         }
         catch (Exception ex)
         {
@@ -357,6 +357,319 @@ public class AiServiceClientImpl : IAiServiceClient
     }
 
     /// <summary>
+    /// Extract allegations from a notice.
+    /// </summary>
+    public async Task<AllegationExtractionResponse> ExtractAllegationsAsync(Guid noticeId, Guid organizationId, string? noticeText = null)
+    {
+        _logger.LogInformation("Extracting allegations from notice {NoticeId}", noticeId);
+
+        var request = new ExtractAllegationsAiRequest
+        {
+            NoticeId = noticeId,
+            NoticeText = noticeText
+        };
+
+        try
+        {
+            var response = await ExecuteWithRetryAsync<ExtractAllegationsAiRequest, AllegationExtractionAiResponse>(
+                HttpMethod.Post,
+                "/api/v1/process/extract-allegations",
+                request,
+                organizationId);
+
+            if (response == null)
+            {
+                _logger.LogWarning("Allegation extraction returned null for notice {NoticeId}", noticeId);
+                return new AllegationExtractionResponse
+                {
+                    Success = false,
+                    Error = "Empty response from AI service"
+                };
+            }
+
+            if (!response.Success)
+            {
+                _logger.LogWarning("Allegation extraction failed for notice {NoticeId}: {Error}", noticeId, response.Error);
+                return new AllegationExtractionResponse
+                {
+                    Success = false,
+                    Error = response.Error ?? "Unknown error"
+                };
+            }
+
+            _logger.LogInformation(
+                "Extracted {Count} allegations from notice {NoticeId}",
+                response.Allegations?.Count ?? 0, noticeId);
+
+            return new AllegationExtractionResponse
+            {
+                Success = true,
+                Allegations = response.Allegations?
+                    .Select(a => new AllegationData
+                    {
+                        Id = a.Id,
+                        SerialNumber = a.SerialNumber,
+                        Description = a.Description,
+                        Category = a.Category,
+                        LegalProvision = a.LegalProvision,
+                        AmountInvolved = a.AmountInvolved,
+                        Period = a.Period,
+                        EvidenceCited = a.EvidenceCited,
+                        PageReference = a.PageReference
+                    }).ToList() ?? [],
+                TotalAmount = response.TotalAmount,
+                Metadata = response.Metadata != null
+                    ? new GenerateResponseMetadata
+                    {
+                        Model = response.Metadata.Model,
+                        InputTokens = response.Metadata.InputTokens,
+                        OutputTokens = response.Metadata.OutputTokens,
+                        ProcessingTimeMs = response.Metadata.ProcessingTimeMs
+                    }
+                    : null
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Exception extracting allegations for notice {NoticeId}", noticeId);
+            return new AllegationExtractionResponse
+            {
+                Success = false,
+                Error = $"AI service error: {ex.Message}"
+            };
+        }
+    }
+
+    /// <summary>
+    /// Generate allegation-wise draft responses.
+    /// </summary>
+    public async Task<AllegationWiseDraftResult> GenerateAllegationWiseDraftAsync(Guid noticeId, Guid organizationId, AllegationWiseDraftOptions options)
+    {
+        _logger.LogInformation(
+            "Generating allegation-wise draft for notice {NoticeId}. Tone: {Tone}, Language: {Language}",
+            noticeId, options.Tone, options.Language);
+
+        var request = new AllegationWiseDraftAiRequest
+        {
+            NoticeId = noticeId,
+            NoticeText = options.NoticeText,
+            Tone = options.Tone,
+            Language = options.Language,
+            Allegations = options.Allegations?.Select(a => new AllegationAiData
+            {
+                Id = a.Id,
+                SerialNumber = a.SerialNumber,
+                Description = a.Description,
+                Category = a.Category,
+                LegalProvision = a.LegalProvision,
+                AmountInvolved = a.AmountInvolved,
+                Period = a.Period,
+                EvidenceCited = a.EvidenceCited
+            }).ToList(),
+            AllegationOverrides = options.AllegationOverrides,
+            IncludeCaseLaw = options.IncludeCaseLaw,
+            TaxpayerContext = options.TaxpayerContext
+        };
+
+        try
+        {
+            var response = await ExecuteWithRetryAsync<AllegationWiseDraftAiRequest, AllegationWiseDraftAiResponse>(
+                HttpMethod.Post,
+                "/api/v1/process/allegation-wise-draft",
+                request,
+                organizationId);
+
+            if (response == null)
+            {
+                _logger.LogWarning("Allegation-wise draft generation returned null for notice {NoticeId}", noticeId);
+                return new AllegationWiseDraftResult
+                {
+                    Success = false,
+                    Error = "Empty response from AI service"
+                };
+            }
+
+            if (!response.Success)
+            {
+                _logger.LogWarning("Allegation-wise draft generation failed for notice {NoticeId}: {Error}", noticeId, response.Error);
+                return new AllegationWiseDraftResult
+                {
+                    Success = false,
+                    Error = response.Error ?? "Unknown error"
+                };
+            }
+
+            _logger.LogInformation(
+                "Generated {Count} allegation responses for notice {NoticeId}",
+                response.Responses?.Count ?? 0, noticeId);
+
+            return new AllegationWiseDraftResult
+            {
+                Success = true,
+                Allegations = response.Allegations?
+                    .Select(a => new AllegationData
+                    {
+                        Id = a.Id,
+                        SerialNumber = a.SerialNumber,
+                        Description = a.Description,
+                        Category = a.Category,
+                        LegalProvision = a.LegalProvision,
+                        AmountInvolved = a.AmountInvolved,
+                        Period = a.Period,
+                        EvidenceCited = a.EvidenceCited,
+                        PageReference = a.PageReference
+                    }).ToList() ?? [],
+                Responses = response.Responses?
+                    .Select(r => new AllegationResponseData
+                    {
+                        AllegationId = r.AllegationId,
+                        ResponseText = r.ResponseText ?? string.Empty,
+                        LegalBasis = r.LegalBasis ?? [],
+                        SupportingEvidence = r.SupportingEvidence?
+                            .Select(s => new SupportingDocumentData
+                            {
+                                DocumentName = s.DocumentName ?? string.Empty,
+                                DocumentType = s.DocumentType ?? string.Empty,
+                                Relevance = s.Relevance ?? string.Empty,
+                                Available = s.Available
+                            }).ToList() ?? [],
+                        MissingInformation = r.MissingInformation ?? [],
+                        CaseLawReferences = r.CaseLawReferences?
+                            .Select(c => new CaseLawReferenceData
+                            {
+                                Citation = c.Citation ?? string.Empty,
+                                Court = c.Court ?? string.Empty,
+                                Principle = c.Principle ?? string.Empty,
+                                Relevance = c.Relevance ?? string.Empty
+                            }).ToList(),
+                        Confidence = r.Confidence,
+                        Status = r.Status ?? "needs_review"
+                    }).ToList() ?? [],
+                CombinedDraft = response.CombinedDraft,
+                MissingInfoSummary = response.MissingInfoSummary ?? [],
+                Metadata = response.Metadata != null
+                    ? new GenerateResponseMetadata
+                    {
+                        Model = response.Metadata.Model,
+                        InputTokens = response.Metadata.InputTokens,
+                        OutputTokens = response.Metadata.OutputTokens,
+                        ProcessingTimeMs = response.Metadata.ProcessingTimeMs
+                    }
+                    : null
+            };
+        }
+        catch (AiUsageCapException ex)
+        {
+            return new AllegationWiseDraftResult { Success = false, ErrorCode = "USAGE_CAP_EXCEEDED", Error = ex.Message };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Exception generating allegation-wise draft for notice {NoticeId}", noticeId);
+            return new AllegationWiseDraftResult
+            {
+                Success = false,
+                Error = $"AI service error: {ex.Message}"
+            };
+        }
+    }
+
+    /// <summary>
+    /// Regenerate response for a single allegation.
+    /// </summary>
+    public async Task<AllegationResponseResult> RegenerateAllegationResponseAsync(Guid noticeId, Guid organizationId, RegenerateAllegationOptions options)
+    {
+        _logger.LogInformation(
+            "Regenerating allegation response for notice {NoticeId}, allegation {AllegationId}",
+            noticeId, options.Allegation.Id);
+
+        var request = new RegenerateAllegationAiRequest
+        {
+            NoticeId = noticeId,
+            Allegation = new AllegationAiData
+            {
+                Id = options.Allegation.Id,
+                SerialNumber = options.Allegation.SerialNumber,
+                Description = options.Allegation.Description,
+                Category = options.Allegation.Category,
+                LegalProvision = options.Allegation.LegalProvision,
+                AmountInvolved = options.Allegation.AmountInvolved,
+                Period = options.Allegation.Period,
+                EvidenceCited = options.Allegation.EvidenceCited
+            },
+            Tone = options.Tone,
+            Language = options.Language,
+            CustomInstructions = options.CustomInstructions,
+            TaxpayerContext = options.TaxpayerContext
+        };
+
+        try
+        {
+            var response = await ExecuteWithRetryAsync<RegenerateAllegationAiRequest, AllegationResponseAiResponse>(
+                HttpMethod.Post,
+                "/api/v1/process/regenerate-allegation-response",
+                request,
+                organizationId);
+
+            if (response == null || string.IsNullOrWhiteSpace(response.ResponseText) || response.AllegationId != options.Allegation.Id)
+            {
+                _logger.LogWarning("Allegation response regeneration returned null for notice {NoticeId}", noticeId);
+                return new AllegationResponseResult
+                {
+                    Success = false,
+                    Error = "Empty response from AI service"
+                };
+            }
+
+            _logger.LogInformation(
+                "Regenerated allegation response for notice {NoticeId}, allegation {AllegationId}. Confidence: {Confidence}",
+                noticeId, options.Allegation.Id, response.Confidence);
+
+            return new AllegationResponseResult
+            {
+                Success = true,
+                Response = new AllegationResponseData
+                {
+                    AllegationId = response.AllegationId ?? options.Allegation.Id,
+                    ResponseText = response.ResponseText ?? string.Empty,
+                    LegalBasis = response.LegalBasis ?? [],
+                    SupportingEvidence = response.SupportingEvidence?
+                        .Select(s => new SupportingDocumentData
+                        {
+                            DocumentName = s.DocumentName ?? string.Empty,
+                            DocumentType = s.DocumentType ?? string.Empty,
+                            Relevance = s.Relevance ?? string.Empty,
+                            Available = s.Available
+                        }).ToList() ?? [],
+                    MissingInformation = response.MissingInformation ?? [],
+                    CaseLawReferences = response.CaseLawReferences?
+                        .Select(c => new CaseLawReferenceData
+                        {
+                            Citation = c.Citation ?? string.Empty,
+                            Court = c.Court ?? string.Empty,
+                            Principle = c.Principle ?? string.Empty,
+                            Relevance = c.Relevance ?? string.Empty
+                        }).ToList(),
+                    Confidence = response.Confidence,
+                    Status = response.Status ?? "needs_review"
+                }
+            };
+        }
+        catch (AiUsageCapException ex)
+        {
+            return new AllegationResponseResult { Success = false, ErrorCode = "USAGE_CAP_EXCEEDED", Error = ex.Message };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Exception regenerating allegation response for notice {NoticeId}", noticeId);
+            return new AllegationResponseResult
+            {
+                Success = false,
+                Error = $"AI service error: {ex.Message}"
+            };
+        }
+    }
+
+    /// <summary>
     /// Execute an HTTP request with exponential backoff retry logic.
     /// </summary>
     private async Task<TResponse?> ExecuteWithRetryAsync<TRequest, TResponse>(
@@ -438,6 +751,24 @@ public class AiServiceClientImpl : IAiServiceClient
                 {
                     _logger.LogWarning("AI service endpoint not found: {Endpoint}", endpoint);
                     throw new InvalidOperationException($"Endpoint not found: {endpoint}");
+                }
+
+                // A monthly quota cannot recover after a short retry delay.
+                if (response.StatusCode == HttpStatusCode.TooManyRequests)
+                {
+                    var quotaContent = await response.Content.ReadAsStringAsync();
+                    try
+                    {
+                        using var payload = JsonDocument.Parse(quotaContent);
+                        if (payload.RootElement.TryGetProperty("code", out var code)
+                            && code.GetString() == "USAGE_CAP_EXCEEDED")
+                        {
+                            var message = payload.RootElement.TryGetProperty("error", out var error)
+                                ? error.GetString() : null;
+                            throw new AiUsageCapException(message ?? "Monthly AI usage limit reached.");
+                        }
+                    }
+                    catch (JsonException) { /* Non-JSON 429s retain transient retry behavior. */ }
                 }
 
                 // Retry on server errors or rate limiting
@@ -674,6 +1005,7 @@ public class AiServiceClientImpl : IAiServiceClient
         public bool Success { get; init; }
         public string? Error { get; init; }
         public AiReportResponse? Report { get; init; }
+        public string? RawText { get; init; }
     }
 
     private record AiReportResponse
@@ -831,5 +1163,97 @@ public class AiServiceClientImpl : IAiServiceClient
         public DateTime? GeneratedAt { get; init; }
     }
 
+    // Allegation-related request/response DTOs
+    private record ExtractAllegationsAiRequest
+    {
+        public Guid NoticeId { get; init; }
+        public string? NoticeText { get; init; }
+    }
+
+    private record AllegationExtractionAiResponse
+    {
+        public bool Success { get; init; }
+        public string? Error { get; init; }
+        public List<AllegationAiData>? Allegations { get; init; }
+        public decimal? TotalAmount { get; init; }
+        public GenerateResponseMetadataResponse? Metadata { get; init; }
+    }
+
+    private record AllegationAiData
+    {
+        public string Id { get; init; } = string.Empty;
+        public int SerialNumber { get; init; }
+        public string Description { get; init; } = string.Empty;
+        public string Category { get; init; } = string.Empty;
+        public string? LegalProvision { get; init; }
+        public decimal? AmountInvolved { get; init; }
+        public string? Period { get; init; }
+        public List<string>? EvidenceCited { get; init; }
+        public string? PageReference { get; init; }
+    }
+
+    private record AllegationWiseDraftAiRequest
+    {
+        public string? NoticeText { get; init; }
+        public Guid NoticeId { get; init; }
+        public string Tone { get; init; } = "formal";
+        public string Language { get; init; } = "en";
+        public List<AllegationAiData>? Allegations { get; init; }
+        public Dictionary<string, string>? AllegationOverrides { get; init; }
+        public bool IncludeCaseLaw { get; init; } = true;
+        public Dictionary<string, object>? TaxpayerContext { get; init; }
+    }
+
+    private record AllegationWiseDraftAiResponse
+    {
+        public bool Success { get; init; }
+        public string? Error { get; init; }
+        public List<AllegationAiData>? Allegations { get; init; }
+        public List<AllegationResponseAiResponse>? Responses { get; init; }
+        public string? CombinedDraft { get; init; }
+        public List<string>? MissingInfoSummary { get; init; }
+        public GenerateResponseMetadataResponse? Metadata { get; init; }
+    }
+
+    private record AllegationResponseAiResponse
+    {
+        public string AllegationId { get; init; } = string.Empty;
+        public string? ResponseText { get; init; }
+        public List<string>? LegalBasis { get; init; }
+        public List<SupportingDocumentAiResponse>? SupportingEvidence { get; init; }
+        public List<string>? MissingInformation { get; init; }
+        public List<CaseLawAiResponse>? CaseLawReferences { get; init; }
+        public double Confidence { get; init; }
+        public string? Status { get; init; }
+    }
+
+    private record SupportingDocumentAiResponse
+    {
+        public string? DocumentName { get; init; }
+        public string? DocumentType { get; init; }
+        public string? Relevance { get; init; }
+        public bool Available { get; init; } = true;
+    }
+
+    private record CaseLawAiResponse
+    {
+        public string? Citation { get; init; }
+        public string? Court { get; init; }
+        public string? Principle { get; init; }
+        public string? Relevance { get; init; }
+    }
+
+    private record RegenerateAllegationAiRequest
+    {
+        public Guid NoticeId { get; init; }
+        public required AllegationAiData Allegation { get; init; }
+        public string Tone { get; init; } = "formal";
+        public string Language { get; init; } = "en";
+        public string? CustomInstructions { get; init; }
+        public Dictionary<string, object>? TaxpayerContext { get; init; }
+    }
+
     #endregion
 }
+
+internal sealed class AiUsageCapException(string message) : InvalidOperationException(message);

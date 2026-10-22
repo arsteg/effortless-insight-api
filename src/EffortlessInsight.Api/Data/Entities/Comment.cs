@@ -266,6 +266,8 @@ public class NoticeResponse : BaseEntity
 
     public string? DraftContent { get; set; }
 
+    public string? AllegationDraftJson { get; set; }
+
     public string? FinalContent { get; set; }
 
     [MaxLength(20)]
